@@ -1,0 +1,134 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell.
+
+#pragma once
+
+#include "filmdata.h"
+
+#include <array>
+#include <memory>
+#include <string>
+
+class ColorTransform;
+class FilmDensityCalibration;
+class FilmDyeModel;
+class FilmProcessor;
+class FilmStock;
+class GranularityModel;
+class PrintFilmProcessor;
+class PrintFilmStock;
+class PrintViewer;
+class SpectralIlluminant;
+class SpectralReconstructor;
+
+// Production end-to-end spectral film pipeline derived from Final1d.
+//
+// Input  : linear ACES2065-1 (AP0/D60)
+// Output : viewed print represented as linear ACES2065-1 (AP0/D60)
+//          plus a simple Rec.709/Gamma 2.4 preview.
+//
+// Important: the Rec.709 preview is only a matrix/transfer-function display
+// conversion. No ACES RRT/ODT is applied. The authoritative film result is the
+// viewed AP0 value returned by process().
+class FilmPipeline
+{
+public:
+    struct Settings
+    {
+        std::string resources_directory = "Resources";
+
+        float middle_gray = 0.18f;
+        float negative_zero_stop_log_exposure = -0.515f;
+        float exposure_stops = 0.0f;
+
+        // Push/pull is an explicit approximation because no alternate-process
+        // Verita curves are available. Positive values increase negative
+        // contrast around the calibrated middle-gray density.
+        float push_pull_stops = 0.0f;
+        float print_reference_status_a_density = 1.0f;
+        float printer_temperature_kelvin = 3200.0f;
+
+        float wavelength_min_nm = 380.0f;
+        float wavelength_max_nm = 700.0f;
+        float wavelength_step_nm = 5.0f;
+
+        // Kodak 2383 dye-amplitude calibration selected in Calibrate2.
+        double print_cyan_amplitude = 1.10093;
+        double print_magenta_amplitude = 1.09650;
+        double print_yellow_amplitude = 1.14626;
+    };
+
+    struct Result
+    {
+        FilmDensity negative_status_m_density;
+        FilmDensity calibrated_negative_density;
+        FilmDensity print_density;
+        FilmDensity negative_granularity_sigma;
+        FilmDensity print_granularity_sigma;
+
+        std::array<float, 3> ap0 = {{0.0f, 0.0f, 0.0f}};
+        std::array<float, 3> rec709_gamma24 = {{0.0f, 0.0f, 0.0f}};
+
+        bool valid = false;
+    };
+
+    FilmPipeline();
+    ~FilmPipeline();
+
+    FilmPipeline(const FilmPipeline&) = delete;
+    FilmPipeline& operator=(const FilmPipeline&) = delete;
+
+    bool initialize();
+
+    bool initialize(
+        const Settings& settings);
+
+    bool valid() const;
+
+    Result process(
+        const std::array<float, 3>& ap0_linear) const;
+
+    const Settings& settings() const;
+    const std::string& error() const;
+
+    const FilmDensityCalibration* negative_density_calibration() const;
+
+private:
+    SampledCurve load_minimum_negative_density_curve(
+        const std::string& filename) const;
+
+    SampledCurve density_from_print_records(
+        const FilmDensity& record_density) const;
+
+    static SampledCurve transmittance_from_density(
+        const SampledCurve& density);
+
+    FilmLogExposure relative_negative_log_exposure(
+        const FilmExposure& exposure) const;
+
+    static bool finite_rgb(
+        const std::array<float, 3>& rgb);
+
+    std::string resource_path(
+        const std::string& filename) const;
+
+    Settings settings_;
+    std::string error_;
+    bool valid_ = false;
+
+    std::unique_ptr<SpectralReconstructor> reconstructor_;
+    std::unique_ptr<SpectralIlluminant> scene_illuminant_;
+    std::unique_ptr<FilmStock> negative_stock_;
+    std::unique_ptr<GranularityModel> granularity_model_;
+    std::unique_ptr<FilmProcessor> negative_processor_;
+    std::unique_ptr<FilmDyeModel> negative_dye_model_;
+    std::unique_ptr<FilmDensityCalibration> negative_density_calibration_;
+    std::unique_ptr<PrintFilmStock> print_stock_;
+    std::unique_ptr<PrintFilmProcessor> print_processor_;
+    std::unique_ptr<PrintViewer> viewer_;
+    std::unique_ptr<ColorTransform> ap0_to_rec709_;
+
+    FilmExposure reference_negative_exposure_;
+    FilmDensity reference_negative_density_;
+    SampledCurve reference_negative_transmittance_;
+};
