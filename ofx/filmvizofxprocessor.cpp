@@ -282,6 +282,11 @@ struct FilmVizOfxProcessor::Cache
     std::unique_ptr<Lut3D> color_lut;
     std::unique_ptr<Lut3D> negative_exposure_lut;
     std::vector<GrainSample> grain_field;
+
+    std::unique_ptr<Lut3D> halation_development_lut;
+    std::vector<GrainSample> halation_grain_field;
+    std::array<float, 3> halation_log_min = {{0.0f, 0.0f, 0.0f}};
+    std::array<float, 3> halation_log_max = {{1.0f, 1.0f, 1.0f}};
 };
 
 bool
@@ -410,6 +415,10 @@ FilmVizOfxProcessor::configure(
             return false;
         }
 
+        cache_->halation_development_lut.reset();
+        cache_->halation_grain_field.clear();
+        ++revision_;
+
         return true;
     }
 
@@ -536,6 +545,257 @@ FilmVizOfxProcessor::configure(
     }
 
     cache_ = std::move(next);
+    ++revision_;
+    return true;
+}
+
+std::uint64_t
+FilmVizOfxProcessor::cache_revision() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return revision_;
+}
+
+bool
+FilmVizOfxProcessor::gpu_snapshot(
+    FilmVizOfxGpuSnapshot& snapshot,
+    std::string& error)
+{
+    error.clear();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!cache_
+        || !cache_->pipeline
+        || !cache_->color_lut
+        || !cache_->color_lut->valid()) {
+
+        error = "FilmViz OFX processor is not configured";
+        return false;
+    }
+
+    const int size = cache_->settings.lut_size;
+    const std::size_t count =
+        static_cast<std::size_t>(size)
+        * static_cast<std::size_t>(size)
+        * static_cast<std::size_t>(size);
+
+    const bool wants_halation =
+        cache_->settings.halation_enabled
+        && cache_->settings.halation_strength > 0.0f
+        && cache_->settings.halation_radius > 0.0f;
+
+    if (wants_halation
+        && cache_->negative_exposure_lut
+        && !cache_->halation_development_lut) {
+
+        std::array<float, 3> log_min = {{
+            std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::infinity()
+        }};
+
+        std::array<float, 3> log_max = {{
+            -std::numeric_limits<float>::infinity(),
+            -std::numeric_limits<float>::infinity(),
+            -std::numeric_limits<float>::infinity()
+        }};
+
+        for (int b = 0; b < size; ++b) {
+            for (int g = 0; g < size; ++g) {
+                for (int r = 0; r < size; ++r) {
+                    const Lut3D::RGB& exposure =
+                        cache_->negative_exposure_lut->at(r, g, b);
+
+                    for (int channel = 0; channel < 3; ++channel) {
+                        const float value =
+                            std::log10(
+                                std::max(
+                                    exposure[channel],
+                                    1e-20f));
+
+                        log_min[channel] =
+                            std::min(log_min[channel], value);
+
+                        log_max[channel] =
+                            std::max(log_max[channel], value);
+                    }
+                }
+            }
+        }
+
+        // Halation only adds scattered exposure. The configured record-scatter
+        // maximum is 0.22, so a modest upper pad safely covers the global
+        // exposure increase while keeping the development LUT well resolved.
+        constexpr float low_padding = 0.02f;
+        constexpr float high_padding = 0.15f;
+
+        for (int channel = 0; channel < 3; ++channel) {
+            log_min[channel] -= low_padding;
+            log_max[channel] += high_padding;
+
+            if (!(log_max[channel] > log_min[channel])) {
+                error = "invalid FilmViz OFX Metal halation exposure range";
+                return false;
+            }
+        }
+
+        cache_->halation_log_min = log_min;
+        cache_->halation_log_max = log_max;
+        cache_->halation_development_lut =
+            std::make_unique<Lut3D>();
+        cache_->halation_grain_field.assign(
+            count,
+            GrainSample());
+
+        const bool generated =
+            cache_->halation_development_lut->generate(
+                size,
+                [&](const Lut3D::RGB& lookup_input,
+                    Lut3D::RGB& converted) {
+
+                    FilmExposure exposure;
+                    float* channels[3] = {
+                        &exposure.red,
+                        &exposure.green,
+                        &exposure.blue
+                    };
+
+                    for (int channel = 0; channel < 3; ++channel) {
+                        const float log_value =
+                            log_min[channel]
+                            + lookup_input[channel]
+                                * (log_max[channel]
+                                   - log_min[channel]);
+
+                        *channels[channel] =
+                            std::pow(10.0f, log_value);
+                    }
+
+                    const FilmPipeline::Result result =
+                        cache_->pipeline->process_negative_exposure(exposure);
+
+                    if (!result.valid) {
+                        return false;
+                    }
+
+                    converted =
+                        cache_->settings.output_profile == 1
+                            ? result.rec709_gamma24
+                            : result.ap0;
+
+                    const int r =
+                        static_cast<int>(
+                            std::lround(lookup_input[0] * (size - 1)));
+                    const int g =
+                        static_cast<int>(
+                            std::lround(lookup_input[1] * (size - 1)));
+                    const int b =
+                        static_cast<int>(
+                            std::lround(lookup_input[2] * (size - 1)));
+
+                    const std::size_t index =
+                        static_cast<std::size_t>(
+                            (b * size + g) * size + r);
+
+                    cache_->halation_grain_field[index] = {{
+                        result.negative_granularity_sigma.red,
+                        result.negative_granularity_sigma.green,
+                        result.negative_granularity_sigma.blue,
+                        result.print_granularity_sigma.red,
+                        result.print_granularity_sigma.green,
+                        result.print_granularity_sigma.blue
+                    }};
+
+                    return true;
+                });
+
+        if (!generated) {
+            cache_->halation_development_lut.reset();
+            cache_->halation_grain_field.clear();
+            error = "could not generate FilmViz OFX Metal halation development LUT";
+            return false;
+        }
+
+        ++revision_;
+    }
+
+    snapshot = FilmVizOfxGpuSnapshot();
+    snapshot.revision = revision_;
+    snapshot.lut_size = size;
+    snapshot.input_profile = cache_->settings.input_profile;
+    snapshot.output_profile = cache_->settings.output_profile;
+
+    const auto pack_lut =
+        [size](const Lut3D& lut,
+               std::vector<float>& packed) {
+            packed.resize(
+                static_cast<std::size_t>(size)
+                * static_cast<std::size_t>(size)
+                * static_cast<std::size_t>(size)
+                * 4u);
+
+            std::size_t index = 0;
+            for (int b = 0; b < size; ++b) {
+                for (int g = 0; g < size; ++g) {
+                    for (int r = 0; r < size; ++r) {
+                        const Lut3D::RGB& value = lut.at(r, g, b);
+                        packed[index++] = value[0];
+                        packed[index++] = value[1];
+                        packed[index++] = value[2];
+                        packed[index++] = 0.0f;
+                    }
+                }
+            }
+        };
+
+    const auto pack_grain =
+        [](const std::vector<GrainSample>& field,
+           std::vector<float>& negative,
+           std::vector<float>& print) {
+            negative.resize(field.size() * 4u);
+            print.resize(field.size() * 4u);
+
+            for (std::size_t i = 0; i < field.size(); ++i) {
+                const std::size_t base = i * 4u;
+                negative[base + 0u] = field[i][0];
+                negative[base + 1u] = field[i][1];
+                negative[base + 2u] = field[i][2];
+                negative[base + 3u] = 0.0f;
+                print[base + 0u] = field[i][3];
+                print[base + 1u] = field[i][4];
+                print[base + 2u] = field[i][5];
+                print[base + 3u] = 0.0f;
+            }
+        };
+
+    pack_lut(*cache_->color_lut, snapshot.color_lut_rgba);
+    pack_grain(
+        cache_->grain_field,
+        snapshot.grain_negative_rgba,
+        snapshot.grain_print_rgba);
+
+    if (cache_->negative_exposure_lut) {
+        pack_lut(
+            *cache_->negative_exposure_lut,
+            snapshot.negative_exposure_lut_rgba);
+    }
+
+    if (cache_->halation_development_lut) {
+        pack_lut(
+            *cache_->halation_development_lut,
+            snapshot.halation_lut_rgba);
+
+        pack_grain(
+            cache_->halation_grain_field,
+            snapshot.halation_grain_negative_rgba,
+            snapshot.halation_grain_print_rgba);
+
+        snapshot.halation_log_min = cache_->halation_log_min;
+        snapshot.halation_log_max = cache_->halation_log_max;
+        snapshot.halation_available = true;
+    }
+
     return true;
 }
 

@@ -7,10 +7,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 class FilmPipeline;
 class InputTransform;
@@ -66,6 +68,28 @@ struct FilmVizOfxRenderSettings
     }
 };
 
+
+struct FilmVizOfxGpuSnapshot
+{
+    std::uint64_t revision = 0;
+    int lut_size = 0;
+    int input_profile = 0;
+    int output_profile = 1;
+
+    std::vector<float> color_lut_rgba;
+    std::vector<float> grain_negative_rgba;
+    std::vector<float> grain_print_rgba;
+
+    std::vector<float> negative_exposure_lut_rgba;
+    std::vector<float> halation_lut_rgba;
+    std::vector<float> halation_grain_negative_rgba;
+    std::vector<float> halation_grain_print_rgba;
+
+    std::array<float, 3> halation_log_min = {{0.0f, 0.0f, 0.0f}};
+    std::array<float, 3> halation_log_max = {{1.0f, 1.0f, 1.0f}};
+    bool halation_available = false;
+};
+
 class FilmVizOfxProcessor
 {
 public:
@@ -93,9 +117,16 @@ public:
         const Abort& abort,
         std::string& error);
 
+    std::uint64_t cache_revision() const;
+
+    bool gpu_snapshot(
+        FilmVizOfxGpuSnapshot& snapshot,
+        std::string& error);
+
 private:
     struct Cache;
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::unique_ptr<Cache> cache_;
+    std::uint64_t revision_ = 0;
 };

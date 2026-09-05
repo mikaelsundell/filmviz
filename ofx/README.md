@@ -1,14 +1,34 @@
 # FilmViz OpenFX plug-in
 
-This folder contains the CPU OpenFX front end for FilmViz. The plug-in uses
-`filmviz_core` as the authoritative film model and exposes the same production
-controls as the Python application, plus explicit enable switches for the two
-spatial/noise effects.
+This folder contains the production OpenFX front end for FilmViz. The plug-in
+uses `filmviz_core` as the authoritative film model and supports both the CPU
+reference renderer and a Metal-accelerated renderer on macOS.
+
+## Processing backends
+
+The **Processing** control selects the render backend:
+
+- **Auto** — uses Metal when the OpenFX host supplies a Metal render, otherwise
+  uses the CPU reference renderer. This is the recommended setting.
+- **Metal** — prefers the Metal implementation. If the host does not enable
+  Metal for a render action, FilmViz falls back to CPU.
+- **CPU** — forces the reference CPU implementation. When Resolve has supplied
+  Metal buffers, this mode stages the image through shared buffers and is
+  intended primarily for validation/comparison rather than performance.
+
+On non-macOS builds the UI exposes Auto and CPU only.
+
+The CPU path remains the reference implementation. The Metal path accelerates
+the complete per-frame image path: cached color LUT evaluation, negative and
+print grain, and negative-stage halation. Film profile parsing, spectral model
+setup, calibration, and cached LUT construction remain on CPU because they are
+parameter-change work rather than per-pixel frame work.
 
 ## Controls
 
 Pipeline:
 
+- Processing backend
 - Input profile: ARRI AWG3 / LogC3 EI800, ACES2065-1 AP0 linear
 - Negative: Kodak Verita 200D, Kodak VISION3 50D 5203/7203
 - Print: Kodak 2383
@@ -40,145 +60,42 @@ Halation:
 Performance:
 
 - LUT size
-- Worker threads
+- Worker threads (CPU processing and cached LUT generation)
 
-A strength of zero still disables the associated effect. The explicit enable
-switches are useful in Resolve when comparing the expensive spatial paths.
+Grain and halation are disabled by default.
+
+## Metal implementation
+
+On macOS FilmViz advertises OpenFX Metal rendering. When Resolve enables Metal,
+`kOfxImagePropData` is treated as an `id<MTLBuffer>` and work is enqueued on
+the host-provided `id<MTLCommandQueue>`. Normal Metal rendering is asynchronous
+and does not wait for final GPU completion before returning from Render.
+
+The Metal backend keeps the cached FilmViz LUT products resident in GPU buffers:
+
+- final color LUT
+- negative and print granularity sigma fields
+- negative-exposure LUT for halation
+- post-halation development LUT and granularity fields
+
+Color LUTs use tetrahedral interpolation. Granularity sigma fields remain
+trilinear because they represent smooth statistical fields rather than final
+RGB transforms. Grain is generated deterministically per pixel, channel, stage,
+seed, and frame time.
+
+Halation runs at the negative stage. The Metal path extracts the highlight-
+weighted negative exposure, performs near/far Gaussian scatter with Metal
+Performance Shaders, adds record-dependent scatter, and evaluates the cached
+post-halation development LUT. The CPU path remains available for reference
+comparison.
+
+The first Metal render on a plug-in instance may include a one-time shader
+compile/upload cost. Pipelines and LUT buffers are then cached per Metal device
+and FilmViz cache revision.
 
 ## OpenFX SDK
 
-FilmViz uses only the public OpenFX C headers. The Academy Software Foundation
-OpenFX project provides those headers. Point CMake at the directory containing
-`ofxImageEffect.h`:
-
-```bash
--DFILMVIZ_OFX_INCLUDE_DIR=/path/to/openfx/include
-```
-
-The OpenFX project is BSD-3-Clause licensed. Do not copy its headers into the
-FilmViz repository unless you intentionally want to vendor the SDK.
-
-## Build on macOS
-
-Example using the same FilmViz dependency prefix as the main application:
-
-```bash
-cmake -S . -B build \
-  -DCMAKE_PREFIX_PATH=/Volumes/Projects/github/3rdparty/build/macosx/arm64.release \
-  -DFILMVIZ_BUILD_OFX=ON \
-  -DFILMVIZ_OFX_INCLUDE_DIR=/path/to/openfx/include
-
-cmake --build build --config Release --target filmviz_ofx_bundle -j
-```
-
-The bundle is produced at:
-
-```text
-build/ofx/FilmViz.ofx.bundle
-```
-
-The bundle follows the standard OpenFX package layout:
-
-```text
-FilmViz.ofx.bundle/
-  Contents/
-    Info.plist
-    MacOS/              # Win64 / Linux-x86-64 on those platforms
-      FilmViz.ofx
-    Libraries/
-      libfilmviz_core.*
-      ...bundled non-system runtime dependencies...
-    Resources/
-      filmviz/           # FilmViz measured profile/colorimetry resources
-```
-
-The OpenFX standard uses `/Library/OFX/Plugins` on macOS,
-`C:\Program Files\Common Files\OFX\Plugins` on Windows, and
-`/usr/OFX/Plugins` on Linux. The install directory is configurable with
-`FILMVIZ_OFX_INSTALL_DIR`.
-
-For a user-local macOS development install:
-
-```bash
-cmake -S . -B build \
-  -DFILMVIZ_BUILD_OFX=ON \
-  -DFILMVIZ_OFX_INCLUDE_DIR=/path/to/openfx/include \
-  -DFILMVIZ_OFX_INSTALL_DIR="$HOME/Library/OFX/Plugins"
-
-cmake --build build --config Release --target filmviz_ofx_bundle -j
-cmake --install build --config Release --component ofx
-```
-
-Restart DaVinci Resolve after installing or replacing the bundle.
-
-## Runtime resources
-
-The build copies the current FilmViz `resources` tree into the OFX bundle. At
-runtime the plug-in resolves that bundled directory automatically. For local
-experiments it can be overridden with:
-
-```bash
-export FILMVIZ_RESOURCES=/absolute/path/to/filmviz/resources
-```
-
-## Processing and cache behavior
-
-The plug-in keeps an instance-local FilmViz cache. A parameter change that
-alters the film transform rebuilds the relevant cached LUTs. Production color
-LUTs are sampled with tetrahedral interpolation; the granularity sigma field
-remains smoothly trilinear-interpolated because it represents a statistical
-field rather than final RGB color. Plain color and grain rendering uses the
-cached final 3D LUT and cached granularity sigma field. Negative-stage
-halation additionally caches the input-to-negative-exposure LUT; its spatial
-scatter and post-halation development LUT are built for the current rendered
-frame.
-
-Grain itself is generated deterministically from pixel coordinate, channel,
-stage, seed, and frame time rather than storing a full noise image in memory.
-The same frame is repeatable, while successive Resolve frames receive different
-grain. This also makes the result independent of worker scheduling.
-
-The first implementation intentionally declares `supportsTiles = false` so
-Resolve supplies a whole image. That keeps negative-stage halation correct at
-frame boundaries and avoids a premature tile/ROI implementation. The next
-performance step can add expanded OFX regions-of-interest and tile-safe
-halation without changing the FilmViz model.
-
-## Current limitations
-
-- CPU implementation only.
-- Float RGBA input/output only.
-- Full-frame rendering is requested because halation is spatial.
-- No custom drawn OFX UI; Resolve renders the standard OFX parameter controls.
-- Runtime dependencies are bundled into `Contents/Libraries` and rewritten to
-  bundle-relative load paths during macOS packaging.
-
-
-## Install helper
-
-On macOS and Linux, CMake generates:
-
-```text
-build/ofx/install_filmviz_ofx.sh
-```
-
-A normal all-target build already builds `filmviz_ofx` and assembles
-`FilmViz.ofx.bundle` when `FILMVIZ_BUILD_OFX=ON` and the OpenFX headers are
-available. To install the built bundle into the configured OFX plug-in
-directory, run:
-
-```bash
-./build/ofx/install_filmviz_ofx.sh
-```
-
-The default macOS destination is `/Library/OFX/Plugins`. The script requests
-administrator permission only when the configured destination requires it.
-Restart DaVinci Resolve after installation so it rescans OpenFX plug-ins.
-
-
-## OpenFX SDK submodule
-
-FilmViz expects the Academy Software Foundation OpenFX repository as a Git
+FilmViz uses the Academy Software Foundation OpenFX repository as a Git
 submodule at:
 
 ```text
@@ -197,22 +114,95 @@ For an existing checkout:
 git submodule update --init --recursive
 ```
 
-When applying this source bundle to an existing FilmViz checkout for the first
-time, the included helper can register the actual Git submodule:
-
-```bash
-./scripts/setup_openfx_submodule.sh
-```
-
-The default CMake lookup is then:
-
-```text
-external/openfx/include
-```
-
+CMake automatically uses `external/openfx/include`.
 `FILMVIZ_OFX_INCLUDE_DIR` remains available as an explicit override.
 
-A source archive can contain `.gitmodules`, but Git's submodule gitlink itself
-is repository metadata and cannot be represented by a normal ZIP file. Run the
-helper once in the FilmViz Git checkout, then commit `.gitmodules` and the
-`external/openfx` gitlink.
+The OpenFX project is BSD-3-Clause licensed.
+
+## Build on macOS
+
+Example using the same FilmViz dependency prefix as the main application:
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_PREFIX_PATH=/Volumes/Projects/github/3rdparty/build/macosx/arm64.release \
+  -DFILMVIZ_BUILD_OFX=ON
+
+cmake --build build --config Release -j
+```
+
+A normal all-target build includes the OFX plug-in. The bundle is produced at:
+
+```text
+build/ofx/FilmViz.ofx.bundle
+```
+
+On macOS the OFX target links Foundation, Metal, and MetalPerformanceShaders.
+Other platforms build the CPU backend only.
+
+## Bundle layout
+
+```text
+FilmViz.ofx.bundle/
+  Contents/
+    Info.plist
+    MacOS/
+      FilmViz.ofx
+    Libraries/
+      libfilmviz_core.*
+      ...bundled non-system runtime dependencies...
+    Resources/
+      filmviz/
+```
+
+Runtime dependencies are copied into `Contents/Libraries`, rewritten to
+bundle-relative load paths, and signed as part of the macOS packaging step.
+The FilmViz `resources` tree is copied to `Contents/Resources/filmviz`.
+
+For local experiments the resource path can be overridden with:
+
+```bash
+export FILMVIZ_RESOURCES=/absolute/path/to/filmviz/resources
+```
+
+## Install
+
+CMake generates:
+
+```text
+build/ofx/install_filmviz_ofx.sh
+```
+
+After building:
+
+```bash
+./build/ofx/install_filmviz_ofx.sh
+```
+
+The default macOS destination is `/Library/OFX/Plugins`. The installer clears
+quarantine metadata, signs/verifies the installed bundle, and removes Resolve's
+OFX cache so the rebuilt plug-in is discovered on the next launch. Restart
+DaVinci Resolve after installation.
+
+## Cache and rendering behavior
+
+The plug-in keeps an instance-local FilmViz cache. Parameter changes that alter
+the film transform rebuild only the relevant cached products. Grain strength,
+size, chroma, seed, and halation spatial controls do not unnecessarily rebuild
+the base color LUT.
+
+The plug-in currently requests full-frame rendering (`supportsTiles = false`)
+because halation is spatial and needs neighboring image data. A future ROI/tile
+implementation can expand the requested source region by the halation support
+radius without changing the FilmViz model.
+
+## Current limitations
+
+- Float RGBA input/output only.
+- Metal acceleration is macOS-only; CPU remains available on all platforms.
+- Full-frame rendering is currently requested because halation is spatial.
+- No custom-drawn OFX UI; Resolve renders the standard parameter controls.
+- The Metal halation blur uses Metal Performance Shaders Gaussian blur, while
+  the CPU reference uses FilmViz's CPU spatial approximation. Their film-stage
+  model and scatter parameters match, but pixel-level blur results may differ
+  slightly.

@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell.
 
-// Minimal OpenFX host-compatibility test for FilmViz.
-//
-// This intentionally has no FilmViz, OpenImageIO, Imath, threading, or other
-// third-party runtime dependencies. It advertises a basic OFX image effect and
-// fills the requested output render window with solid red. Once Resolve loads
-// and renders this plug-in, the full FilmViz implementation can be restored
-// incrementally behind the same OFX contract.
+// FilmViz OpenFX front end with CPU and Metal render backends.
+
 
 #include "ofxCore.h"
 #include "filmvizofxprocessor.h"
 
+#if FILMVIZ_HAS_METAL
+#include "filmvizmetalprocessor.h"
+#endif
+
 #include "ofxImageEffect.h"
+#include "ofxGPURender.h"
 #include "ofxParam.h"
 #include "ofxProperty.h"
 
@@ -39,6 +39,7 @@ constexpr const char* kPluginLabel = "FilmViz";
 constexpr const char* kPluginGrouping = "FilmViz";
 
 constexpr const char* kParamEnable = "enable";
+constexpr const char* kParamBackend = "backend";
 constexpr const char* kParamInputProfile = "inputProfile";
 constexpr const char* kParamNegativeProfile = "negativeProfile";
 constexpr const char* kParamPrintProfile = "printProfile";
@@ -76,6 +77,7 @@ struct InstanceData
     OfxImageClipHandle output_clip = nullptr;
 
     OfxParamHandle enable = nullptr;
+    OfxParamHandle backend = nullptr;
     OfxParamHandle input = nullptr;
     OfxParamHandle negative = nullptr;
     OfxParamHandle print = nullptr;
@@ -106,6 +108,9 @@ struct InstanceData
 
     std::string resources_directory;
     FilmVizOfxProcessor processor;
+#if FILMVIZ_HAS_METAL
+    FilmVizMetalProcessor metal_processor;
+#endif
 };
 
 std::string
@@ -209,9 +214,11 @@ read_settings(
     InstanceData& instance,
     double time,
     FilmVizOfxRenderSettings& settings,
-    bool& enabled)
+    bool& enabled,
+    int& backend)
 {
     int enable = 1;
+    int backend_value = 0;
     int input = 0;
     int negative = 0;
     int print = 0;
@@ -244,6 +251,7 @@ read_settings(
 
     const OfxStatus status[] = {
         gParameterSuite->paramGetValueAtTime(instance.enable, time, &enable),
+        gParameterSuite->paramGetValueAtTime(instance.backend, time, &backend_value),
         gParameterSuite->paramGetValueAtTime(instance.input, time, &input),
         gParameterSuite->paramGetValueAtTime(instance.negative, time, &negative),
         gParameterSuite->paramGetValueAtTime(instance.print, time, &print),
@@ -278,6 +286,11 @@ read_settings(
     }
 
     enabled = enable != 0;
+#if FILMVIZ_HAS_METAL
+    backend = backend_value;
+#else
+    backend = backend_value == 1 ? 2 : 0;
+#endif
 
     settings.input_profile = input;
     settings.negative_profile =
@@ -355,6 +368,7 @@ create_instance(
 
     const bool ok =
         fetch_param(parameter_set, kParamEnable, instance->enable)
+        && fetch_param(parameter_set, kParamBackend, instance->backend)
         && fetch_param(parameter_set, kParamInputProfile, instance->input)
         && fetch_param(parameter_set, kParamNegativeProfile, instance->negative)
         && fetch_param(parameter_set, kParamPrintProfile, instance->print)
@@ -518,6 +532,24 @@ describe(
         0,
         kOfxBitDepthFloat);
 
+#if FILMVIZ_HAS_METAL
+#ifdef kOfxImageEffectPropMetalRenderSupported
+    gPropertySuite->propSetString(
+        properties,
+        kOfxImageEffectPropMetalRenderSupported,
+        0,
+        "true");
+#endif
+#endif
+
+#ifdef kOfxImageEffectPropCPURenderSupported
+    gPropertySuite->propSetString(
+        properties,
+        kOfxImageEffectPropCPURenderSupported,
+        0,
+        "true");
+#endif
+
     gPropertySuite->propSetString(
         properties,
         kOfxImageEffectPluginRenderThreadSafety,
@@ -540,7 +572,7 @@ describe(
         properties,
         kOfxImageEffectPropSupportsTiles,
         0,
-        1);
+        0);
 
     return kOfxStatOK;
 }
@@ -792,6 +824,21 @@ describe_in_context(
         return kOfxStatFailed;
     }
 
+#if FILMVIZ_HAS_METAL
+    static const char* backends[] = {
+        "Auto",
+        "Metal",
+        "CPU"
+    };
+    constexpr int backend_count = 3;
+#else
+    static const char* backends[] = {
+        "Auto",
+        "CPU"
+    };
+    constexpr int backend_count = 2;
+#endif
+
     static const char* input_profiles[] = {
         "ARRI Wide Gamut 3 / LogC3 EI800",
         "ACES2065-1 / AP0"
@@ -812,6 +859,7 @@ describe_in_context(
     };
 
     if (!define_boolean_parameter(parameter_set, kParamEnable, "Enable", 1)
+        || !define_choice_parameter(parameter_set, kParamBackend, "Processing", backends, backend_count, 0)
         || !define_choice_parameter(parameter_set, kParamInputProfile, "Input", input_profiles, 2, 0)
         || !define_choice_parameter(parameter_set, kParamNegativeProfile, "Negative", negative_profiles, 2, 0)
         || !define_choice_parameter(parameter_set, kParamPrintProfile, "Print", print_profiles, 1, 0)
@@ -1035,6 +1083,147 @@ render(
     output_frame.row_bytes =
         output_row_bytes;
 
+    FilmVizOfxRenderSettings settings;
+    bool enabled = true;
+    int backend = 0;
+
+    if (!read_settings(
+            *instance,
+            time,
+            settings,
+            enabled,
+            backend)) {
+
+        release_images();
+        return kOfxStatFailed;
+    }
+
+    int metal_enabled = 0;
+    void* metal_command_queue = nullptr;
+
+#if FILMVIZ_HAS_METAL
+#ifdef kOfxImageEffectPropMetalEnabled
+    gPropertySuite->propGetInt(
+        in_args,
+        kOfxImageEffectPropMetalEnabled,
+        0,
+        &metal_enabled);
+#endif
+#ifdef kOfxImageEffectPropMetalCommandQueue
+    if (metal_enabled) {
+        gPropertySuite->propGetPointer(
+            in_args,
+            kOfxImageEffectPropMetalCommandQueue,
+            0,
+            &metal_command_queue);
+    }
+#endif
+#endif
+
+#if FILMVIZ_HAS_METAL
+    if (metal_enabled
+        && metal_command_queue) {
+
+        FilmVizOfxMetalFrame metal_source;
+        metal_source.x1 = source_frame.x1;
+        metal_source.y1 = source_frame.y1;
+        metal_source.x2 = source_frame.x2;
+        metal_source.y2 = source_frame.y2;
+        metal_source.row_bytes = source_row_bytes;
+        metal_source.buffer = source_data;
+
+        FilmVizOfxMetalFrame metal_output;
+        metal_output.x1 = output_frame.x1;
+        metal_output.y1 = output_frame.y1;
+        metal_output.x2 = output_frame.x2;
+        metal_output.y2 = output_frame.y2;
+        metal_output.row_bytes = output_row_bytes;
+        metal_output.buffer = output_data;
+
+        std::string error;
+        bool rendered = false;
+
+        if (!enabled) {
+            rendered =
+                instance->metal_processor.copy(
+                    metal_command_queue,
+                    metal_source,
+                    metal_output,
+                    error);
+        }
+        else {
+            if (!instance->processor.configure(
+                    settings,
+                    instance->resources_directory,
+                    error)) {
+
+                release_images();
+                return kOfxStatFailed;
+            }
+
+            // Processing choices:
+            //   Auto  -> Metal when Resolve supplied Metal buffers.
+            //   Metal -> Metal when available, otherwise CPU fallback below.
+            //   CPU   -> explicitly stage through shared buffers so the CPU
+            //            reference path can still be compared in a Metal render.
+            if (backend == 2) {
+                rendered =
+                    instance->metal_processor.render_cpu_bridge(
+                        instance->processor,
+                        metal_command_queue,
+                        metal_source,
+                        metal_output,
+                        render_window[0],
+                        render_window[1],
+                        render_window[2],
+                        render_window[3],
+                        time,
+                        [&]() {
+                            return
+                                gEffectSuite->abort(
+                                    effect) != 0;
+                        },
+                        error);
+            }
+            else {
+                rendered =
+                    instance->metal_processor.configure(
+                        instance->processor,
+                        metal_command_queue,
+                        error)
+                    && instance->metal_processor.render(
+                        settings,
+                        metal_command_queue,
+                        metal_source,
+                        metal_output,
+                        render_window[0],
+                        render_window[1],
+                        render_window[2],
+                        render_window[3],
+                        time,
+                        error);
+            }
+        }
+
+        release_images();
+
+        if (!rendered) {
+            if (error == "render aborted") {
+                return kOfxStatOK;
+            }
+
+            return backend == 2
+                ? kOfxStatFailed
+                : kOfxStatGPURenderFailed;
+        }
+
+        return kOfxStatOK;
+    }
+#endif
+
+    // Resolve supplied ordinary CPU image pointers. Auto and CPU use the
+    // reference CPU renderer; explicit Metal also falls back here when the
+    // host did not enable Metal for this render action.
     source_frame.data =
         static_cast<float*>(
             source_data);
@@ -1042,19 +1231,6 @@ render(
     output_frame.data =
         static_cast<float*>(
             output_data);
-
-    FilmVizOfxRenderSettings settings;
-    bool enabled = true;
-
-    if (!read_settings(
-            *instance,
-            time,
-            settings,
-            enabled)) {
-
-        release_images();
-        return kOfxStatFailed;
-    }
 
     if (!enabled) {
         const int x1 =

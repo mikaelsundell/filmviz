@@ -2,12 +2,10 @@
 # Copyright (c) 2025 - present Mikael Sundell.
 
 # ---------------------------------------------------------------------------
-# Brick 4: proven OFX shell + FilmViz core linkage.
+# Production OpenFX front end.
 #
-# Rendering intentionally remains the diagnostic red output. The target now
-# links filmviz_core and constructs FilmPipeline during OFX load so Resolve
-# must load the complete FilmViz dependency graph before real processing is
-# restored.
+# The CPU path remains the reference implementation. On macOS the plug-in also
+# advertises OpenFX Metal rendering and uses Resolve's supplied command queue.
 # ---------------------------------------------------------------------------
 
 add_library(filmviz_ofx MODULE
@@ -15,6 +13,30 @@ add_library(filmviz_ofx MODULE
     filmvizofxprocessor.cpp
     filmvizofxprocessor.h
 )
+
+if(APPLE)
+    enable_language(OBJCXX)
+
+    target_sources(filmviz_ofx
+        PRIVATE
+            filmvizmetalprocessor.mm
+            filmvizmetalprocessor.h
+    )
+
+    target_compile_definitions(filmviz_ofx PRIVATE FILMVIZ_HAS_METAL=1)
+    target_compile_options(filmviz_ofx PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+    )
+
+    target_link_libraries(filmviz_ofx
+        PRIVATE
+            "-framework Foundation"
+            "-framework Metal"
+            "-framework MetalPerformanceShaders"
+    )
+else()
+    target_compile_definitions(filmviz_ofx PRIVATE FILMVIZ_HAS_METAL=0)
+endif()
 
 target_include_directories(filmviz_ofx
     PRIVATE
