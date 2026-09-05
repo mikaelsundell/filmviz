@@ -8,6 +8,6 @@ tables using `build/Debug/rgb2spec_opt`:
 ./tools/generate_aces2065_1_rgb2spec_128.sh
 ```
 
-They write directly to `Resources/spectral/reconstruction/`. The 64-level table
+They write directly to `resources/spectral/reconstruction/`. The 64-level table
 is the current production resource; the 128-level table is retained for
 comparison and future validation.

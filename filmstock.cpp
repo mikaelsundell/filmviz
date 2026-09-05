@@ -344,7 +344,7 @@ FilmStock::load_characteristic(
             continue;
         }
 
-        // Same validated Prototype 07 mapping:
+        // Same validated validated record-to-density mapping mapping:
         //
         // high -> blue-sensitive
         // mid  -> green-sensitive

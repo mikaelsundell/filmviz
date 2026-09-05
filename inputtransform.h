@@ -8,7 +8,7 @@
 
 // Camera/input encoding transforms used before the spectral pipeline.
 //
-// Production FilmViz currently supports the Final1d reference input:
+// Production FilmViz currently supports the validated production reference input:
 // ARRI Wide Gamut 3 / LogC3 EI800. The output of this class is always
 // linear ACES2065-1 (AP0, D60), which is the scene RGB domain used by the
 // spectral reconstructor.

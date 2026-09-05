@@ -43,7 +43,7 @@ public:
 
     // Validate that SampledCurve::sample() reproduces every original CSV knot.
     //
-    // Because Filmsim currently uses piecewise-linear interpolation, every
+    // Because FilmViz currently uses piecewise-linear interpolation, every
     // source knot should be reproduced exactly apart from floating-point noise.
     std::vector<CurveValidationResult>
     validate_interpolation(

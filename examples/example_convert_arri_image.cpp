@@ -72,7 +72,7 @@ main(
 {
     try {
         const std::filesystem::path resources =
-            argc > 1 ? argv[1] : "Resources";
+            argc > 1 ? argv[1] : "resources";
 
         const std::filesystem::path input_filename =
             argc > 2

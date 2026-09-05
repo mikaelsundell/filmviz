@@ -103,7 +103,7 @@ SpectralReconstructor::reconstruct(
         return result;
     }
 
-    // FilmSim scene-linear scaling semantics:
+    // FilmViz scene-linear scaling semantics:
     //   1. clamp negative RGB to zero;
     //   2. scale values above one into rgb2spec's [0,1] lookup domain;
     //   3. reconstruct the normalized spectrum;

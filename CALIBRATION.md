@@ -6,7 +6,7 @@ calibration supersedes one of these conclusions.
 
 ## Source-data checks
 
-Calibrate5/6/7 verified the current Verita digitization:
+The source-data validation established the current Verita digitization:
 
 - sensitivity mapping: yellow-forming -> B, magenta-forming -> G,
   cyan-forming -> R;
@@ -62,8 +62,8 @@ record-density -> spectral-basis mapping produced a much flatter image.
 
 ## Nonlinear closure result
 
-Calibrate6 solved the Status-M -> spectral coordinate relationship at every
-neutral exposure:
+The nonlinear closure analysis solved the Status-M -> spectral coordinate
+relationship at every neutral exposure:
 
 ```text
 current Status-M closure RMS vs raw target     = 0.362475
@@ -91,8 +91,8 @@ chosen as a visual contrast setting.
 
 ## Chromatic closure
 
-Calibrate7 tested isolated and mixed R/G/B Status-M perturbations around several
-neutral exposure anchors:
+The chromatic closure analysis tested isolated and mixed R/G/B Status-M
+perturbations around several neutral exposure anchors:
 
 ```text
 cases                 52
@@ -114,7 +114,7 @@ with three independent affine curves.
 
 Visual inspection of the stronger calibrated response showed a mixed
 mid/high-tone phase that can read slightly magenta before the upper shoulder
-becomes warmer. Calibrate7 stage tracing confirmed that this chromatic behaviour
+becomes warmer. Stage tracing confirmed that this chromatic behaviour
 exists upstream of the final AP0 -> Rec.709 preview and is not caused by an
 ACES/display transform.
 
@@ -125,7 +125,7 @@ or a clearly separated creative-look layer.
 
 ## Reference profile
 
-An independent Verita reference profile used during Calibrate4 produced a
+An independently derived Verita reference profile produced a
 similar contrast range (roughly 1.44..1.60 mid-gamma depending on the branch)
 and helped identify the missing coordinate concept. The production algorithm
 does not depend on or copy that profile; the current method is derived from the

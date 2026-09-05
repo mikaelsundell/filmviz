@@ -54,7 +54,7 @@ public:
     Result view(
         const SampledCurve& print_transmittance) const;
 
-    // Prototype 31 fast tone-coordinate path. Returns viewed Y under the
+    // optimized production synthesis fast tone-coordinate path. Returns viewed Y under the
     // same normalized D55/CIE integration as view(), without computing X/Z,
     // chromaticity, Bradford adaptation, or AP0.
     float view_luminance(
@@ -124,7 +124,7 @@ private:
 
     float normalization_k_ = 0.0f;
 
-    // Prototype 31 cached integration data on the active wavelength grid.
+    // optimized production synthesis cached integration data on the active wavelength grid.
     std::vector<float> integration_wavelengths_;
     std::vector<double> integration_weight_x_;
     std::vector<double> integration_weight_y_;

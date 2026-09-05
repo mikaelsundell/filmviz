@@ -5,17 +5,20 @@
 #include "imageprocessor.h"
 #include "inputtransform.h"
 #include "lut3d.h"
+#include "threading.h"
 
 #include <OpenImageIO/argparse.h>
 #include <OpenImageIO/filesystem.h>
 #include <OpenImageIO/sysutil.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -32,6 +35,7 @@ struct FilmVizTool
     bool no_validate = false;
 
     int lut_size = 33;
+    int threads = 0;
     float middle_gray = 0.18f;
     float printer_temperature = 3200.0f;
     float exposure_stops = 0.0f;
@@ -118,7 +122,7 @@ default_resources_directory()
 
     const std::filesystem::path beside_executable =
         executable.parent_path()
-        / "Resources";
+        / "resources";
 
     if (std::filesystem::exists(
             beside_executable)) {
@@ -129,14 +133,14 @@ default_resources_directory()
 
     const std::filesystem::path cwd =
         std::filesystem::current_path()
-        / "Resources";
+        / "resources";
 
     if (std::filesystem::exists(cwd)) {
         return cwd.string();
     }
 
     // Keep the expected production layout visible in diagnostics even when
-    // Resources were deliberately omitted from a source archive.
+    // resources were deliberately omitted from a source archive.
     return
         beside_executable.string();
 }
@@ -208,6 +212,13 @@ validate_profile_options(
             "invalid LUT size: ",
             tool.lut_size);
 
+        return false;
+    }
+
+    if (tool.threads < 0) {
+        print_error(
+            "thread count must be zero or positive: ",
+            tool.threads);
         return false;
     }
 
@@ -296,7 +307,10 @@ main(
       .help("Alias for --profiles (LogCTool-style compatibility)");
 
     ap.arg("--resources %s:DIR", &tool.resources)
-      .help("Resources directory (default: Resources beside executable)");
+      .help("resources directory (default: resources beside executable)");
+
+    ap.arg("--threads %d:COUNT", &tool.threads)
+      .help("Global worker threads; 0 selects hardware concurrency (default: 0)");
 
     ap.separator("Pipeline flags:");
 
@@ -399,6 +413,9 @@ main(
         return EXIT_FAILURE;
     }
 
+    FilmVizThreading::set_thread_count(
+        tool.threads);
+
     print_info(
         "filmviz -- spectral negative + print-film image/LUT processor");
 
@@ -410,6 +427,10 @@ main(
     print_info("LUT size: ", tool.lut_size);
     print_info("exposure stops: ", tool.exposure_stops);
     print_info("push/pull stops: ", tool.push_pull_stops);
+    print_info(
+        "threads: ",
+        FilmVizThreading::effective_thread_count(
+            tool.lut_size));
 
     if (std::abs(tool.printer_temperature - 3200.0f) > 0.01f) {
         print_warning(
@@ -571,7 +592,8 @@ main(
     Lut3D lut;
 
     std::array<float, 3> failed_input = {{0.0f, 0.0f, 0.0f}};
-    bool failed = false;
+    std::atomic<bool> failed(false);
+    std::mutex failure_mutex;
 
     const Lut3D::Evaluator evaluator =
         [&](const Lut3D::RGB& encoded,
@@ -586,8 +608,11 @@ main(
                     ap0);
 
             if (!result.valid) {
-                failed_input = encoded;
-                failed = true;
+                if (!failed.exchange(true)) {
+                    const std::lock_guard<std::mutex> lock(
+                        failure_mutex);
+                    failed_input = encoded;
+                }
                 return false;
             }
 
@@ -628,7 +653,7 @@ main(
             std::cout << "\n";
         }
 
-        if (failed) {
+        if (failed.load()) {
             std::cerr
                 << "error: spectral evaluation failed at LUT input ("
                 << failed_input[0]

@@ -7,4 +7,4 @@ loaded by FilmViz at runtime:
 - `source_artwork/` — editable artwork used during profile investigation;
 - `rgb2spec/` — inputs and notes used to generate spectral tables.
 
-Only reviewed runtime outputs belong under `Resources/`.
+Only reviewed runtime outputs belong under `resources/`.

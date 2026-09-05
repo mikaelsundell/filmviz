@@ -4,10 +4,11 @@
 #pragma once
 
 // Convenience production API entry point. Individual headers remain available
-// for lower-level testing and calibration work.
+// for specialized diagnostics and integration work.
 
 #include "filmdensitycalibration.h"
 #include "filmpipeline.h"
 #include "inputtransform.h"
 #include "lut3d.h"
 #include "statusmdensitometer.h"
+#include "threading.h"

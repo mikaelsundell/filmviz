@@ -17,7 +17,7 @@ StatusMDensitometer::log_product(
     // log10 products normalized to a peak of 5.000. Between tabulated 10 nm
     // samples we interpolate in log-product space; outside the explicit
     // passband we continue with the endpoint slopes used by the validation
-    // work in Calibrate5-7.
+    // work in measurement-validation diagnostics.
     static const std::vector<double> blue_nm = {
         410, 420, 430, 440, 450, 460,
         470, 480, 490, 500, 510

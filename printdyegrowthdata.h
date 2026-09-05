@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #pragma once
 
-// Prototype 24-qualified 161-point normalized record-growth -> normalized
-// dye-amplitude calibration. Generated from the direct P21 neutral-preserving
-// inverse at 0.05-stop spacing over -4..+4 stops.
+// Qualified 161-point normalized record-growth -> normalized dye-amplitude
+// calibration. Generated from the direct neutral-preserving inverse at
+// 0.05-stop spacing over -4..+4 stops.
 
 static constexpr float kCyan_x[161] = {
 0.285059631, 0.28930065, 0.293635249, 0.298023582, 0.302671373, 0.307353109, 0.312184304, 0.317200214,

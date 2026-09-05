@@ -6,14 +6,18 @@
 #include "filmpipeline.h"
 #include "granularitymodel.h"
 #include "lut3d.h"
+#include "threading.h"
 
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imageio.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 using namespace OIIO;
@@ -324,93 +328,135 @@ ImageProcessor::process(
         progress("Image conversion", 0, input_spec.height);
     }
 
-    for (int y = 0; y < input_spec.height; ++y) {
-        for (int x = 0; x < input_spec.width; ++x) {
-            const std::size_t pixel =
-                static_cast<std::size_t>(y)
-                * static_cast<std::size_t>(input_spec.width)
-                + static_cast<std::size_t>(x);
-            const std::size_t input_offset =
-                pixel
-                * static_cast<std::size_t>(input_spec.nchannels);
-            const Lut3D::RGB encoded = {{
-                input_pixels[input_offset + 0],
-                input_pixels[input_offset + 1],
-                input_pixels[input_offset + 2]
-            }};
-            Lut3D::RGB converted =
-                lut.sample_trilinear(encoded);
-            const GrainSample sigma =
-                sample_field(
-                    grain_field,
-                    size,
-                    encoded);
+    std::atomic<int> next_row(0);
+    std::atomic<int> completed_rows(0);
+    std::mutex progress_mutex;
+    const int worker_count =
+        FilmVizThreading::effective_thread_count(
+            input_spec.height);
+    std::vector<std::thread> workers;
+    workers.reserve(
+        static_cast<std::size_t>(worker_count));
 
-            std::array<float, 3> density_noise;
+    for (int worker = 0;
+         worker < worker_count;
+         ++worker) {
 
-            for (int channel = 0; channel < 3; ++channel) {
-                const float negative_noise =
-                    settings.negative_grain_strength
-                    * sigma[channel]
-                    * spatial_normal(
-                        settings.grain_seed,
-                        x,
-                        y,
-                        0,
-                        channel,
-                        settings.grain_size_pixels);
+        workers.emplace_back(
+            [&]() {
+                while (true) {
+                    const int y =
+                        next_row.fetch_add(
+                            1,
+                            std::memory_order_relaxed);
 
-                const float print_noise =
-                    settings.print_grain_strength
-                    * sigma[channel + 3]
-                    * spatial_normal(
-                        settings.grain_seed,
-                        x,
-                        y,
-                        1,
-                        channel,
-                        settings.grain_size_pixels);
+                    if (y >= input_spec.height) {
+                        break;
+                    }
 
-                density_noise[channel] =
-                    negative_noise - print_noise;
-            }
+                    for (int x = 0;
+                         x < input_spec.width;
+                         ++x) {
+                        const std::size_t pixel =
+                            static_cast<std::size_t>(y)
+                            * static_cast<std::size_t>(input_spec.width)
+                            + static_cast<std::size_t>(x);
+                        const std::size_t input_offset =
+                            pixel
+                            * static_cast<std::size_t>(input_spec.nchannels);
+                        const Lut3D::RGB encoded = {{
+                            input_pixels[input_offset + 0],
+                            input_pixels[input_offset + 1],
+                            input_pixels[input_offset + 2]
+                        }};
+                        Lut3D::RGB converted =
+                            lut.sample_trilinear(encoded);
+                        const GrainSample sigma =
+                            sample_field(
+                                grain_field,
+                                size,
+                                encoded);
 
-            density_noise =
-                mix_grain_chroma(
-                    density_noise,
-                    settings.grain_chroma);
+                        std::array<float, 3> density_noise;
 
-            for (int channel = 0; channel < 3; ++channel) {
+                        for (int channel = 0; channel < 3; ++channel) {
+                            const float negative_noise =
+                                settings.negative_grain_strength
+                                * sigma[channel]
+                                * spatial_normal(
+                                    settings.grain_seed,
+                                    x,
+                                    y,
+                                    0,
+                                    channel,
+                                    settings.grain_size_pixels);
 
-                // Higher negative density produces a lighter print; higher
-                // print density produces a darker viewed result. This is the
-                // first-order density-domain propagation used by image mode.
-                float linear =
-                    to_linear(
-                        converted[channel],
-                        settings.output);
+                            const float print_noise =
+                                settings.print_grain_strength
+                                * sigma[channel + 3]
+                                * spatial_normal(
+                                    settings.grain_seed,
+                                    x,
+                                    y,
+                                    1,
+                                    channel,
+                                    settings.grain_size_pixels);
 
-                linear *=
-                    std::pow(
-                        10.0f,
-                        density_noise[channel]);
+                            density_noise[channel] =
+                                negative_noise - print_noise;
+                        }
 
-                output_pixels[pixel * 3u + channel] =
-                    std::clamp(
-                        from_linear(
-                            linear,
-                            settings.output),
-                        0.0f,
-                        1.0f);
-            }
-        }
+                        density_noise =
+                            mix_grain_chroma(
+                                density_noise,
+                                settings.grain_chroma);
 
-        if (progress) {
-            progress(
-                "Image conversion",
-                y + 1,
-                input_spec.height);
-        }
+                        for (int channel = 0; channel < 3; ++channel) {
+
+                            // Higher negative density produces a lighter
+                            // print; higher print density produces a darker
+                            // viewed result. This is the first-order
+                            // density-domain propagation used by image mode.
+                            float linear =
+                                to_linear(
+                                    converted[channel],
+                                    settings.output);
+
+                            linear *=
+                                std::pow(
+                                    10.0f,
+                                    density_noise[channel]);
+
+                            output_pixels[pixel * 3u + channel] =
+                                std::clamp(
+                                    from_linear(
+                                        linear,
+                                        settings.output),
+                                    0.0f,
+                                    1.0f);
+                        }
+                    }
+
+                    const int finished =
+                        completed_rows.fetch_add(
+                            1,
+                            std::memory_order_relaxed)
+                        + 1;
+
+                    if (progress) {
+                        const std::lock_guard<std::mutex> lock(
+                            progress_mutex);
+                        progress(
+                            "Image conversion",
+                            finished,
+                            input_spec.height);
+                    }
+                }
+            });
+    }
+
+    for (std::thread& worker : workers) {
+        worker.join();
     }
 
     const std::filesystem::path output_path(output_filename);

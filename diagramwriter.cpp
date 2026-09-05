@@ -18,7 +18,7 @@ using namespace OIIO;
 
 namespace {
 
-// Prototype 20 diagnostic-only ANSI Status-A weighting functions.
+// Status-A mapping audit diagnostic-only ANSI Status-A weighting functions.
 //
 // Samples are 340..830 nm in 10 nm steps. These values are the ANSI Status-A
 // arrays exposed by python-colormath's density_standards module. They are used
@@ -3765,7 +3765,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // Prototype 16: validate Kodak's source-curve semantics before changing
+    // source-curve semantics audit: validate Kodak's source-curve semantics before changing
     // the active renderer. Kodak documents the C/M/Y curves as
     // peak-normalized dye shapes, so their raw ordinates are not absolute
     // additive density contributions. The separate Visual Neutral curve is
@@ -3878,7 +3878,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // Prototype 17: constrained spectral-basis fitting.
+    // constrained basis-fit diagnostic: constrained spectral-basis fitting.
     //
     // Kodak's C/M/Y source curves are peak-normalized shapes. Fit their
     // amplitudes to the measured Visual Neutral spectrum instead of assuming
@@ -3889,7 +3889,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     //
     // All fitted amplitudes, including the optional constant baseline, are
     // constrained nonnegative. This is diagnostic-only; the active
-    // PrintDyeModel remains unchanged in Prototype 17.
+    // PrintDyeModel remains unchanged in constrained basis-fit diagnostic.
     // ------------------------------------------------------------------
     {
         const SampledCurve& visual =
@@ -3949,7 +3949,7 @@ DiagramWriter::write_print_viewer_diagnostics(
                 return std::sqrt(dx * dx + dy * dy);
             };
 
-            std::cout << "info: Prototype 17 Kodak 2383 constrained basis-fit diagnostics" << std::endl;
+            std::cout << "info: constrained basis-fit diagnostic Kodak 2383 constrained basis-fit diagnostics" << std::endl;
             std::cout
                 << "info:   model A nonnegative amplitudes C/M/Y: "
                 << model_a.coefficients[0] << ", "
@@ -4004,7 +4004,7 @@ DiagramWriter::write_print_viewer_diagnostics(
                 << visual_viewed.viewed_xy.y
                 << std::endl;
             std::cout
-                << "info:   NOTE: Prototype 17 fits source-curve amplitudes only; active print rendering is Prototype 19 residual-free C/M/Y"
+                << "info:   NOTE: constrained basis-fit diagnostic fits source-curve amplitudes only; active print rendering is linear C/M/Y reference model residual-free C/M/Y"
                 << std::endl;
 
             {
@@ -4075,13 +4075,13 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // Prototype 18: colorimetric reference calibration of the three Kodak
+    // D55 colorimetric reference calibration: colorimetric reference calibration of the three Kodak
     // peak-normalized dye shapes.
     //
     // Instead of minimizing unweighted spectral-density error, solve for
     // nonnegative C/M/Y amplitudes whose D55-viewed XYZ matches the measured
     // Kodak Visual Neutral reference. Matching XYZ constrains both chromaticity
-    // and luminance under the validated Prototype 14 viewer. The active
+    // and luminance under the validated viewing integration diagnostic viewer. The active
     // PrintDyeModel remains unchanged; this is diagnostic-only.
     // ------------------------------------------------------------------
     {
@@ -4202,7 +4202,7 @@ DiagramWriter::write_print_viewer_diagnostics(
                     return std::sqrt(dx * dx + dy * dy);
                 };
 
-            std::cout << "info: Prototype 18 Kodak 2383 colorimetric reference calibration" << std::endl;
+            std::cout << "info: D55 colorimetric reference calibration Kodak 2383 colorimetric reference calibration" << std::endl;
             std::cout
                 << "info:   calibrated nonnegative amplitudes C/M/Y: "
                 << calibration.coefficients[0] << ", "
@@ -4246,7 +4246,7 @@ DiagramWriter::write_print_viewer_diagnostics(
                 << "info:   local perturbation: each dye amplitude tested at -10% / reference / +10%"
                 << std::endl;
             std::cout
-                << "info:   NOTE: Prototype 18 calibrates only the reference neutral under the current D55 viewer; active print rendering is Prototype 19 residual-free C/M/Y"
+                << "info:   NOTE: D55 colorimetric reference calibration calibrates only the reference neutral under the current D55 viewer; active print rendering is linear C/M/Y reference model residual-free C/M/Y"
                 << std::endl;
 
             {
@@ -4338,134 +4338,134 @@ DiagramWriter::write_print_viewer_diagnostics(
         }
     }
 
-    // Prototype 20: ANSI Status-A mapping audit.
+    // Status-A mapping audit: ANSI Status-A mapping audit.
     //
     // The Kodak sensitometric curves are Status-A density measurements, while
-    // Prototype 19 directly maps those three record values to C/M/Y amplitudes.
+    // linear C/M/Y reference model directly maps those three record values to C/M/Y amplitudes.
     // Here we use explicit ANSI Status-A spectral weighting to measure the
     // published dye shapes themselves, derive the local 3x3 Jacobian, and
     // compare two distinct reference constraints:
     //
-    //   1. Prototype 18 D55/CIE colorimetric neutral amplitudes.
+    //   1. D55 colorimetric reference calibration D55/CIE colorimetric neutral amplitudes.
     //   2. C/M/Y amplitudes that synthesize Status-A R=G=B=1 exactly.
     //
     // If those constraints disagree, a simple record->dye matrix cannot be
     // promoted to production without choosing which measurement definition is
-    // authoritative. Prototype 20 therefore remains diagnostic only.
+    // authoritative. Status-A mapping audit therefore remains diagnostic only.
     // ------------------------------------------------------------------
-    const auto& p20_dye_diag = print_dye_model.diagnostics();
+    const auto& status_a_audit_dye_diag = print_dye_model.diagnostics();
 
-    const Vector3 p20_colorimetric_reference = {{
-        p20_dye_diag.calibrated_reference_amplitude.red,
-        p20_dye_diag.calibrated_reference_amplitude.green,
-        p20_dye_diag.calibrated_reference_amplitude.blue
+    const Vector3 status_a_audit_colorimetric_reference = {{
+        status_a_audit_dye_diag.calibrated_reference_amplitude.red,
+        status_a_audit_dye_diag.calibrated_reference_amplitude.green,
+        status_a_audit_dye_diag.calibrated_reference_amplitude.blue
     }};
 
-    const Vector3 p20_colorimetric_status =
-        status_a_density(print_stock, p20_colorimetric_reference);
+    const Vector3 status_a_audit_colorimetric_status =
+        status_a_density(print_stock, status_a_audit_colorimetric_reference);
 
-    const Vector3 p20_status_reference =
+    const Vector3 status_a_audit_status_reference =
         solve_status_a_neutral_amplitudes(
             print_stock,
-            p20_colorimetric_reference);
+            status_a_audit_colorimetric_reference);
 
-    const Vector3 p20_status_reference_check =
-        status_a_density(print_stock, p20_status_reference);
+    const Vector3 status_a_audit_status_reference_check =
+        status_a_density(print_stock, status_a_audit_status_reference);
 
-    const Matrix3 p20_status_jacobian =
-        status_a_jacobian(print_stock, p20_status_reference);
+    const Matrix3 status_a_audit_status_jacobian =
+        status_a_jacobian(print_stock, status_a_audit_status_reference);
 
-    const SampledCurve p20_status_reference_transmittance =
+    const SampledCurve status_a_audit_status_reference_transmittance =
         source_transmittance_from_amplitudes(
             print_stock,
-            p20_status_reference,
+            status_a_audit_status_reference,
             print_viewer.settings().wavelength_min_nm,
             print_viewer.settings().wavelength_max_nm,
             print_viewer.settings().wavelength_step_nm);
 
-    const PrintViewer::Result p20_status_reference_viewed =
-        print_viewer.view(p20_status_reference_transmittance);
+    const PrintViewer::Result status_a_audit_status_reference_viewed =
+        print_viewer.view(status_a_audit_status_reference_transmittance);
 
-    SampledCurve p20_measured_visual_neutral_transmittance;
-    const auto& p20_source_dye = print_stock.dye_density();
+    SampledCurve status_a_audit_measured_visual_neutral_transmittance;
+    const auto& status_a_audit_source_dye = print_stock.dye_density();
     for (float wavelength_nm = print_viewer.settings().wavelength_min_nm;
          wavelength_nm <= print_viewer.settings().wavelength_max_nm + 0.001f;
          wavelength_nm += print_viewer.settings().wavelength_step_nm) {
-        const float density = p20_source_dye.visual_neutral_density.sample(
+        const float density = status_a_audit_source_dye.visual_neutral_density.sample(
             wavelength_nm,
             std::numeric_limits<float>::quiet_NaN());
         if (std::isfinite(density)) {
-            p20_measured_visual_neutral_transmittance.x.push_back(wavelength_nm);
-            p20_measured_visual_neutral_transmittance.y.push_back(
+            status_a_audit_measured_visual_neutral_transmittance.x.push_back(wavelength_nm);
+            status_a_audit_measured_visual_neutral_transmittance.y.push_back(
                 std::pow(10.0f, -density));
         }
     }
 
-    const PrintViewer::Result p20_measured_visual_neutral_viewed =
-        print_viewer.view(p20_measured_visual_neutral_transmittance);
+    const PrintViewer::Result status_a_audit_measured_visual_neutral_viewed =
+        print_viewer.view(status_a_audit_measured_visual_neutral_transmittance);
 
-    const float p20_reference_dx =
-        p20_status_reference_viewed.viewed_xy.x
-        - p20_measured_visual_neutral_viewed.viewed_xy.x;
-    const float p20_reference_dy =
-        p20_status_reference_viewed.viewed_xy.y
-        - p20_measured_visual_neutral_viewed.viewed_xy.y;
-    const float p20_reference_delta_xy =
+    const float status_a_audit_reference_dx =
+        status_a_audit_status_reference_viewed.viewed_xy.x
+        - status_a_audit_measured_visual_neutral_viewed.viewed_xy.x;
+    const float status_a_audit_reference_dy =
+        status_a_audit_status_reference_viewed.viewed_xy.y
+        - status_a_audit_measured_visual_neutral_viewed.viewed_xy.y;
+    const float status_a_audit_reference_delta_xy =
         std::sqrt(
-            p20_reference_dx * p20_reference_dx
-            + p20_reference_dy * p20_reference_dy);
+            status_a_audit_reference_dx * status_a_audit_reference_dx
+            + status_a_audit_reference_dy * status_a_audit_reference_dy);
 
-    std::cout << "info: Prototype 20 ANSI Status-A record/dye mapping audit" << std::endl;
+    std::cout << "info: Status-A mapping audit ANSI Status-A record/dye mapping audit" << std::endl;
     std::cout << "info:   Status-A weighting grid: 340 .. 830 nm / 10 nm (python-colormath ANSI Status-A tables)" << std::endl;
     std::cout
-        << "info:   Prototype 18 colorimetric C/M/Y amplitudes: "
-        << p20_colorimetric_reference[0] << ", "
-        << p20_colorimetric_reference[1] << ", "
-        << p20_colorimetric_reference[2] << std::endl;
+        << "info:   D55 colorimetric reference calibration colorimetric C/M/Y amplitudes: "
+        << status_a_audit_colorimetric_reference[0] << ", "
+        << status_a_audit_colorimetric_reference[1] << ", "
+        << status_a_audit_colorimetric_reference[2] << std::endl;
     std::cout
         << "info:   synthetic ANSI Status-A R/G/B at colorimetric reference: "
-        << p20_colorimetric_status[0] << ", "
-        << p20_colorimetric_status[1] << ", "
-        << p20_colorimetric_status[2] << std::endl;
+        << status_a_audit_colorimetric_status[0] << ", "
+        << status_a_audit_colorimetric_status[1] << ", "
+        << status_a_audit_colorimetric_status[2] << std::endl;
     std::cout
         << "info:   amplitudes solving synthetic Status-A 1/1/1: "
-        << p20_status_reference[0] << ", "
-        << p20_status_reference[1] << ", "
-        << p20_status_reference[2] << std::endl;
+        << status_a_audit_status_reference[0] << ", "
+        << status_a_audit_status_reference[1] << ", "
+        << status_a_audit_status_reference[2] << std::endl;
     std::cout
         << "info:   solved Status-A check R/G/B: "
-        << p20_status_reference_check[0] << ", "
-        << p20_status_reference_check[1] << ", "
-        << p20_status_reference_check[2] << std::endl;
+        << status_a_audit_status_reference_check[0] << ", "
+        << status_a_audit_status_reference_check[1] << ", "
+        << status_a_audit_status_reference_check[2] << std::endl;
     std::cout
         << "info:   Status-A-neutral viewed xy / measured Visual Neutral xy: "
-        << p20_status_reference_viewed.viewed_xy.x << ", "
-        << p20_status_reference_viewed.viewed_xy.y << " / "
-        << p20_measured_visual_neutral_viewed.viewed_xy.x << ", "
-        << p20_measured_visual_neutral_viewed.viewed_xy.y
-        << "  delta=" << p20_reference_delta_xy << std::endl;
+        << status_a_audit_status_reference_viewed.viewed_xy.x << ", "
+        << status_a_audit_status_reference_viewed.viewed_xy.y << " / "
+        << status_a_audit_measured_visual_neutral_viewed.viewed_xy.x << ", "
+        << status_a_audit_measured_visual_neutral_viewed.viewed_xy.y
+        << "  delta=" << status_a_audit_reference_delta_xy << std::endl;
     std::cout << "info:   local Status-A Jacobian d(R,G,B)/d(C,M,Y):" << std::endl;
     for (int row = 0; row < 3; ++row) {
         std::cout
             << "info:     [ "
-            << p20_status_jacobian[row][0] << ", "
-            << p20_status_jacobian[row][1] << ", "
-            << p20_status_jacobian[row][2] << " ]"
+            << status_a_audit_status_jacobian[row][0] << ", "
+            << status_a_audit_status_jacobian[row][1] << ", "
+            << status_a_audit_status_jacobian[row][2] << " ]"
             << std::endl;
     }
     std::cout
         << "info:   NOTE: ANSI Status-A spectral weights are diagnostic-only; "
-        << "active rendering remains Prototype 19 residual-free C/M/Y"
+        << "active rendering remains linear C/M/Y reference model residual-free C/M/Y"
         << std::endl;
 
-    std::cout << "info: Prototype 21 neutral-preserving dye-growth inference" << std::endl;
+    std::cout << "info: neutral-preserving inverse neutral-preserving dye-growth inference" << std::endl;
     std::cout
         << "info:   target chromaticity: Kodak measured Visual Neutral under current D55 viewer xy="
-        << p20_measured_visual_neutral_viewed.viewed_xy.x << ", "
-        << p20_measured_visual_neutral_viewed.viewed_xy.y << std::endl;
-    std::cout << "info:   target tone per ladder point: preserve Prototype 19 viewed Y" << std::endl;
-    std::cout << "info:   solve: nonlinear 3x3 XYZ inverse from Kodak C/M/Y amplitudes, initialized from Prototype 19 linear amplitudes" << std::endl;
-    std::cout << "info:   NOTE: diagnostic only; active rendering remains Prototype 19 residual-free C/M/Y" << std::endl;
+        << status_a_audit_measured_visual_neutral_viewed.viewed_xy.x << ", "
+        << status_a_audit_measured_visual_neutral_viewed.viewed_xy.y << std::endl;
+    std::cout << "info:   target tone per ladder point: preserve linear C/M/Y reference model viewed Y" << std::endl;
+    std::cout << "info:   solve: nonlinear 3x3 XYZ inverse from Kodak C/M/Y amplitudes, initialized from linear C/M/Y reference model linear amplitudes" << std::endl;
+    std::cout << "info:   NOTE: diagnostic only; active rendering remains linear C/M/Y reference model residual-free C/M/Y" << std::endl;
 
     {
         SampledCurve row_r;
@@ -4473,15 +4473,15 @@ DiagramWriter::write_print_viewer_diagnostics(
         SampledCurve row_b;
         for (int column = 0; column < 3; ++column) {
             row_r.x.push_back(static_cast<float>(column));
-            row_r.y.push_back(p20_status_jacobian[0][column]);
+            row_r.y.push_back(status_a_audit_status_jacobian[0][column]);
             row_g.x.push_back(static_cast<float>(column));
-            row_g.y.push_back(p20_status_jacobian[1][column]);
+            row_g.y.push_back(status_a_audit_status_jacobian[1][column]);
             row_b.x.push_back(static_cast<float>(column));
-            row_b.y.push_back(p20_status_jacobian[2][column]);
+            row_b.y.push_back(status_a_audit_status_jacobian[2][column]);
         }
 
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 20 STATUS-A JACOBIAN";
+        options.title = "KODAK 2383 STATUS-A AUDIT STATUS-A JACOBIAN";
         options.subtitle = "ROWS STATUS-A R/G/B  COLUMNS 0=C 1=M 2=Y  DIAGNOSTIC ONLY";
         options.x_label = "DYE AMPLITUDE INDEX  0 C   1 M   2 Y";
         options.y_label = "D STATUS-A / D DYE AMPLITUDE";
@@ -4500,7 +4500,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
         success =
             write_plot(
-                stem + "_2383_p20_status_a_jacobian.png",
+                stem + "_2383_status_a_status_a_jacobian.png",
                 series,
                 options)
             && success;
@@ -4520,7 +4520,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     SampledCurve ap0_g;
     SampledCurve ap0_b;
 
-    // Prototype 19 explicit A/B regression against the retired residual model.
+    // linear C/M/Y reference model explicit A/B regression against the retired residual model.
     SampledCurve legacy_delta_xy;
     SampledCurve new_delta_xy;
     SampledCurve legacy_ap0_spread;
@@ -4528,17 +4528,17 @@ DiagramWriter::write_print_viewer_diagnostics(
     SampledCurve matrix_delta_xy;
     SampledCurve matrix_ap0_spread;
 
-    // Prototype 21 diagnostic-only neutral-preserving inverse.
-    SampledCurve p21_delta_xy;
-    SampledCurve p21_ap0_spread;
-    SampledCurve p21_linear_c;
-    SampledCurve p21_linear_m;
-    SampledCurve p21_linear_y;
-    SampledCurve p21_inferred_c;
-    SampledCurve p21_inferred_m;
-    SampledCurve p21_inferred_y;
+    // neutral-preserving inverse diagnostic-only neutral-preserving inverse.
+    SampledCurve neutral_inverse_delta_xy;
+    SampledCurve neutral_inverse_ap0_spread;
+    SampledCurve neutral_inverse_linear_c;
+    SampledCurve neutral_inverse_linear_m;
+    SampledCurve neutral_inverse_linear_y;
+    SampledCurve neutral_inverse_inferred_c;
+    SampledCurve neutral_inverse_inferred_m;
+    SampledCurve neutral_inverse_inferred_y;
 
-    // Prototype 15 neutral-drift decomposition retained for regression context.
+    // neutral-drift diagnostic neutral-drift decomposition retained for regression context.
     //
     // These controls deliberately do not alter the active pixel pipeline.
     // They ask which already-modelled stage is responsible for the observed
@@ -4590,36 +4590,36 @@ DiagramWriter::write_print_viewer_diagnostics(
                 print_dye_model.synthesize_transmittance_legacy(
                     print_density));
 
-        Vector3 p20_status_delta = {{
+        Vector3 status_a_audit_status_delta = {{
             print_density.red - 1.0f,
             print_density.green - 1.0f,
             print_density.blue - 1.0f
         }};
-        Vector3 p20_amplitude_delta = {{0.0f, 0.0f, 0.0f}};
+        Vector3 status_a_audit_amplitude_delta = {{0.0f, 0.0f, 0.0f}};
         solve_3x3(
-            p20_status_jacobian,
-            p20_status_delta,
-            p20_amplitude_delta);
+            status_a_audit_status_jacobian,
+            status_a_audit_status_delta,
+            status_a_audit_amplitude_delta);
 
-        Vector3 p20_matrix_amplitudes = p20_status_reference;
+        Vector3 status_a_audit_matrix_amplitudes = status_a_audit_status_reference;
         for (int component = 0; component < 3; ++component) {
-            p20_matrix_amplitudes[component] =
+            status_a_audit_matrix_amplitudes[component] =
                 std::max(
                     0.0f,
-                    p20_matrix_amplitudes[component]
-                        + p20_amplitude_delta[component]);
+                    status_a_audit_matrix_amplitudes[component]
+                        + status_a_audit_amplitude_delta[component]);
         }
 
-        const SampledCurve p20_matrix_transmittance =
+        const SampledCurve status_a_audit_matrix_transmittance =
             source_transmittance_from_amplitudes(
                 print_stock,
-                p20_matrix_amplitudes,
+                status_a_audit_matrix_amplitudes,
                 print_viewer.settings().wavelength_min_nm,
                 print_viewer.settings().wavelength_max_nm,
                 print_viewer.settings().wavelength_step_nm);
 
-        const PrintViewer::Result p20_matrix_viewed =
-            print_viewer.view(p20_matrix_transmittance);
+        const PrintViewer::Result status_a_audit_matrix_viewed =
+            print_viewer.view(status_a_audit_matrix_transmittance);
 
         const auto& dye_diagnostics =
             print_dye_model.diagnostics();
@@ -4660,43 +4660,43 @@ DiagramWriter::write_print_viewer_diagnostics(
              + normalized_b)
             / 3.0f;
 
-        const FilmDensity& p21_reference_amplitude_density =
+        const FilmDensity& neutral_inverse_reference_amplitude_density =
             dye_diagnostics.calibrated_reference_amplitude;
 
-        Vector3 p21_linear_amplitudes = {{
-            p21_reference_amplitude_density.red * normalized_r,
-            p21_reference_amplitude_density.green * normalized_g,
-            p21_reference_amplitude_density.blue * normalized_b
+        Vector3 neutral_inverse_linear_amplitudes = {{
+            neutral_inverse_reference_amplitude_density.red * normalized_r,
+            neutral_inverse_reference_amplitude_density.green * normalized_g,
+            neutral_inverse_reference_amplitude_density.blue * normalized_b
         }};
 
-        const float p21_target_x = p20_measured_visual_neutral_viewed.viewed_xy.x;
-        const float p21_target_y_chromaticity = p20_measured_visual_neutral_viewed.viewed_xy.y;
-        const float p21_target_Y = viewed.viewed_xyz.y;
-        const float p21_target_z_chromaticity =
-            std::max(0.0f, 1.0f - p21_target_x - p21_target_y_chromaticity);
+        const float neutral_inverse_target_x = status_a_audit_measured_visual_neutral_viewed.viewed_xy.x;
+        const float neutral_inverse_target_y_chromaticity = status_a_audit_measured_visual_neutral_viewed.viewed_xy.y;
+        const float neutral_inverse_target_Y = viewed.viewed_xyz.y;
+        const float neutral_inverse_target_z_chromaticity =
+            std::max(0.0f, 1.0f - neutral_inverse_target_x - neutral_inverse_target_y_chromaticity);
 
-        PrintViewer::XYZ p21_target_xyz;
-        if (p21_target_y_chromaticity > 1e-12f) {
-            p21_target_xyz.x = p21_target_Y * p21_target_x / p21_target_y_chromaticity;
-            p21_target_xyz.y = p21_target_Y;
-            p21_target_xyz.z = p21_target_Y * p21_target_z_chromaticity / p21_target_y_chromaticity;
+        PrintViewer::XYZ neutral_inverse_target_xyz;
+        if (neutral_inverse_target_y_chromaticity > 1e-12f) {
+            neutral_inverse_target_xyz.x = neutral_inverse_target_Y * neutral_inverse_target_x / neutral_inverse_target_y_chromaticity;
+            neutral_inverse_target_xyz.y = neutral_inverse_target_Y;
+            neutral_inverse_target_xyz.z = neutral_inverse_target_Y * neutral_inverse_target_z_chromaticity / neutral_inverse_target_y_chromaticity;
         }
 
-        Vector3 p21_inferred_amplitudes = p21_linear_amplitudes;
-        bool p21_solve_ok = true;
+        Vector3 neutral_inverse_inferred_amplitudes = neutral_inverse_linear_amplitudes;
+        bool neutral_inverse_solve_ok = true;
 
         for (int iteration = 0; iteration < 16; ++iteration) {
             const PrintViewer::Result current_viewed = print_viewer.view(
                 source_transmittance_from_amplitudes(
-                    print_stock, p21_inferred_amplitudes,
+                    print_stock, neutral_inverse_inferred_amplitudes,
                     print_viewer.settings().wavelength_min_nm,
                     print_viewer.settings().wavelength_max_nm,
                     print_viewer.settings().wavelength_step_nm));
 
             Vector3 xyz_error = {{
-                p21_target_xyz.x - current_viewed.viewed_xyz.x,
-                p21_target_xyz.y - current_viewed.viewed_xyz.y,
-                p21_target_xyz.z - current_viewed.viewed_xyz.z
+                neutral_inverse_target_xyz.x - current_viewed.viewed_xyz.x,
+                neutral_inverse_target_xyz.y - current_viewed.viewed_xyz.y,
+                neutral_inverse_target_xyz.z - current_viewed.viewed_xyz.z
             }};
 
             const float max_error = std::max(
@@ -4715,9 +4715,9 @@ DiagramWriter::write_print_viewer_diagnostics(
             for (int column = 0; column < 3; ++column) {
                 const float h = std::max(
                     1e-4f,
-                    1e-3f * std::max(1.0f, p21_inferred_amplitudes[column]));
-                Vector3 plus = p21_inferred_amplitudes;
-                Vector3 minus = p21_inferred_amplitudes;
+                    1e-3f * std::max(1.0f, neutral_inverse_inferred_amplitudes[column]));
+                Vector3 plus = neutral_inverse_inferred_amplitudes;
+                Vector3 minus = neutral_inverse_inferred_amplitudes;
                 plus[column] += h;
                 minus[column] = std::max(0.0f, minus[column] - h);
                 const float denominator = plus[column] - minus[column];
@@ -4736,7 +4736,7 @@ DiagramWriter::write_print_viewer_diagnostics(
                         print_viewer.settings().wavelength_step_nm));
 
                 if (denominator <= 0.0f) {
-                    p21_solve_ok = false;
+                    neutral_inverse_solve_ok = false;
                     break;
                 }
                 xyz_jacobian[0][column] = (plus_viewed.viewed_xyz.x - minus_viewed.viewed_xyz.x) / denominator;
@@ -4744,21 +4744,21 @@ DiagramWriter::write_print_viewer_diagnostics(
                 xyz_jacobian[2][column] = (plus_viewed.viewed_xyz.z - minus_viewed.viewed_xyz.z) / denominator;
             }
 
-            if (!p21_solve_ok) {
+            if (!neutral_inverse_solve_ok) {
                 break;
             }
 
             Vector3 amplitude_delta = {{0.0f, 0.0f, 0.0f}};
             if (!solve_3x3(xyz_jacobian, xyz_error, amplitude_delta)) {
-                p21_solve_ok = false;
+                neutral_inverse_solve_ok = false;
                 break;
             }
 
             float step_scale = 1.0f;
             for (int component = 0; component < 3; ++component) {
                 if (amplitude_delta[component] < 0.0f
-                    && p21_inferred_amplitudes[component] + amplitude_delta[component] < 0.0f) {
-                    const float candidate = p21_inferred_amplitudes[component]
+                    && neutral_inverse_inferred_amplitudes[component] + amplitude_delta[component] < 0.0f) {
+                    const float candidate = neutral_inverse_inferred_amplitudes[component]
                         / std::max(1e-12f, -amplitude_delta[component]);
                     step_scale = std::min(step_scale, 0.8f * candidate);
                 }
@@ -4766,40 +4766,40 @@ DiagramWriter::write_print_viewer_diagnostics(
             step_scale = std::max(0.05f, std::min(1.0f, step_scale));
 
             for (int component = 0; component < 3; ++component) {
-                p21_inferred_amplitudes[component] = std::max(
+                neutral_inverse_inferred_amplitudes[component] = std::max(
                     0.0f,
-                    p21_inferred_amplitudes[component] + step_scale * amplitude_delta[component]);
+                    neutral_inverse_inferred_amplitudes[component] + step_scale * amplitude_delta[component]);
             }
         }
 
-        const PrintViewer::Result p21_inferred_viewed = print_viewer.view(
+        const PrintViewer::Result neutral_inverse_inferred_viewed = print_viewer.view(
             source_transmittance_from_amplitudes(
-                print_stock, p21_inferred_amplitudes,
+                print_stock, neutral_inverse_inferred_amplitudes,
                 print_viewer.settings().wavelength_min_nm,
                 print_viewer.settings().wavelength_max_nm,
                 print_viewer.settings().wavelength_step_nm));
 
-        p21_linear_c.x.push_back(stop_values[i]); p21_linear_c.y.push_back(p21_linear_amplitudes[0]);
-        p21_linear_m.x.push_back(stop_values[i]); p21_linear_m.y.push_back(p21_linear_amplitudes[1]);
-        p21_linear_y.x.push_back(stop_values[i]); p21_linear_y.y.push_back(p21_linear_amplitudes[2]);
-        p21_inferred_c.x.push_back(stop_values[i]); p21_inferred_c.y.push_back(p21_inferred_amplitudes[0]);
-        p21_inferred_m.x.push_back(stop_values[i]); p21_inferred_m.y.push_back(p21_inferred_amplitudes[1]);
-        p21_inferred_y.x.push_back(stop_values[i]); p21_inferred_y.y.push_back(p21_inferred_amplitudes[2]);
+        neutral_inverse_linear_c.x.push_back(stop_values[i]); neutral_inverse_linear_c.y.push_back(neutral_inverse_linear_amplitudes[0]);
+        neutral_inverse_linear_m.x.push_back(stop_values[i]); neutral_inverse_linear_m.y.push_back(neutral_inverse_linear_amplitudes[1]);
+        neutral_inverse_linear_y.x.push_back(stop_values[i]); neutral_inverse_linear_y.y.push_back(neutral_inverse_linear_amplitudes[2]);
+        neutral_inverse_inferred_c.x.push_back(stop_values[i]); neutral_inverse_inferred_c.y.push_back(neutral_inverse_inferred_amplitudes[0]);
+        neutral_inverse_inferred_m.x.push_back(stop_values[i]); neutral_inverse_inferred_m.y.push_back(neutral_inverse_inferred_amplitudes[1]);
+        neutral_inverse_inferred_y.x.push_back(stop_values[i]); neutral_inverse_inferred_y.y.push_back(neutral_inverse_inferred_amplitudes[2]);
 
-        const float p21_xy_error = std::sqrt(
-            std::pow(p21_inferred_viewed.viewed_xy.x - p21_target_x, 2.0f)
-            + std::pow(p21_inferred_viewed.viewed_xy.y - p21_target_y_chromaticity, 2.0f));
-        const float p21_y_relative_error = p21_target_Y > 1e-12f
-            ? std::abs(p21_inferred_viewed.viewed_xyz.y - p21_target_Y) / p21_target_Y
+        const float neutral_inverse_xy_error = std::sqrt(
+            std::pow(neutral_inverse_inferred_viewed.viewed_xy.x - neutral_inverse_target_x, 2.0f)
+            + std::pow(neutral_inverse_inferred_viewed.viewed_xy.y - neutral_inverse_target_y_chromaticity, 2.0f));
+        const float neutral_inverse_y_relative_error = neutral_inverse_target_Y > 1e-12f
+            ? std::abs(neutral_inverse_inferred_viewed.viewed_xyz.y - neutral_inverse_target_Y) / neutral_inverse_target_Y
             : 0.0f;
 
         std::cout
-            << "info:   P21 stop " << stop_values[i]
-            << "  P19 C/M/Y=" << p21_linear_amplitudes[0] << ", " << p21_linear_amplitudes[1] << ", " << p21_linear_amplitudes[2]
-            << "  inferred=" << p21_inferred_amplitudes[0] << ", " << p21_inferred_amplitudes[1] << ", " << p21_inferred_amplitudes[2]
-            << "  xy_err=" << p21_xy_error
-            << "  rel_Y_err=" << p21_y_relative_error
-            << "  " << (p21_solve_ok ? "PASS" : "SOLVE_FAIL")
+            << "info:   NEUTRAL INVERSE stop " << stop_values[i]
+            << "  LINEAR REFERENCE C/M/Y=" << neutral_inverse_linear_amplitudes[0] << ", " << neutral_inverse_linear_amplitudes[1] << ", " << neutral_inverse_linear_amplitudes[2]
+            << "  inferred=" << neutral_inverse_inferred_amplitudes[0] << ", " << neutral_inverse_inferred_amplitudes[1] << ", " << neutral_inverse_inferred_amplitudes[2]
+            << "  xy_err=" << neutral_inverse_xy_error
+            << "  rel_Y_err=" << neutral_inverse_y_relative_error
+            << "  " << (neutral_inverse_solve_ok ? "PASS" : "SOLVE_FAIL")
             << std::endl;
 
         normalized_increment_r.x.push_back(stop_values[i]);
@@ -4928,14 +4928,14 @@ DiagramWriter::write_print_viewer_diagnostics(
         legacy_ap0_spread.y.push_back(ap0_spread(legacy_viewed.aces2065_1));
         matrix_delta_xy.x.push_back(stop_values[i]);
         matrix_delta_xy.y.push_back(
-            chromaticity_distance(p20_matrix_viewed.viewed_xy));
+            chromaticity_distance(status_a_audit_matrix_viewed.viewed_xy));
         matrix_ap0_spread.x.push_back(stop_values[i]);
         matrix_ap0_spread.y.push_back(
-            ap0_spread(p20_matrix_viewed.aces2065_1));
-        p21_delta_xy.x.push_back(stop_values[i]);
-        p21_delta_xy.y.push_back(chromaticity_distance(p21_inferred_viewed.viewed_xy));
-        p21_ap0_spread.x.push_back(stop_values[i]);
-        p21_ap0_spread.y.push_back(ap0_spread(p21_inferred_viewed.aces2065_1));
+            ap0_spread(status_a_audit_matrix_viewed.aces2065_1));
+        neutral_inverse_delta_xy.x.push_back(stop_values[i]);
+        neutral_inverse_delta_xy.y.push_back(chromaticity_distance(neutral_inverse_inferred_viewed.viewed_xy));
+        neutral_inverse_ap0_spread.x.push_back(stop_values[i]);
+        neutral_inverse_ap0_spread.y.push_back(ap0_spread(neutral_inverse_inferred_viewed.aces2065_1));
 
         real_delta_xy.x.push_back(stop_values[i]);
         real_delta_xy.y.push_back(
@@ -4990,13 +4990,13 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // Prototype 22: robustness/interpolation audit of the P21 neutral-
-    // preserving inverse.  Fit a monotone cubic mapping from the P19
-    // normalized record-growth variable to the P21 normalized dye amplitude,
+    // interpolation robustness audit: robustness/interpolation audit of the NEUTRAL INVERSE neutral-
+    // preserving inverse.  Fit a monotone cubic mapping from the LINEAR REFERENCE
+    // normalized record-growth variable to the NEUTRAL INVERSE normalized dye amplitude,
     // then evaluate it densely through the neutral ladder.  This is still
-    // diagnostic only; active rendering remains Prototype 19.
+    // diagnostic only; active rendering remains linear C/M/Y reference model.
     // ------------------------------------------------------------------
-    const FilmDensity& p22_reference_amplitude =
+    const FilmDensity& interpolation_audit_reference_amplitude =
         print_dye_model.diagnostics().calibrated_reference_amplitude;
 
     auto make_growth_mapping = [](const SampledCurve& linear,
@@ -5027,25 +5027,25 @@ DiagramWriter::write_print_viewer_diagnostics(
         return mapping;
     };
 
-    const SampledCurve p22_growth_c = make_growth_mapping(
-        p21_linear_c, p21_inferred_c, p22_reference_amplitude.red);
-    const SampledCurve p22_growth_m = make_growth_mapping(
-        p21_linear_m, p21_inferred_m, p22_reference_amplitude.green);
-    const SampledCurve p22_growth_y = make_growth_mapping(
-        p21_linear_y, p21_inferred_y, p22_reference_amplitude.blue);
+    const SampledCurve interpolation_audit_growth_c = make_growth_mapping(
+        neutral_inverse_linear_c, neutral_inverse_inferred_c, interpolation_audit_reference_amplitude.red);
+    const SampledCurve interpolation_audit_growth_m = make_growth_mapping(
+        neutral_inverse_linear_m, neutral_inverse_inferred_m, interpolation_audit_reference_amplitude.green);
+    const SampledCurve interpolation_audit_growth_y = make_growth_mapping(
+        neutral_inverse_linear_y, neutral_inverse_inferred_y, interpolation_audit_reference_amplitude.blue);
 
-    SampledCurve p22_dense_xy_error;
-    SampledCurve p22_dense_y_error;
-    SampledCurve p22_dense_delta_from_white;
-    SampledCurve p22_dense_ap0_spread;
-    SampledCurve p22_dense_c;
-    SampledCurve p22_dense_m;
-    SampledCurve p22_dense_y;
-    SampledCurve p22_crosstalk_c;
-    SampledCurve p22_crosstalk_m;
-    SampledCurve p22_crosstalk_y;
-    SampledCurve p22_xyz_condition;
-    SampledCurve p22_identity;
+    SampledCurve interpolation_audit_dense_xy_error;
+    SampledCurve interpolation_audit_dense_y_error;
+    SampledCurve interpolation_audit_dense_delta_from_white;
+    SampledCurve interpolation_audit_dense_ap0_spread;
+    SampledCurve interpolation_audit_dense_c;
+    SampledCurve interpolation_audit_dense_m;
+    SampledCurve interpolation_audit_dense_y;
+    SampledCurve interpolation_audit_crosstalk_c;
+    SampledCurve interpolation_audit_crosstalk_m;
+    SampledCurve interpolation_audit_crosstalk_y;
+    SampledCurve interpolation_audit_xyz_condition;
+    SampledCurve interpolation_audit_identity;
 
     for (int i = 0; i <= 80; ++i) {
         const float normalized = static_cast<float>(i) / 80.0f;
@@ -5058,70 +5058,70 @@ DiagramWriter::write_print_viewer_diagnostics(
             negative_dye_model.synthesize_neutral_transmittance(
                 negative_stock, negative_log_exposure);
         const FilmDensity print_density = print_processor.process(negative_transmittance);
-        const PrintViewer::Result p19_viewed = print_viewer.view(
+        const PrintViewer::Result linear_reference_viewed = print_viewer.view(
             print_dye_model.synthesize_transmittance(print_density));
 
-        const auto& p22_diag = print_dye_model.diagnostics();
-        const FilmDensity& p22_dmin = p22_diag.minimum_record_density;
-        const FilmDensity& p22_ref_increment = p22_diag.reference_record_increment;
+        const auto& interpolation_audit_diag = print_dye_model.diagnostics();
+        const FilmDensity& interpolation_audit_dmin = interpolation_audit_diag.minimum_record_density;
+        const FilmDensity& interpolation_audit_ref_increment = interpolation_audit_diag.reference_record_increment;
 
-        const float n_r = p22_ref_increment.red > 1e-12f
-            ? std::max(0.0f, (print_density.red - p22_dmin.red) / p22_ref_increment.red)
+        const float n_r = interpolation_audit_ref_increment.red > 1e-12f
+            ? std::max(0.0f, (print_density.red - interpolation_audit_dmin.red) / interpolation_audit_ref_increment.red)
             : 0.0f;
-        const float n_g = p22_ref_increment.green > 1e-12f
-            ? std::max(0.0f, (print_density.green - p22_dmin.green) / p22_ref_increment.green)
+        const float n_g = interpolation_audit_ref_increment.green > 1e-12f
+            ? std::max(0.0f, (print_density.green - interpolation_audit_dmin.green) / interpolation_audit_ref_increment.green)
             : 0.0f;
-        const float n_b = p22_ref_increment.blue > 1e-12f
-            ? std::max(0.0f, (print_density.blue - p22_dmin.blue) / p22_ref_increment.blue)
+        const float n_b = interpolation_audit_ref_increment.blue > 1e-12f
+            ? std::max(0.0f, (print_density.blue - interpolation_audit_dmin.blue) / interpolation_audit_ref_increment.blue)
             : 0.0f;
 
         Vector3 amplitudes = {{
-            p22_reference_amplitude.red * monotone_cubic_sample(p22_growth_c, n_r),
-            p22_reference_amplitude.green * monotone_cubic_sample(p22_growth_m, n_g),
-            p22_reference_amplitude.blue * monotone_cubic_sample(p22_growth_y, n_b)
+            interpolation_audit_reference_amplitude.red * monotone_cubic_sample(interpolation_audit_growth_c, n_r),
+            interpolation_audit_reference_amplitude.green * monotone_cubic_sample(interpolation_audit_growth_m, n_g),
+            interpolation_audit_reference_amplitude.blue * monotone_cubic_sample(interpolation_audit_growth_y, n_b)
         }};
         for (float& value : amplitudes) {
             value = std::max(0.0f, value);
         }
 
-        const PrintViewer::Result p22_viewed = print_viewer.view(
+        const PrintViewer::Result interpolation_audit_viewed = print_viewer.view(
             source_transmittance_from_amplitudes(
                 print_stock, amplitudes,
                 print_viewer.settings().wavelength_min_nm,
                 print_viewer.settings().wavelength_max_nm,
                 print_viewer.settings().wavelength_step_nm));
 
-        const float target_x = p20_measured_visual_neutral_viewed.viewed_xy.x;
-        const float target_y = p20_measured_visual_neutral_viewed.viewed_xy.y;
-        const float dx = p22_viewed.viewed_xy.x - target_x;
-        const float dy = p22_viewed.viewed_xy.y - target_y;
+        const float target_x = status_a_audit_measured_visual_neutral_viewed.viewed_xy.x;
+        const float target_y = status_a_audit_measured_visual_neutral_viewed.viewed_xy.y;
+        const float dx = interpolation_audit_viewed.viewed_xy.x - target_x;
+        const float dy = interpolation_audit_viewed.viewed_xy.y - target_y;
         const float xy_error = std::sqrt(dx * dx + dy * dy);
-        const float relative_y_error = p19_viewed.viewed_xyz.y > 1e-12f
-            ? std::abs(p22_viewed.viewed_xyz.y - p19_viewed.viewed_xyz.y)
-                / p19_viewed.viewed_xyz.y
+        const float relative_y_error = linear_reference_viewed.viewed_xyz.y > 1e-12f
+            ? std::abs(interpolation_audit_viewed.viewed_xyz.y - linear_reference_viewed.viewed_xyz.y)
+                / linear_reference_viewed.viewed_xyz.y
             : 0.0f;
 
         const PrintViewer::xy viewing_white_xy = print_viewer.viewing_white_xy();
-        const float white_dx = p22_viewed.viewed_xy.x - viewing_white_xy.x;
-        const float white_dy = p22_viewed.viewed_xy.y - viewing_white_xy.y;
+        const float white_dx = interpolation_audit_viewed.viewed_xy.x - viewing_white_xy.x;
+        const float white_dy = interpolation_audit_viewed.viewed_xy.y - viewing_white_xy.y;
         const float delta_from_white = std::sqrt(white_dx * white_dx + white_dy * white_dy);
 
-        const float ap0_min = std::min(p22_viewed.aces2065_1[0],
-            std::min(p22_viewed.aces2065_1[1], p22_viewed.aces2065_1[2]));
-        const float ap0_max = std::max(p22_viewed.aces2065_1[0],
-            std::max(p22_viewed.aces2065_1[1], p22_viewed.aces2065_1[2]));
-        const float ap0_mean = (p22_viewed.aces2065_1[0]
-            + p22_viewed.aces2065_1[1]
-            + p22_viewed.aces2065_1[2]) / 3.0f;
+        const float ap0_min = std::min(interpolation_audit_viewed.aces2065_1[0],
+            std::min(interpolation_audit_viewed.aces2065_1[1], interpolation_audit_viewed.aces2065_1[2]));
+        const float ap0_max = std::max(interpolation_audit_viewed.aces2065_1[0],
+            std::max(interpolation_audit_viewed.aces2065_1[1], interpolation_audit_viewed.aces2065_1[2]));
+        const float ap0_mean = (interpolation_audit_viewed.aces2065_1[0]
+            + interpolation_audit_viewed.aces2065_1[1]
+            + interpolation_audit_viewed.aces2065_1[2]) / 3.0f;
         const float spread = ap0_mean > 1e-12f ? (ap0_max - ap0_min) / ap0_mean : 0.0f;
 
-        p22_dense_xy_error.x.push_back(stop); p22_dense_xy_error.y.push_back(xy_error);
-        p22_dense_y_error.x.push_back(stop); p22_dense_y_error.y.push_back(relative_y_error);
-        p22_dense_delta_from_white.x.push_back(stop); p22_dense_delta_from_white.y.push_back(delta_from_white);
-        p22_dense_ap0_spread.x.push_back(stop); p22_dense_ap0_spread.y.push_back(spread);
-        p22_dense_c.x.push_back(stop); p22_dense_c.y.push_back(amplitudes[0]);
-        p22_dense_m.x.push_back(stop); p22_dense_m.y.push_back(amplitudes[1]);
-        p22_dense_y.x.push_back(stop); p22_dense_y.y.push_back(amplitudes[2]);
+        interpolation_audit_dense_xy_error.x.push_back(stop); interpolation_audit_dense_xy_error.y.push_back(xy_error);
+        interpolation_audit_dense_y_error.x.push_back(stop); interpolation_audit_dense_y_error.y.push_back(relative_y_error);
+        interpolation_audit_dense_delta_from_white.x.push_back(stop); interpolation_audit_dense_delta_from_white.y.push_back(delta_from_white);
+        interpolation_audit_dense_ap0_spread.x.push_back(stop); interpolation_audit_dense_ap0_spread.y.push_back(spread);
+        interpolation_audit_dense_c.x.push_back(stop); interpolation_audit_dense_c.y.push_back(amplitudes[0]);
+        interpolation_audit_dense_m.x.push_back(stop); interpolation_audit_dense_m.y.push_back(amplitudes[1]);
+        interpolation_audit_dense_y.x.push_back(stop); interpolation_audit_dense_y.y.push_back(amplitudes[2]);
 
         Matrix3 xyz_jacobian = {{{{0.0f,0.0f,0.0f}},{{0.0f,0.0f,0.0f}},{{0.0f,0.0f,0.0f}}}};
         float crosstalk_xy[3] = {0.0f, 0.0f, 0.0f};
@@ -5160,20 +5160,20 @@ DiagramWriter::write_print_viewer_diagnostics(
                 perturb_dx * perturb_dx + perturb_dy * perturb_dy);
         }
 
-        p22_crosstalk_c.x.push_back(stop); p22_crosstalk_c.y.push_back(crosstalk_xy[0]);
-        p22_crosstalk_m.x.push_back(stop); p22_crosstalk_m.y.push_back(crosstalk_xy[1]);
-        p22_crosstalk_y.x.push_back(stop); p22_crosstalk_y.y.push_back(crosstalk_xy[2]);
-        p22_xyz_condition.x.push_back(stop); p22_xyz_condition.y.push_back(matrix_frobenius_condition(xyz_jacobian));
+        interpolation_audit_crosstalk_c.x.push_back(stop); interpolation_audit_crosstalk_c.y.push_back(crosstalk_xy[0]);
+        interpolation_audit_crosstalk_m.x.push_back(stop); interpolation_audit_crosstalk_m.y.push_back(crosstalk_xy[1]);
+        interpolation_audit_crosstalk_y.x.push_back(stop); interpolation_audit_crosstalk_y.y.push_back(crosstalk_xy[2]);
+        interpolation_audit_xyz_condition.x.push_back(stop); interpolation_audit_xyz_condition.y.push_back(matrix_frobenius_condition(xyz_jacobian));
     }
 
     const float identity_min = std::min(
-        p22_growth_c.x.front(), std::min(p22_growth_m.x.front(), p22_growth_y.x.front()));
+        interpolation_audit_growth_c.x.front(), std::min(interpolation_audit_growth_m.x.front(), interpolation_audit_growth_y.x.front()));
     const float identity_max = std::max(
-        p22_growth_c.x.back(), std::max(p22_growth_m.x.back(), p22_growth_y.x.back()));
+        interpolation_audit_growth_c.x.back(), std::max(interpolation_audit_growth_m.x.back(), interpolation_audit_growth_y.x.back()));
     for (int i = 0; i <= 80; ++i) {
         const float x = identity_min + (identity_max - identity_min) * static_cast<float>(i) / 80.0f;
-        p22_identity.x.push_back(x);
-        p22_identity.y.push_back(x);
+        interpolation_audit_identity.x.push_back(x);
+        interpolation_audit_identity.y.push_back(x);
     }
 
     auto max_curve_value = [](const SampledCurve& curve) {
@@ -5194,108 +5194,108 @@ DiagramWriter::write_print_viewer_diagnostics(
         return true;
     };
 
-    std::cout << "info: Prototype 22 neutral-growth robustness/interpolation audit" << std::endl;
-    std::cout << "info:   mapping: monotone cubic Hermite, normalized P19 record-growth -> normalized P21 dye amplitude" << std::endl;
-    std::cout << "info:   reference anchor: normalized 1 -> 1 at Prototype 18 colorimetric neutral" << std::endl;
+    std::cout << "info: interpolation robustness audit neutral-growth robustness/interpolation audit" << std::endl;
+    std::cout << "info:   mapping: monotone cubic Hermite, normalized LINEAR REFERENCE record-growth -> normalized NEUTRAL INVERSE dye amplitude" << std::endl;
+    std::cout << "info:   reference anchor: normalized 1 -> 1 at D55 colorimetric reference calibration colorimetric neutral" << std::endl;
     std::cout << "info:   dense audit: 81 neutral points from -4..+4 stops" << std::endl;
-    std::cout << "info:   max dense xy error from measured Visual Neutral: " << max_curve_value(p22_dense_xy_error) << std::endl;
-    std::cout << "info:   max dense relative Y error vs Prototype 19 tone: " << max_curve_value(p22_dense_y_error) << std::endl;
+    std::cout << "info:   max dense xy error from measured Visual Neutral: " << max_curve_value(interpolation_audit_dense_xy_error) << std::endl;
+    std::cout << "info:   max dense relative Y error vs linear C/M/Y reference model tone: " << max_curve_value(interpolation_audit_dense_y_error) << std::endl;
     std::cout << "info:   fitted amplitude monotonic C/M/Y: "
-              << (monotonic_nonincreasing(p22_dense_c) ? "yes" : "NO") << " / "
-              << (monotonic_nonincreasing(p22_dense_m) ? "yes" : "NO") << " / "
-              << (monotonic_nonincreasing(p22_dense_y) ? "yes" : "NO") << std::endl;
-    std::cout << "info:   max local XYZ-basis Frobenius condition number: " << max_curve_value(p22_xyz_condition) << std::endl;
+              << (monotonic_nonincreasing(interpolation_audit_dense_c) ? "yes" : "NO") << " / "
+              << (monotonic_nonincreasing(interpolation_audit_dense_m) ? "yes" : "NO") << " / "
+              << (monotonic_nonincreasing(interpolation_audit_dense_y) ? "yes" : "NO") << std::endl;
+    std::cout << "info:   max local XYZ-basis Frobenius condition number: " << max_curve_value(interpolation_audit_xyz_condition) << std::endl;
     std::cout << "info:   off-neutral audit: +/-5% independent C/M/Y perturbations retained through full spectral viewer" << std::endl;
-    std::cout << "info:   NOTE: P22 is a calibration sufficiency audit, not measured multi-density Kodak dye physics; active rendering remains Prototype 19" << std::endl;
+    std::cout << "info:   NOTE: INTERPOLATION AUDIT is a calibration sufficiency audit, not measured multi-density Kodak dye physics; active rendering remains linear C/M/Y reference model" << std::endl;
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 22 NORMALIZED DYE-GROWTH MAPPING";
-        options.subtitle = "P19 NORMALIZED RECORD GROWTH -> P21 NEUTRAL-PRESERVING DYE AMPLITUDE";
-        options.x_label = "NORMALIZED P19 RECORD-GROWTH INPUT";
+        options.title = "KODAK 2383 INTERPOLATION AUDIT NORMALIZED DYE-GROWTH MAPPING";
+        options.subtitle = "LINEAR REFERENCE NORMALIZED RECORD GROWTH -> NEUTRAL INVERSE NEUTRAL-PRESERVING DYE AMPLITUDE";
+        options.x_label = "NORMALIZED LINEAR REFERENCE RECORD-GROWTH INPUT";
         options.y_label = "NORMALIZED DYE AMPLITUDE";
         options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"IDENTITY P19", &p22_identity, {{0.65f,0.65f,0.65f}}, true, false, 1},
-            {"CYAN MAPPING", &p22_growth_c, {{0.25f,1.0f,1.0f}}, true, true, 3},
-            {"MAGENTA MAPPING", &p22_growth_m, {{1.0f,0.25f,0.85f}}, true, true, 3},
-            {"YELLOW MAPPING", &p22_growth_y, {{1.0f,0.90f,0.20f}}, true, true, 3}
+            {"IDENTITY LINEAR REFERENCE", &interpolation_audit_identity, {{0.65f,0.65f,0.65f}}, true, false, 1},
+            {"CYAN MAPPING", &interpolation_audit_growth_c, {{0.25f,1.0f,1.0f}}, true, true, 3},
+            {"MAGENTA MAPPING", &interpolation_audit_growth_m, {{1.0f,0.25f,0.85f}}, true, true, 3},
+            {"YELLOW MAPPING", &interpolation_audit_growth_y, {{1.0f,0.90f,0.20f}}, true, true, 3}
         };
-        success = write_plot(stem + "_2383_p22_normalized_dye_growth_mapping.png", series, options) && success;
+        success = write_plot(stem + "_2383_interpolation_audit_normalized_dye_growth_mapping.png", series, options) && success;
     }
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 22 DENSE INTERPOLATION ERROR";
-        options.subtitle = "81-POINT AUDIT BETWEEN P21 ANCHORS  LOWER IS BETTER";
+        options.title = "KODAK 2383 INTERPOLATION AUDIT DENSE INTERPOLATION ERROR";
+        options.subtitle = "81-POINT AUDIT BETWEEN NEUTRAL INVERSE ANCHORS  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "ERROR";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"DELTA XY TO TARGET", &p22_dense_xy_error, {{1.0f,0.45f,0.25f}}, true, false, 2},
-            {"RELATIVE Y ERROR", &p22_dense_y_error, {{0.35f,1.0f,0.45f}}, true, false, 2}
+            {"DELTA XY TO TARGET", &interpolation_audit_dense_xy_error, {{1.0f,0.45f,0.25f}}, true, false, 2},
+            {"RELATIVE Y ERROR", &interpolation_audit_dense_y_error, {{0.35f,1.0f,0.45f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p22_dense_interpolation_error.png", series, options) && success;
+        success = write_plot(stem + "_2383_interpolation_audit_dense_interpolation_error.png", series, options) && success;
     }
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 22 OFF-NEUTRAL DYE RESPONSE";
+        options.title = "KODAK 2383 INTERPOLATION AUDIT OFF-NEUTRAL DYE RESPONSE";
         options.subtitle = "CIE XY DISPLACEMENT FOR +/-5% INDEPENDENT DYE PERTURBATION";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "FULL-SPAN DELTA XY";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"CYAN", &p22_crosstalk_c, {{0.25f,1.0f,1.0f}}, true, false, 2},
-            {"MAGENTA", &p22_crosstalk_m, {{1.0f,0.25f,0.85f}}, true, false, 2},
-            {"YELLOW", &p22_crosstalk_y, {{1.0f,0.90f,0.20f}}, true, false, 2}
+            {"CYAN", &interpolation_audit_crosstalk_c, {{0.25f,1.0f,1.0f}}, true, false, 2},
+            {"MAGENTA", &interpolation_audit_crosstalk_m, {{1.0f,0.25f,0.85f}}, true, false, 2},
+            {"YELLOW", &interpolation_audit_crosstalk_y, {{1.0f,0.90f,0.20f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p22_offneutral_dye_response.png", series, options) && success;
+        success = write_plot(stem + "_2383_interpolation_audit_offneutral_dye_response.png", series, options) && success;
     }
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 22 LOCAL XYZ BASIS CONDITION";
+        options.title = "KODAK 2383 INTERPOLATION AUDIT LOCAL XYZ BASIS CONDITION";
         options.subtitle = "FROBENIUS CONDITION NUMBER OF D XYZ / D C,M,Y  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "CONDITION NUMBER";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"XYZ BASIS CONDITION", &p22_xyz_condition, {{0.35f,0.60f,1.0f}}, true, false, 2}
+            {"XYZ BASIS CONDITION", &interpolation_audit_xyz_condition, {{0.35f,0.60f,1.0f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p22_local_xyz_basis_condition.png", series, options) && success;
+        success = write_plot(stem + "_2383_interpolation_audit_local_xyz_basis_condition.png", series, options) && success;
     }
 
     // ------------------------------------------------------------------
-    // Prototype 23: dense neutral-preserving calibration table.
+    // dense calibration mapping: dense neutral-preserving calibration table.
     //
-    // P22 showed that five anchors are insufficient.  Here the same P21
+    // INTERPOLATION AUDIT showed that five anchors are insufficient.  Here the same NEUTRAL INVERSE
     // nonlinear XYZ inverse is solved densely, converted to channel-local
     // normalized record-growth -> dye-amplitude mappings, and then audited
     // against independent direct nonlinear solves on a finer grid.
-    // Diagnostic only: active rendering remains Prototype 19.
+    // Diagnostic only: active rendering remains linear C/M/Y reference model.
     // ------------------------------------------------------------------
-    SampledCurve p23_map_c;
-    SampledCurve p23_map_m;
-    SampledCurve p23_map_y;
-    SampledCurve p23_lut_xy_error;
-    SampledCurve p23_lut_y_error;
-    SampledCurve p23_lut_amplitude_error;
-    SampledCurve p23_direct_xy_error;
-    SampledCurve p23_direct_y_error;
-    SampledCurve p23_cal_c;
-    SampledCurve p23_cal_m;
-    SampledCurve p23_cal_y;
-    int p23_calibration_failures = 0;
-    int p23_validation_failures = 0;
+    SampledCurve dense_mapping_map_c;
+    SampledCurve dense_mapping_map_m;
+    SampledCurve dense_mapping_map_y;
+    SampledCurve dense_mapping_lut_xy_error;
+    SampledCurve dense_mapping_lut_y_error;
+    SampledCurve dense_mapping_lut_amplitude_error;
+    SampledCurve dense_mapping_direct_xy_error;
+    SampledCurve dense_mapping_direct_y_error;
+    SampledCurve dense_mapping_cal_c;
+    SampledCurve dense_mapping_cal_m;
+    SampledCurve dense_mapping_cal_y;
+    int dense_mapping_calibration_failures = 0;
+    int dense_mapping_validation_failures = 0;
 
-    auto p23_state_at_stop = [&](float stop,
+    auto dense_mapping_state_at_stop = [&](float stop,
                                  FilmDensity& density,
                                  Vector3& linear_amplitudes,
-                                 PrintViewer::Result& p19_result) {
+                                 PrintViewer::Result& linear_reference_result) {
         const float negative_log_exposure =
             negative_dye_model.diagnostics().calibration_log_exposure
             + stop * log10_2;
@@ -5303,8 +5303,8 @@ DiagramWriter::write_print_viewer_diagnostics(
             negative_dye_model.synthesize_neutral_transmittance(
                 negative_stock, negative_log_exposure);
         density = print_processor.process(negative_transmittance);
-        p19_result = print_viewer.view(
-            print_dye_model.synthesize_transmittance_p19(density));
+        linear_reference_result = print_viewer.view(
+            print_dye_model.synthesize_transmittance_linear_reference(density));
 
         const auto& diag = print_dye_model.diagnostics();
         const FilmDensity& dmin = diag.minimum_record_density;
@@ -5319,14 +5319,14 @@ DiagramWriter::write_print_viewer_diagnostics(
         linear_amplitudes = {{ref_amp.red * nr, ref_amp.green * ng, ref_amp.blue * nb}};
     };
 
-    auto p23_solve_neutral = [&](const PrintViewer::Result& p19_result,
+    auto dense_mapping_solve_neutral = [&](const PrintViewer::Result& linear_reference_result,
                                  const Vector3& initial,
                                  Vector3& amplitudes,
                                  float& xy_error,
                                  float& relative_y_error) {
-        const float target_x = p20_measured_visual_neutral_viewed.viewed_xy.x;
-        const float target_yc = p20_measured_visual_neutral_viewed.viewed_xy.y;
-        const float target_Y = p19_result.viewed_xyz.y;
+        const float target_x = status_a_audit_measured_visual_neutral_viewed.viewed_xy.x;
+        const float target_yc = status_a_audit_measured_visual_neutral_viewed.viewed_xy.y;
+        const float target_Y = linear_reference_result.viewed_xyz.y;
         const float target_zc = std::max(0.0f, 1.0f - target_x - target_yc);
         PrintViewer::XYZ target_xyz;
         if (target_yc <= 1e-12f) {
@@ -5407,37 +5407,37 @@ DiagramWriter::write_print_viewer_diagnostics(
         return ok && xy_error < 1e-5f && relative_y_error < 1e-5f;
     };
 
-    const FilmDensity& p23_ref_amp = print_dye_model.diagnostics().calibrated_reference_amplitude;
+    const FilmDensity& dense_mapping_ref_amp = print_dye_model.diagnostics().calibrated_reference_amplitude;
 
     // 81 direct calibration solves, one every 0.1 stop.
     for (int i = 0; i <= 80; ++i) {
         const float stop = -4.0f + 8.0f * static_cast<float>(i) / 80.0f;
         FilmDensity density;
         Vector3 linear = {{0.0f,0.0f,0.0f}};
-        PrintViewer::Result p19_result;
-        p23_state_at_stop(stop, density, linear, p19_result);
+        PrintViewer::Result linear_reference_result;
+        dense_mapping_state_at_stop(stop, density, linear, linear_reference_result);
         Vector3 solved = linear;
         float xy_err = 0.0f, y_err = 0.0f;
-        if (!p23_solve_neutral(p19_result, linear, solved, xy_err, y_err)) {
-            ++p23_calibration_failures;
+        if (!dense_mapping_solve_neutral(linear_reference_result, linear, solved, xy_err, y_err)) {
+            ++dense_mapping_calibration_failures;
         }
 
         const float nx[3] = {
-            p23_ref_amp.red > 1e-12f ? linear[0] / p23_ref_amp.red : 0.0f,
-            p23_ref_amp.green > 1e-12f ? linear[1] / p23_ref_amp.green : 0.0f,
-            p23_ref_amp.blue > 1e-12f ? linear[2] / p23_ref_amp.blue : 0.0f
+            dense_mapping_ref_amp.red > 1e-12f ? linear[0] / dense_mapping_ref_amp.red : 0.0f,
+            dense_mapping_ref_amp.green > 1e-12f ? linear[1] / dense_mapping_ref_amp.green : 0.0f,
+            dense_mapping_ref_amp.blue > 1e-12f ? linear[2] / dense_mapping_ref_amp.blue : 0.0f
         };
         const float ny[3] = {
-            p23_ref_amp.red > 1e-12f ? solved[0] / p23_ref_amp.red : 0.0f,
-            p23_ref_amp.green > 1e-12f ? solved[1] / p23_ref_amp.green : 0.0f,
-            p23_ref_amp.blue > 1e-12f ? solved[2] / p23_ref_amp.blue : 0.0f
+            dense_mapping_ref_amp.red > 1e-12f ? solved[0] / dense_mapping_ref_amp.red : 0.0f,
+            dense_mapping_ref_amp.green > 1e-12f ? solved[1] / dense_mapping_ref_amp.green : 0.0f,
+            dense_mapping_ref_amp.blue > 1e-12f ? solved[2] / dense_mapping_ref_amp.blue : 0.0f
         };
-        p23_map_c.x.push_back(nx[0]); p23_map_c.y.push_back(ny[0]);
-        p23_map_m.x.push_back(nx[1]); p23_map_m.y.push_back(ny[1]);
-        p23_map_y.x.push_back(nx[2]); p23_map_y.y.push_back(ny[2]);
-        p23_cal_c.x.push_back(stop); p23_cal_c.y.push_back(solved[0]);
-        p23_cal_m.x.push_back(stop); p23_cal_m.y.push_back(solved[1]);
-        p23_cal_y.x.push_back(stop); p23_cal_y.y.push_back(solved[2]);
+        dense_mapping_map_c.x.push_back(nx[0]); dense_mapping_map_c.y.push_back(ny[0]);
+        dense_mapping_map_m.x.push_back(nx[1]); dense_mapping_map_m.y.push_back(ny[1]);
+        dense_mapping_map_y.x.push_back(nx[2]); dense_mapping_map_y.y.push_back(ny[2]);
+        dense_mapping_cal_c.x.push_back(stop); dense_mapping_cal_c.y.push_back(solved[0]);
+        dense_mapping_cal_m.x.push_back(stop); dense_mapping_cal_m.y.push_back(solved[1]);
+        dense_mapping_cal_y.x.push_back(stop); dense_mapping_cal_y.y.push_back(solved[2]);
     }
 
     auto sort_mapping = [](SampledCurve& curve) {
@@ -5449,30 +5449,30 @@ DiagramWriter::write_print_viewer_diagnostics(
         curve.x.clear(); curve.y.clear();
         for (const auto& p : pairs) { curve.x.push_back(p.first); curve.y.push_back(p.second); }
     };
-    sort_mapping(p23_map_c); sort_mapping(p23_map_m); sort_mapping(p23_map_y);
+    sort_mapping(dense_mapping_map_c); sort_mapping(dense_mapping_map_m); sort_mapping(dense_mapping_map_y);
 
     // Independent 321-point validation.  At each point compare the dense
-    // mapping to a fresh direct nonlinear P21-style solve.
+    // mapping to a fresh direct nonlinear NEUTRAL INVERSE-style solve.
     for (int i = 0; i <= 320; ++i) {
         const float stop = -4.0f + 8.0f * static_cast<float>(i) / 320.0f;
         FilmDensity density;
         Vector3 linear = {{0.0f,0.0f,0.0f}};
-        PrintViewer::Result p19_result;
-        p23_state_at_stop(stop, density, linear, p19_result);
+        PrintViewer::Result linear_reference_result;
+        dense_mapping_state_at_stop(stop, density, linear, linear_reference_result);
 
         Vector3 direct = linear;
         float direct_xy_err = 0.0f, direct_y_err = 0.0f;
-        if (!p23_solve_neutral(p19_result, linear, direct, direct_xy_err, direct_y_err)) {
-            ++p23_validation_failures;
+        if (!dense_mapping_solve_neutral(linear_reference_result, linear, direct, direct_xy_err, direct_y_err)) {
+            ++dense_mapping_validation_failures;
         }
 
-        const float nr = p23_ref_amp.red > 1e-12f ? linear[0] / p23_ref_amp.red : 0.0f;
-        const float ng = p23_ref_amp.green > 1e-12f ? linear[1] / p23_ref_amp.green : 0.0f;
-        const float nb = p23_ref_amp.blue > 1e-12f ? linear[2] / p23_ref_amp.blue : 0.0f;
+        const float nr = dense_mapping_ref_amp.red > 1e-12f ? linear[0] / dense_mapping_ref_amp.red : 0.0f;
+        const float ng = dense_mapping_ref_amp.green > 1e-12f ? linear[1] / dense_mapping_ref_amp.green : 0.0f;
+        const float nb = dense_mapping_ref_amp.blue > 1e-12f ? linear[2] / dense_mapping_ref_amp.blue : 0.0f;
         Vector3 lut = {{
-            p23_ref_amp.red * monotone_cubic_sample(p23_map_c, nr),
-            p23_ref_amp.green * monotone_cubic_sample(p23_map_m, ng),
-            p23_ref_amp.blue * monotone_cubic_sample(p23_map_y, nb)
+            dense_mapping_ref_amp.red * monotone_cubic_sample(dense_mapping_map_c, nr),
+            dense_mapping_ref_amp.green * monotone_cubic_sample(dense_mapping_map_m, ng),
+            dense_mapping_ref_amp.blue * monotone_cubic_sample(dense_mapping_map_y, nb)
         }};
         for (float& v : lut) v = std::max(0.0f, v);
 
@@ -5499,129 +5499,129 @@ DiagramWriter::write_print_viewer_diagnostics(
             amp_err = std::max(amp_err, std::abs(lut[c] - direct[c]) / denom);
         }
 
-        p23_lut_xy_error.x.push_back(stop); p23_lut_xy_error.y.push_back(lut_xy_err);
-        p23_lut_y_error.x.push_back(stop); p23_lut_y_error.y.push_back(lut_y_err);
-        p23_lut_amplitude_error.x.push_back(stop); p23_lut_amplitude_error.y.push_back(amp_err);
-        p23_direct_xy_error.x.push_back(stop); p23_direct_xy_error.y.push_back(direct_xy_err);
-        p23_direct_y_error.x.push_back(stop); p23_direct_y_error.y.push_back(direct_y_err);
+        dense_mapping_lut_xy_error.x.push_back(stop); dense_mapping_lut_xy_error.y.push_back(lut_xy_err);
+        dense_mapping_lut_y_error.x.push_back(stop); dense_mapping_lut_y_error.y.push_back(lut_y_err);
+        dense_mapping_lut_amplitude_error.x.push_back(stop); dense_mapping_lut_amplitude_error.y.push_back(amp_err);
+        dense_mapping_direct_xy_error.x.push_back(stop); dense_mapping_direct_xy_error.y.push_back(direct_xy_err);
+        dense_mapping_direct_y_error.x.push_back(stop); dense_mapping_direct_y_error.y.push_back(direct_y_err);
     }
 
-    auto p23_max = [](const SampledCurve& curve) {
+    auto dense_mapping_max = [](const SampledCurve& curve) {
         float result = 0.0f;
         for (float v : curve.y) if (std::isfinite(v)) result = std::max(result, std::abs(v));
         return result;
     };
-    auto p23_mapping_monotone = [](const SampledCurve& curve) {
+    auto dense_mapping_mapping_monotone = [](const SampledCurve& curve) {
         for (std::size_t i = 1; i < curve.y.size(); ++i) {
             if (curve.y[i] + 1e-5f < curve.y[i - 1]) return false;
         }
         return true;
     };
 
-    std::cout << "info: Prototype 23 dense neutral-preserving calibration/LUT audit" << std::endl;
+    std::cout << "info: dense calibration mapping dense neutral-preserving calibration/LUT audit" << std::endl;
     std::cout << "info:   direct calibration solves: 81 points (-4..+4 stops, 0.1-stop spacing)" << std::endl;
     std::cout << "info:   independent validation solves: 321 points (-4..+4 stops, 0.025-stop spacing)" << std::endl;
-    std::cout << "info:   calibration solve failures: " << p23_calibration_failures << std::endl;
-    std::cout << "info:   validation solve failures: " << p23_validation_failures << std::endl;
-    std::cout << "info:   max LUT-vs-direct delta xy: " << p23_max(p23_lut_xy_error) << std::endl;
-    std::cout << "info:   max LUT-vs-direct relative Y error: " << p23_max(p23_lut_y_error) << std::endl;
-    std::cout << "info:   max LUT-vs-direct relative dye-amplitude error: " << p23_max(p23_lut_amplitude_error) << std::endl;
-    std::cout << "info:   max direct-solver target delta xy: " << p23_max(p23_direct_xy_error) << std::endl;
-    std::cout << "info:   max direct-solver relative Y error: " << p23_max(p23_direct_y_error) << std::endl;
+    std::cout << "info:   calibration solve failures: " << dense_mapping_calibration_failures << std::endl;
+    std::cout << "info:   validation solve failures: " << dense_mapping_validation_failures << std::endl;
+    std::cout << "info:   max LUT-vs-direct delta xy: " << dense_mapping_max(dense_mapping_lut_xy_error) << std::endl;
+    std::cout << "info:   max LUT-vs-direct relative Y error: " << dense_mapping_max(dense_mapping_lut_y_error) << std::endl;
+    std::cout << "info:   max LUT-vs-direct relative dye-amplitude error: " << dense_mapping_max(dense_mapping_lut_amplitude_error) << std::endl;
+    std::cout << "info:   max direct-solver target delta xy: " << dense_mapping_max(dense_mapping_direct_xy_error) << std::endl;
+    std::cout << "info:   max direct-solver relative Y error: " << dense_mapping_max(dense_mapping_direct_y_error) << std::endl;
     std::cout << "info:   dense mapping monotonic C/M/Y: "
-              << (p23_mapping_monotone(p23_map_c) ? "yes" : "NO") << " / "
-              << (p23_mapping_monotone(p23_map_m) ? "yes" : "NO") << " / "
-              << (p23_mapping_monotone(p23_map_y) ? "yes" : "NO") << std::endl;
-    std::cout << "info:   NOTE: P23 remains calibration-derived, not measured multi-density Kodak dye physics; active rendering remains Prototype 19" << std::endl;
+              << (dense_mapping_mapping_monotone(dense_mapping_map_c) ? "yes" : "NO") << " / "
+              << (dense_mapping_mapping_monotone(dense_mapping_map_m) ? "yes" : "NO") << " / "
+              << (dense_mapping_mapping_monotone(dense_mapping_map_y) ? "yes" : "NO") << std::endl;
+    std::cout << "info:   NOTE: DENSE MAPPING remains calibration-derived, not measured multi-density Kodak dye physics; active rendering remains linear C/M/Y reference model" << std::endl;
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 23 DENSE CALIBRATION MAPPINGS";
+        options.title = "KODAK 2383 DENSE MAPPING DENSE CALIBRATION MAPPINGS";
         options.subtitle = "81 DIRECT NEUTRAL-PRESERVING SOLVES  NORMALIZED RECORD GROWTH -> DYE AMPLITUDE";
-        options.x_label = "NORMALIZED P19 RECORD-GROWTH INPUT";
+        options.x_label = "NORMALIZED LINEAR REFERENCE RECORD-GROWTH INPUT";
         options.y_label = "NORMALIZED DYE AMPLITUDE";
         options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"CYAN", &p23_map_c, {{0.25f,1.0f,1.0f}}, true, false, 2},
-            {"MAGENTA", &p23_map_m, {{1.0f,0.25f,0.85f}}, true, false, 2},
-            {"YELLOW", &p23_map_y, {{1.0f,0.90f,0.20f}}, true, false, 2}
+            {"CYAN", &dense_mapping_map_c, {{0.25f,1.0f,1.0f}}, true, false, 2},
+            {"MAGENTA", &dense_mapping_map_m, {{1.0f,0.25f,0.85f}}, true, false, 2},
+            {"YELLOW", &dense_mapping_map_y, {{1.0f,0.90f,0.20f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p23_dense_growth_mapping.png", series, options) && success;
+        success = write_plot(stem + "_2383_dense_mapping_dense_growth_mapping.png", series, options) && success;
     }
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 23 LUT VS DIRECT SOLVER ERROR";
+        options.title = "KODAK 2383 DENSE MAPPING LUT VS DIRECT SOLVER ERROR";
         options.subtitle = "321 INDEPENDENT DIRECT SOLVES  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "ERROR";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"DELTA XY", &p23_lut_xy_error, {{1.0f,0.45f,0.25f}}, true, false, 2},
-            {"RELATIVE Y", &p23_lut_y_error, {{0.35f,1.0f,0.45f}}, true, false, 2},
-            {"RELATIVE AMPLITUDE", &p23_lut_amplitude_error, {{0.35f,0.60f,1.0f}}, true, false, 2}
+            {"DELTA XY", &dense_mapping_lut_xy_error, {{1.0f,0.45f,0.25f}}, true, false, 2},
+            {"RELATIVE Y", &dense_mapping_lut_y_error, {{0.35f,1.0f,0.45f}}, true, false, 2},
+            {"RELATIVE AMPLITUDE", &dense_mapping_lut_amplitude_error, {{0.35f,0.60f,1.0f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p23_lut_vs_direct_error.png", series, options) && success;
+        success = write_plot(stem + "_2383_dense_mapping_lut_vs_direct_error.png", series, options) && success;
     }
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 23 DIRECT SOLVER RESIDUAL";
-        options.subtitle = "TARGET VISUAL-NEUTRAL XY + P19 Y  NUMERICAL SOLVE QUALITY";
+        options.title = "KODAK 2383 DENSE MAPPING DIRECT SOLVER RESIDUAL";
+        options.subtitle = "TARGET VISUAL-NEUTRAL XY + LINEAR REFERENCE Y  NUMERICAL SOLVE QUALITY";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RESIDUAL";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"DELTA XY TO TARGET", &p23_direct_xy_error, {{1.0f,0.45f,0.25f}}, true, false, 2},
-            {"RELATIVE Y ERROR", &p23_direct_y_error, {{0.35f,1.0f,0.45f}}, true, false, 2}
+            {"DELTA XY TO TARGET", &dense_mapping_direct_xy_error, {{1.0f,0.45f,0.25f}}, true, false, 2},
+            {"RELATIVE Y ERROR", &dense_mapping_direct_y_error, {{0.35f,1.0f,0.45f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p23_direct_solver_residual.png", series, options) && success;
+        success = write_plot(stem + "_2383_dense_mapping_direct_solver_residual.png", series, options) && success;
     }
 
     // ------------------------------------------------------------------
-    // Prototype 24: production-mapping qualification.
+    // production-mapping qualification: production-mapping qualification.
     //
-    // P23 established that the direct neutral-preserving inverse is stable,
+    // DENSE MAPPING established that the direct neutral-preserving inverse is stable,
     // but its 81-point monotone-cubic representation narrowly missed the
     // desired 1e-4 delta-xy target.  Compare two cheap interpolation methods
     // at two calibration densities against a much denser direct-solver grid.
-    // Diagnostic only: active rendering remains Prototype 19.
+    // Diagnostic only: active rendering remains linear C/M/Y reference model.
     // ------------------------------------------------------------------
-    SampledCurve p24_map161_c;
-    SampledCurve p24_map161_m;
-    SampledCurve p24_map161_y;
-    int p24_calibration161_failures = 0;
-    int p24_validation_failures = 0;
+    SampledCurve mapping_qualification_map161_c;
+    SampledCurve mapping_qualification_map161_m;
+    SampledCurve mapping_qualification_map161_y;
+    int mapping_qualification_calibration161_failures = 0;
+    int mapping_qualification_validation_failures = 0;
 
     for (int i = 0; i <= 160; ++i) {
         const float stop = -4.0f + 8.0f * static_cast<float>(i) / 160.0f;
         FilmDensity density;
         Vector3 linear = {{0.0f,0.0f,0.0f}};
-        PrintViewer::Result p19_result;
-        p23_state_at_stop(stop, density, linear, p19_result);
+        PrintViewer::Result linear_reference_result;
+        dense_mapping_state_at_stop(stop, density, linear, linear_reference_result);
         Vector3 solved = linear;
         float xy_err = 0.0f, y_err = 0.0f;
-        if (!p23_solve_neutral(p19_result, linear, solved, xy_err, y_err)) {
-            ++p24_calibration161_failures;
+        if (!dense_mapping_solve_neutral(linear_reference_result, linear, solved, xy_err, y_err)) {
+            ++mapping_qualification_calibration161_failures;
         }
         const float nx[3] = {
-            p23_ref_amp.red > 1e-12f ? linear[0] / p23_ref_amp.red : 0.0f,
-            p23_ref_amp.green > 1e-12f ? linear[1] / p23_ref_amp.green : 0.0f,
-            p23_ref_amp.blue > 1e-12f ? linear[2] / p23_ref_amp.blue : 0.0f
+            dense_mapping_ref_amp.red > 1e-12f ? linear[0] / dense_mapping_ref_amp.red : 0.0f,
+            dense_mapping_ref_amp.green > 1e-12f ? linear[1] / dense_mapping_ref_amp.green : 0.0f,
+            dense_mapping_ref_amp.blue > 1e-12f ? linear[2] / dense_mapping_ref_amp.blue : 0.0f
         };
         const float ny[3] = {
-            p23_ref_amp.red > 1e-12f ? solved[0] / p23_ref_amp.red : 0.0f,
-            p23_ref_amp.green > 1e-12f ? solved[1] / p23_ref_amp.green : 0.0f,
-            p23_ref_amp.blue > 1e-12f ? solved[2] / p23_ref_amp.blue : 0.0f
+            dense_mapping_ref_amp.red > 1e-12f ? solved[0] / dense_mapping_ref_amp.red : 0.0f,
+            dense_mapping_ref_amp.green > 1e-12f ? solved[1] / dense_mapping_ref_amp.green : 0.0f,
+            dense_mapping_ref_amp.blue > 1e-12f ? solved[2] / dense_mapping_ref_amp.blue : 0.0f
         };
-        p24_map161_c.x.push_back(nx[0]); p24_map161_c.y.push_back(ny[0]);
-        p24_map161_m.x.push_back(nx[1]); p24_map161_m.y.push_back(ny[1]);
-        p24_map161_y.x.push_back(nx[2]); p24_map161_y.y.push_back(ny[2]);
+        mapping_qualification_map161_c.x.push_back(nx[0]); mapping_qualification_map161_c.y.push_back(ny[0]);
+        mapping_qualification_map161_m.x.push_back(nx[1]); mapping_qualification_map161_m.y.push_back(ny[1]);
+        mapping_qualification_map161_y.x.push_back(nx[2]); mapping_qualification_map161_y.y.push_back(ny[2]);
     }
-    sort_mapping(p24_map161_c); sort_mapping(p24_map161_m); sort_mapping(p24_map161_y);
+    sort_mapping(mapping_qualification_map161_c); sort_mapping(mapping_qualification_map161_m); sort_mapping(mapping_qualification_map161_y);
 
-    struct P24MethodErrors {
-        explicit P24MethodErrors(const char* method_name)
+    struct MappingMethodErrors {
+        explicit MappingMethodErrors(const char* method_name)
             : name(method_name)
         {
         }
@@ -5634,19 +5634,19 @@ DiagramWriter::write_print_viewer_diagnostics(
         float max_amplitude = 0.0f;
         float max_xy_stop = 0.0f;
     };
-    P24MethodErrors p24_linear81("81 LINEAR");
-    P24MethodErrors p24_cubic81("81 MONOTONE CUBIC");
-    P24MethodErrors p24_linear161("161 LINEAR");
-    P24MethodErrors p24_cubic161("161 MONOTONE CUBIC");
+    MappingMethodErrors mapping_qualification_linear81("81 LINEAR");
+    MappingMethodErrors mapping_qualification_cubic81("81 MONOTONE CUBIC");
+    MappingMethodErrors mapping_qualification_linear161("161 LINEAR");
+    MappingMethodErrors mapping_qualification_cubic161("161 MONOTONE CUBIC");
 
-    auto p24_sample_linear = [](const SampledCurve& curve, float x) {
+    auto mapping_qualification_sample_linear = [](const SampledCurve& curve, float x) {
         if (!curve.valid()) return 0.0f;
         if (x <= curve.x.front()) return curve.y.front();
         if (x >= curve.x.back()) return curve.y.back();
         return curve.sample(x, curve.y.front());
     };
 
-    auto p24_eval_method = [&](P24MethodErrors& errors,
+    auto mapping_qualification_eval_method = [&](MappingMethodErrors& errors,
                                const SampledCurve& mc,
                                const SampledCurve& mm,
                                const SampledCurve& my,
@@ -5655,16 +5655,16 @@ DiagramWriter::write_print_viewer_diagnostics(
                                const Vector3& linear,
                                const Vector3& direct,
                                const PrintViewer::Result& direct_viewed) {
-        const float nr = p23_ref_amp.red > 1e-12f ? linear[0] / p23_ref_amp.red : 0.0f;
-        const float ng = p23_ref_amp.green > 1e-12f ? linear[1] / p23_ref_amp.green : 0.0f;
-        const float nb = p23_ref_amp.blue > 1e-12f ? linear[2] / p23_ref_amp.blue : 0.0f;
+        const float nr = dense_mapping_ref_amp.red > 1e-12f ? linear[0] / dense_mapping_ref_amp.red : 0.0f;
+        const float ng = dense_mapping_ref_amp.green > 1e-12f ? linear[1] / dense_mapping_ref_amp.green : 0.0f;
+        const float nb = dense_mapping_ref_amp.blue > 1e-12f ? linear[2] / dense_mapping_ref_amp.blue : 0.0f;
         const auto sample = [&](const SampledCurve& curve, float x) {
-            return cubic ? monotone_cubic_sample(curve, x) : p24_sample_linear(curve, x);
+            return cubic ? monotone_cubic_sample(curve, x) : mapping_qualification_sample_linear(curve, x);
         };
         Vector3 lut = {{
-            p23_ref_amp.red * sample(mc, nr),
-            p23_ref_amp.green * sample(mm, ng),
-            p23_ref_amp.blue * sample(my, nb)
+            dense_mapping_ref_amp.red * sample(mc, nr),
+            dense_mapping_ref_amp.green * sample(mm, ng),
+            dense_mapping_ref_amp.blue * sample(my, nb)
         }};
         for (float& v : lut) v = std::max(0.0f, v);
         const PrintViewer::Result viewed = print_viewer.view(
@@ -5699,12 +5699,12 @@ DiagramWriter::write_print_viewer_diagnostics(
         const float stop = -4.0f + 8.0f * static_cast<float>(i) / 1280.0f;
         FilmDensity density;
         Vector3 linear = {{0.0f,0.0f,0.0f}};
-        PrintViewer::Result p19_result;
-        p23_state_at_stop(stop, density, linear, p19_result);
+        PrintViewer::Result linear_reference_result;
+        dense_mapping_state_at_stop(stop, density, linear, linear_reference_result);
         Vector3 direct = linear;
         float direct_xy_err = 0.0f, direct_y_err = 0.0f;
-        if (!p23_solve_neutral(p19_result, linear, direct, direct_xy_err, direct_y_err)) {
-            ++p24_validation_failures;
+        if (!dense_mapping_solve_neutral(linear_reference_result, linear, direct, direct_xy_err, direct_y_err)) {
+            ++mapping_qualification_validation_failures;
         }
         const PrintViewer::Result direct_viewed = print_viewer.view(
             source_transmittance_from_amplitudes(print_stock, direct,
@@ -5712,37 +5712,37 @@ DiagramWriter::write_print_viewer_diagnostics(
                 print_viewer.settings().wavelength_max_nm,
                 print_viewer.settings().wavelength_step_nm));
 
-        p24_eval_method(p24_linear81, p23_map_c, p23_map_m, p23_map_y, false,
+        mapping_qualification_eval_method(mapping_qualification_linear81, dense_mapping_map_c, dense_mapping_map_m, dense_mapping_map_y, false,
             stop, linear, direct, direct_viewed);
-        p24_eval_method(p24_cubic81, p23_map_c, p23_map_m, p23_map_y, true,
+        mapping_qualification_eval_method(mapping_qualification_cubic81, dense_mapping_map_c, dense_mapping_map_m, dense_mapping_map_y, true,
             stop, linear, direct, direct_viewed);
-        p24_eval_method(p24_linear161, p24_map161_c, p24_map161_m, p24_map161_y, false,
+        mapping_qualification_eval_method(mapping_qualification_linear161, mapping_qualification_map161_c, mapping_qualification_map161_m, mapping_qualification_map161_y, false,
             stop, linear, direct, direct_viewed);
-        p24_eval_method(p24_cubic161, p24_map161_c, p24_map161_m, p24_map161_y, true,
+        mapping_qualification_eval_method(mapping_qualification_cubic161, mapping_qualification_map161_c, mapping_qualification_map161_m, mapping_qualification_map161_y, true,
             stop, linear, direct, direct_viewed);
     }
 
-    const P24MethodErrors* p24_methods[] = {
-        &p24_linear81, &p24_cubic81, &p24_linear161, &p24_cubic161
+    const MappingMethodErrors* mapping_qualification_methods[] = {
+        &mapping_qualification_linear81, &mapping_qualification_cubic81, &mapping_qualification_linear161, &mapping_qualification_cubic161
     };
-    const P24MethodErrors* p24_selected = nullptr;
-    for (const P24MethodErrors* method : p24_methods) {
+    const MappingMethodErrors* mapping_qualification_selected = nullptr;
+    for (const MappingMethodErrors* method : mapping_qualification_methods) {
         if (method->max_xy <= 1e-4f && method->max_y <= 1e-4f) {
-            p24_selected = method;
+            mapping_qualification_selected = method;
             break;
         }
     }
-    if (!p24_selected) {
-        p24_selected = &p24_cubic161;
-        for (const P24MethodErrors* method : p24_methods) {
-            if (method->max_xy < p24_selected->max_xy) p24_selected = method;
+    if (!mapping_qualification_selected) {
+        mapping_qualification_selected = &mapping_qualification_cubic161;
+        for (const MappingMethodErrors* method : mapping_qualification_methods) {
+            if (method->max_xy < mapping_qualification_selected->max_xy) mapping_qualification_selected = method;
         }
     }
 
-    std::cout << "info: Prototype 24 production-mapping qualification" << std::endl;
-    std::cout << "info:   161-point calibration solve failures: " << p24_calibration161_failures << std::endl;
-    std::cout << "info:   1281-point validation solve failures: " << p24_validation_failures << std::endl;
-    for (const P24MethodErrors* method : p24_methods) {
+    std::cout << "info: production-mapping qualification production-mapping qualification" << std::endl;
+    std::cout << "info:   161-point calibration solve failures: " << mapping_qualification_calibration161_failures << std::endl;
+    std::cout << "info:   1281-point validation solve failures: " << mapping_qualification_validation_failures << std::endl;
+    for (const MappingMethodErrors* method : mapping_qualification_methods) {
         std::cout << "info:   " << method->name
                   << " max delta xy=" << method->max_xy
                   << " at " << method->max_xy_stop << " stops"
@@ -5751,53 +5751,53 @@ DiagramWriter::write_print_viewer_diagnostics(
                   << ((method->max_xy <= 1e-4f && method->max_y <= 1e-4f) ? "  PASS" : "  FAIL")
                   << std::endl;
     }
-    std::cout << "info:   selected qualification candidate: " << p24_selected->name << std::endl;
-    std::cout << "info:   NOTE: P24 qualification is retained as reference; active rendering is Prototype 25" << std::endl;
+    std::cout << "info:   selected qualification candidate: " << mapping_qualification_selected->name << std::endl;
+    std::cout << "info:   NOTE: MAPPING QUALIFICATION qualification is retained as reference; active rendering is nonlinear dye-growth model" << std::endl;
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 24 INTERPOLATION METHOD COMPARISON";
+        options.title = "KODAK 2383 MAPPING QUALIFICATION INTERPOLATION METHOD COMPARISON";
         options.subtitle = "1281 DIRECT-SOLVER REFERENCES  DELTA XY  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"81 LINEAR", &p24_linear81.xy, {{0.85f,0.85f,0.85f}}, true, false, 2},
-            {"81 MONOTONE CUBIC", &p24_cubic81.xy, {{1.0f,0.45f,0.25f}}, true, false, 2},
-            {"161 LINEAR", &p24_linear161.xy, {{0.35f,1.0f,0.45f}}, true, false, 2},
-            {"161 MONOTONE CUBIC", &p24_cubic161.xy, {{0.35f,0.60f,1.0f}}, true, false, 2}
+            {"81 LINEAR", &mapping_qualification_linear81.xy, {{0.85f,0.85f,0.85f}}, true, false, 2},
+            {"81 MONOTONE CUBIC", &mapping_qualification_cubic81.xy, {{1.0f,0.45f,0.25f}}, true, false, 2},
+            {"161 LINEAR", &mapping_qualification_linear161.xy, {{0.35f,1.0f,0.45f}}, true, false, 2},
+            {"161 MONOTONE CUBIC", &mapping_qualification_cubic161.xy, {{0.35f,0.60f,1.0f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p24_interpolation_comparison.png", series, options) && success;
+        success = write_plot(stem + "_2383_mapping_qualification_interpolation_comparison.png", series, options) && success;
     }
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 24 SELECTED REPRESENTATION ERROR";
-        options.subtitle = std::string(p24_selected->name) + "  VS DIRECT NONLINEAR SOLVER";
+        options.title = "KODAK 2383 MAPPING QUALIFICATION SELECTED REPRESENTATION ERROR";
+        options.subtitle = std::string(mapping_qualification_selected->name) + "  VS DIRECT NONLINEAR SOLVER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "ERROR";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"DELTA XY", &p24_selected->xy, {{1.0f,0.45f,0.25f}}, true, false, 2},
-            {"RELATIVE Y", &p24_selected->y, {{0.35f,1.0f,0.45f}}, true, false, 2},
-            {"RELATIVE AMPLITUDE", &p24_selected->amplitude, {{0.35f,0.60f,1.0f}}, true, false, 2}
+            {"DELTA XY", &mapping_qualification_selected->xy, {{1.0f,0.45f,0.25f}}, true, false, 2},
+            {"RELATIVE Y", &mapping_qualification_selected->y, {{0.35f,1.0f,0.45f}}, true, false, 2},
+            {"RELATIVE AMPLITUDE", &mapping_qualification_selected->amplitude, {{0.35f,0.60f,1.0f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p24_selected_representation_error.png", series, options) && success;
+        success = write_plot(stem + "_2383_mapping_qualification_selected_representation_error.png", series, options) && success;
     }
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 24 161-POINT CALIBRATION MAPPINGS";
+        options.title = "KODAK 2383 MAPPING QUALIFICATION 161-POINT CALIBRATION MAPPINGS";
         options.subtitle = "DENSE DIRECT NEUTRAL-PRESERVING SOLVES  NORMALIZED RECORD GROWTH -> DYE AMPLITUDE";
-        options.x_label = "NORMALIZED P19 RECORD-GROWTH INPUT";
+        options.x_label = "NORMALIZED LINEAR REFERENCE RECORD-GROWTH INPUT";
         options.y_label = "NORMALIZED DYE AMPLITUDE";
         options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"CYAN", &p24_map161_c, {{0.25f,1.0f,1.0f}}, true, false, 2},
-            {"MAGENTA", &p24_map161_m, {{1.0f,0.25f,0.85f}}, true, false, 2},
-            {"YELLOW", &p24_map161_y, {{1.0f,0.90f,0.20f}}, true, false, 2}
+            {"CYAN", &mapping_qualification_map161_c, {{0.25f,1.0f,1.0f}}, true, false, 2},
+            {"MAGENTA", &mapping_qualification_map161_m, {{1.0f,0.25f,0.85f}}, true, false, 2},
+            {"YELLOW", &mapping_qualification_map161_y, {{1.0f,0.90f,0.20f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p24_161_growth_mapping.png", series, options) && success;
+        success = write_plot(stem + "_2383_mapping_qualification_161_growth_mapping.png", series, options) && success;
     }
 
     // ------------------------------------------------------------------
@@ -5869,7 +5869,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
 
     // ------------------------------------------------------------------
-    // Prototype 15: developed print-record separation expressed in the
+    // neutral-drift diagnostic: developed print-record separation expressed in the
     // normalized increment coordinates used by PrintDyeModel.
     //
     // If R/G/B remain coincident here, the printer/sensitometric stage is
@@ -5910,7 +5910,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // Prototype 15: neutral chromaticity-drift attribution.
+    // neutral-drift diagnostic: neutral chromaticity-drift attribution.
     //
     // The four curves progressively remove degrees of freedom from the real
     // pipeline without changing the active model:
@@ -5966,11 +5966,11 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // Prototype 19: explicit legacy-vs-new neutral comparison.
+    // linear C/M/Y reference model: explicit legacy-vs-new neutral comparison.
     // ------------------------------------------------------------------
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 19 NEUTRAL DRIFT A/B";
+        options.title = "KODAK 2383 LINEAR REFERENCE NEUTRAL DRIFT A/B";
         options.subtitle = "LEGACY RESIDUAL MODEL VS RESIDUAL-FREE CALIBRATED C/M/Y";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY FROM D55 WHITE";
@@ -5982,15 +5982,15 @@ DiagramWriter::write_print_viewer_diagnostics(
 
         const std::vector<Series> series = {
             {"LEGACY RESIDUAL", &legacy_delta_xy, {{1.0f,0.55f,0.25f}}, true, true, 2},
-            {"PROTOTYPE 19 C/M/Y", &new_delta_xy, {{0.35f,1.0f,0.45f}}, true, true, 2}
+            {"LINEAR REFERENCE C/M/Y", &new_delta_xy, {{0.35f,1.0f,0.45f}}, true, true, 2}
         };
 
-        success = write_plot(stem + "_2383_p19_neutral_drift_ab.png", series, options) && success;
+        success = write_plot(stem + "_2383_linear_reference_neutral_drift_ab.png", series, options) && success;
     }
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 19 AP0 NEUTRAL BALANCE A/B";
+        options.title = "KODAK 2383 LINEAR REFERENCE AP0 NEUTRAL BALANCE A/B";
         options.subtitle = "(MAX - MIN) / MEAN AP0  LOWER IS MORE NEUTRAL";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RELATIVE AP0 CHANNEL SPREAD";
@@ -6002,21 +6002,21 @@ DiagramWriter::write_print_viewer_diagnostics(
 
         const std::vector<Series> series = {
             {"LEGACY RESIDUAL", &legacy_ap0_spread, {{1.0f,0.55f,0.25f}}, true, true, 2},
-            {"PROTOTYPE 19 C/M/Y", &new_ap0_spread, {{0.35f,1.0f,0.45f}}, true, true, 2}
+            {"LINEAR REFERENCE C/M/Y", &new_ap0_spread, {{0.35f,1.0f,0.45f}}, true, true, 2}
         };
 
-        success = write_plot(stem + "_2383_p19_ap0_neutral_balance_ab.png", series, options) && success;
+        success = write_plot(stem + "_2383_linear_reference_ap0_neutral_balance_ab.png", series, options) && success;
     }
 
     // ------------------------------------------------------------------
-    // Prototype 20: legacy vs Prototype 19 diagonal mapping vs the local
+    // Status-A mapping audit: legacy vs linear C/M/Y reference model diagonal mapping vs the local
     // ANSI Status-A matrix mapping. The matrix curve is diagnostic only and
     // uses a first-order inverse around the synthetic Status-A 1/1/1 point.
     // ------------------------------------------------------------------
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 20 NEUTRAL DRIFT A/B/C";
-        options.subtitle = "LEGACY VS P19 DIAGONAL VS ANSI STATUS-A LOCAL MATRIX";
+        options.title = "KODAK 2383 STATUS-A AUDIT NEUTRAL DRIFT A/B/C";
+        options.subtitle = "LEGACY VS LINEAR REFERENCE DIAGONAL VS ANSI STATUS-A LOCAL MATRIX";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY FROM D55 WHITE";
         options.has_x_range = true;
@@ -6027,13 +6027,13 @@ DiagramWriter::write_print_viewer_diagnostics(
 
         const std::vector<Series> series = {
             {"LEGACY RESIDUAL", &legacy_delta_xy, {{1.0f,0.55f,0.25f}}, true, true, 2},
-            {"P19 DIAGONAL C/M/Y", &new_delta_xy, {{0.35f,1.0f,0.45f}}, true, true, 2},
-            {"P20 STATUS-A MATRIX", &matrix_delta_xy, {{0.35f,0.60f,1.0f}}, true, true, 2}
+            {"LINEAR REFERENCE DIAGONAL C/M/Y", &new_delta_xy, {{0.35f,1.0f,0.45f}}, true, true, 2},
+            {"STATUS-A AUDIT STATUS-A MATRIX", &matrix_delta_xy, {{0.35f,0.60f,1.0f}}, true, true, 2}
         };
 
         success =
             write_plot(
-                stem + "_2383_p20_neutral_drift_abc.png",
+                stem + "_2383_status_a_neutral_drift_abc.png",
                 series,
                 options)
             && success;
@@ -6041,8 +6041,8 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 20 AP0 NEUTRAL BALANCE A/B/C";
-        options.subtitle = "LEGACY VS P19 DIAGONAL VS STATUS-A MATRIX  LOWER IS MORE NEUTRAL";
+        options.title = "KODAK 2383 STATUS-A AUDIT AP0 NEUTRAL BALANCE A/B/C";
+        options.subtitle = "LEGACY VS LINEAR REFERENCE DIAGONAL VS STATUS-A MATRIX  LOWER IS MORE NEUTRAL";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RELATIVE AP0 CHANNEL SPREAD";
         options.has_x_range = true;
@@ -6053,96 +6053,96 @@ DiagramWriter::write_print_viewer_diagnostics(
 
         const std::vector<Series> series = {
             {"LEGACY RESIDUAL", &legacy_ap0_spread, {{1.0f,0.55f,0.25f}}, true, true, 2},
-            {"P19 DIAGONAL C/M/Y", &new_ap0_spread, {{0.35f,1.0f,0.45f}}, true, true, 2},
-            {"P20 STATUS-A MATRIX", &matrix_ap0_spread, {{0.35f,0.60f,1.0f}}, true, true, 2}
+            {"LINEAR REFERENCE DIAGONAL C/M/Y", &new_ap0_spread, {{0.35f,1.0f,0.45f}}, true, true, 2},
+            {"STATUS-A AUDIT STATUS-A MATRIX", &matrix_ap0_spread, {{0.35f,0.60f,1.0f}}, true, true, 2}
         };
 
         success =
             write_plot(
-                stem + "_2383_p20_ap0_neutral_balance_abc.png",
+                stem + "_2383_status_a_ap0_neutral_balance_abc.png",
                 series,
                 options)
             && success;
     }
 
     // ------------------------------------------------------------------
-    // Prototype 21: nonlinear neutral-preserving inverse, diagnostic only.
+    // neutral-preserving inverse: nonlinear neutral-preserving inverse, diagnostic only.
     // ------------------------------------------------------------------
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 21 NEUTRAL DRIFT A/B/C/D";
-        options.subtitle = "LEGACY VS P19 DIAGONAL VS P20 STATUS-A VS P21 NEUTRAL-PRESERVING INVERSE";
+        options.title = "KODAK 2383 NEUTRAL INVERSE NEUTRAL DRIFT A/B/C/D";
+        options.subtitle = "LEGACY VS LINEAR REFERENCE DIAGONAL VS STATUS-A AUDIT STATUS-A VS NEUTRAL INVERSE NEUTRAL-PRESERVING INVERSE";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY FROM D55 WHITE";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
             {"LEGACY RESIDUAL", &legacy_delta_xy, {{1.0f,0.55f,0.25f}}, true, true, 2},
-            {"P19 DIAGONAL C/M/Y", &new_delta_xy, {{0.35f,1.0f,0.45f}}, true, true, 2},
-            {"P20 STATUS-A MATRIX", &matrix_delta_xy, {{0.35f,0.60f,1.0f}}, true, true, 2},
-            {"P21 NEUTRAL-PRESERVING", &p21_delta_xy, {{1.0f,0.25f,0.85f}}, true, true, 2}
+            {"LINEAR REFERENCE DIAGONAL C/M/Y", &new_delta_xy, {{0.35f,1.0f,0.45f}}, true, true, 2},
+            {"STATUS-A AUDIT STATUS-A MATRIX", &matrix_delta_xy, {{0.35f,0.60f,1.0f}}, true, true, 2},
+            {"NEUTRAL INVERSE NEUTRAL-PRESERVING", &neutral_inverse_delta_xy, {{1.0f,0.25f,0.85f}}, true, true, 2}
         };
-        success = write_plot(stem + "_2383_p21_neutral_drift_abcd.png", series, options) && success;
+        success = write_plot(stem + "_2383_neutral_inverse_neutral_drift_abcd.png", series, options) && success;
     }
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 21 AP0 NEUTRAL BALANCE A/B/C/D";
-        options.subtitle = "LOWER IS MORE AP0-NEUTRAL; P21 PRESERVES KODAK VISUAL-NEUTRAL XY";
+        options.title = "KODAK 2383 NEUTRAL INVERSE AP0 NEUTRAL BALANCE A/B/C/D";
+        options.subtitle = "LOWER IS MORE AP0-NEUTRAL; NEUTRAL INVERSE PRESERVES KODAK VISUAL-NEUTRAL XY";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RELATIVE AP0 CHANNEL SPREAD";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
             {"LEGACY RESIDUAL", &legacy_ap0_spread, {{1.0f,0.55f,0.25f}}, true, true, 2},
-            {"P19 DIAGONAL C/M/Y", &new_ap0_spread, {{0.35f,1.0f,0.45f}}, true, true, 2},
-            {"P20 STATUS-A MATRIX", &matrix_ap0_spread, {{0.35f,0.60f,1.0f}}, true, true, 2},
-            {"P21 NEUTRAL-PRESERVING", &p21_ap0_spread, {{1.0f,0.25f,0.85f}}, true, true, 2}
+            {"LINEAR REFERENCE DIAGONAL C/M/Y", &new_ap0_spread, {{0.35f,1.0f,0.45f}}, true, true, 2},
+            {"STATUS-A AUDIT STATUS-A MATRIX", &matrix_ap0_spread, {{0.35f,0.60f,1.0f}}, true, true, 2},
+            {"NEUTRAL INVERSE NEUTRAL-PRESERVING", &neutral_inverse_ap0_spread, {{1.0f,0.25f,0.85f}}, true, true, 2}
         };
-        success = write_plot(stem + "_2383_p21_ap0_neutral_balance_abcd.png", series, options) && success;
+        success = write_plot(stem + "_2383_neutral_inverse_ap0_neutral_balance_abcd.png", series, options) && success;
     }
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 21 INFERRED DYE-GROWTH AMPLITUDES";
-        options.subtitle = "P19 LINEAR MAPPING VS P21 NEUTRAL-PRESERVING INVERSE";
+        options.title = "KODAK 2383 NEUTRAL INVERSE INFERRED DYE-GROWTH AMPLITUDES";
+        options.subtitle = "LINEAR REFERENCE MAPPING VS NEUTRAL INVERSE NEUTRAL-PRESERVING INVERSE";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DYE-SHAPE AMPLITUDE";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"P19 C", &p21_linear_c, {{0.20f,0.55f,0.55f}}, true, true, 2},
-            {"P21 C", &p21_inferred_c, {{0.25f,1.0f,1.0f}}, true, true, 2},
-            {"P19 M", &p21_linear_m, {{0.55f,0.20f,0.50f}}, true, true, 2},
-            {"P21 M", &p21_inferred_m, {{1.0f,0.25f,0.85f}}, true, true, 2},
-            {"P19 Y", &p21_linear_y, {{0.55f,0.50f,0.15f}}, true, true, 2},
-            {"P21 Y", &p21_inferred_y, {{1.0f,0.90f,0.20f}}, true, true, 2}
+            {"LINEAR REFERENCE C", &neutral_inverse_linear_c, {{0.20f,0.55f,0.55f}}, true, true, 2},
+            {"NEUTRAL INVERSE C", &neutral_inverse_inferred_c, {{0.25f,1.0f,1.0f}}, true, true, 2},
+            {"LINEAR REFERENCE M", &neutral_inverse_linear_m, {{0.55f,0.20f,0.50f}}, true, true, 2},
+            {"NEUTRAL INVERSE M", &neutral_inverse_inferred_m, {{1.0f,0.25f,0.85f}}, true, true, 2},
+            {"LINEAR REFERENCE Y", &neutral_inverse_linear_y, {{0.55f,0.50f,0.15f}}, true, true, 2},
+            {"NEUTRAL INVERSE Y", &neutral_inverse_inferred_y, {{1.0f,0.90f,0.20f}}, true, true, 2}
         };
-        success = write_plot(stem + "_2383_p21_inferred_dye_growth.png", series, options) && success;
+        success = write_plot(stem + "_2383_neutral_inverse_inferred_dye_growth.png", series, options) && success;
     }
 
 
     // ------------------------------------------------------------------
-    // Prototype 25: active nonlinear-growth production A/B against P19.
+    // nonlinear dye-growth model: active nonlinear-growth production A/B against LINEAR REFERENCE.
     // The neutral ramp is generated internally so the comparison is not
     // contaminated by image sampling or input-transform uncertainty.
     // ------------------------------------------------------------------
-    SampledCurve p25_p19_delta_xy;
-    SampledCurve p25_active_delta_xy;
-    SampledCurve p25_p19_ap0_spread;
-    SampledCurve p25_active_ap0_spread;
-    SampledCurve p25_linear_c;
-    SampledCurve p25_active_c;
-    SampledCurve p25_linear_m;
-    SampledCurve p25_active_m;
-    SampledCurve p25_linear_y;
-    SampledCurve p25_active_y;
+    SampledCurve nonlinear_growth_linear_reference_delta_xy;
+    SampledCurve nonlinear_growth_active_delta_xy;
+    SampledCurve nonlinear_growth_linear_reference_ap0_spread;
+    SampledCurve nonlinear_growth_active_ap0_spread;
+    SampledCurve nonlinear_growth_linear_c;
+    SampledCurve nonlinear_growth_active_c;
+    SampledCurve nonlinear_growth_linear_m;
+    SampledCurve nonlinear_growth_active_m;
+    SampledCurve nonlinear_growth_linear_y;
+    SampledCurve nonlinear_growth_active_y;
 
-    float p25_max_xy = 0.0f;
-    float p25_max_p19_xy = 0.0f;
-    float p25_max_relative_y_change = 0.0f;
+    float nonlinear_growth_max_xy = 0.0f;
+    float nonlinear_growth_max_linear_reference_xy = 0.0f;
+    float nonlinear_growth_max_relative_y_change = 0.0f;
 
-    const auto p25_spread = [](const std::array<float, 3>& rgb) {
+    const auto nonlinear_growth_spread = [](const std::array<float, 3>& rgb) {
         const float minimum = std::min(rgb[0], std::min(rgb[1], rgb[2]));
         const float maximum = std::max(rgb[0], std::max(rgb[1], rgb[2]));
         const float mean = (rgb[0] + rgb[1] + rgb[2]) / 3.0f;
@@ -6153,102 +6153,102 @@ DiagramWriter::write_print_viewer_diagnostics(
         const float stop = -4.0f + 8.0f * static_cast<float>(i) / 80.0f;
         FilmDensity density;
         Vector3 linear_unused = {{0.0f,0.0f,0.0f}};
-        PrintViewer::Result p19_viewed;
-        p23_state_at_stop(stop, density, linear_unused, p19_viewed);
+        PrintViewer::Result linear_reference_viewed;
+        dense_mapping_state_at_stop(stop, density, linear_unused, linear_reference_viewed);
 
-        const PrintViewer::Result p25_viewed = print_viewer.view(
+        const PrintViewer::Result nonlinear_growth_viewed = print_viewer.view(
             print_dye_model.synthesize_transmittance(density));
 
-        const float p19_dx = p19_viewed.viewed_xy.x
-            - p20_measured_visual_neutral_viewed.viewed_xy.x;
-        const float p19_dy = p19_viewed.viewed_xy.y
-            - p20_measured_visual_neutral_viewed.viewed_xy.y;
-        const float p19_xy = std::sqrt(p19_dx * p19_dx + p19_dy * p19_dy);
+        const float linear_reference_dx = linear_reference_viewed.viewed_xy.x
+            - status_a_audit_measured_visual_neutral_viewed.viewed_xy.x;
+        const float linear_reference_dy = linear_reference_viewed.viewed_xy.y
+            - status_a_audit_measured_visual_neutral_viewed.viewed_xy.y;
+        const float linear_reference_xy = std::sqrt(linear_reference_dx * linear_reference_dx + linear_reference_dy * linear_reference_dy);
 
-        const float p25_dx = p25_viewed.viewed_xy.x
-            - p20_measured_visual_neutral_viewed.viewed_xy.x;
-        const float p25_dy = p25_viewed.viewed_xy.y
-            - p20_measured_visual_neutral_viewed.viewed_xy.y;
-        const float p25_xy = std::sqrt(p25_dx * p25_dx + p25_dy * p25_dy);
+        const float nonlinear_growth_dx = nonlinear_growth_viewed.viewed_xy.x
+            - status_a_audit_measured_visual_neutral_viewed.viewed_xy.x;
+        const float nonlinear_growth_dy = nonlinear_growth_viewed.viewed_xy.y
+            - status_a_audit_measured_visual_neutral_viewed.viewed_xy.y;
+        const float nonlinear_growth_xy = std::sqrt(nonlinear_growth_dx * nonlinear_growth_dx + nonlinear_growth_dy * nonlinear_growth_dy);
 
-        const float relative_y_change = p19_viewed.viewed_xyz.y > 1e-12f
-            ? std::abs(p25_viewed.viewed_xyz.y - p19_viewed.viewed_xyz.y)
-                / p19_viewed.viewed_xyz.y
+        const float relative_y_change = linear_reference_viewed.viewed_xyz.y > 1e-12f
+            ? std::abs(nonlinear_growth_viewed.viewed_xyz.y - linear_reference_viewed.viewed_xyz.y)
+                / linear_reference_viewed.viewed_xyz.y
             : 0.0f;
 
-        p25_p19_delta_xy.x.push_back(stop); p25_p19_delta_xy.y.push_back(p19_xy);
-        p25_active_delta_xy.x.push_back(stop); p25_active_delta_xy.y.push_back(p25_xy);
-        p25_p19_ap0_spread.x.push_back(stop); p25_p19_ap0_spread.y.push_back(p25_spread(p19_viewed.aces2065_1));
-        p25_active_ap0_spread.x.push_back(stop); p25_active_ap0_spread.y.push_back(p25_spread(p25_viewed.aces2065_1));
+        nonlinear_growth_linear_reference_delta_xy.x.push_back(stop); nonlinear_growth_linear_reference_delta_xy.y.push_back(linear_reference_xy);
+        nonlinear_growth_active_delta_xy.x.push_back(stop); nonlinear_growth_active_delta_xy.y.push_back(nonlinear_growth_xy);
+        nonlinear_growth_linear_reference_ap0_spread.x.push_back(stop); nonlinear_growth_linear_reference_ap0_spread.y.push_back(nonlinear_growth_spread(linear_reference_viewed.aces2065_1));
+        nonlinear_growth_active_ap0_spread.x.push_back(stop); nonlinear_growth_active_ap0_spread.y.push_back(nonlinear_growth_spread(nonlinear_growth_viewed.aces2065_1));
 
         const FilmDensity linear_amp = print_dye_model.linear_reference_amplitudes(density);
         const FilmDensity active_amp = print_dye_model.mapped_reference_amplitudes(density);
-        p25_linear_c.x.push_back(stop); p25_linear_c.y.push_back(linear_amp.red);
-        p25_active_c.x.push_back(stop); p25_active_c.y.push_back(active_amp.red);
-        p25_linear_m.x.push_back(stop); p25_linear_m.y.push_back(linear_amp.green);
-        p25_active_m.x.push_back(stop); p25_active_m.y.push_back(active_amp.green);
-        p25_linear_y.x.push_back(stop); p25_linear_y.y.push_back(linear_amp.blue);
-        p25_active_y.x.push_back(stop); p25_active_y.y.push_back(active_amp.blue);
+        nonlinear_growth_linear_c.x.push_back(stop); nonlinear_growth_linear_c.y.push_back(linear_amp.red);
+        nonlinear_growth_active_c.x.push_back(stop); nonlinear_growth_active_c.y.push_back(active_amp.red);
+        nonlinear_growth_linear_m.x.push_back(stop); nonlinear_growth_linear_m.y.push_back(linear_amp.green);
+        nonlinear_growth_active_m.x.push_back(stop); nonlinear_growth_active_m.y.push_back(active_amp.green);
+        nonlinear_growth_linear_y.x.push_back(stop); nonlinear_growth_linear_y.y.push_back(linear_amp.blue);
+        nonlinear_growth_active_y.x.push_back(stop); nonlinear_growth_active_y.y.push_back(active_amp.blue);
 
-        p25_max_p19_xy = std::max(p25_max_p19_xy, p19_xy);
-        p25_max_xy = std::max(p25_max_xy, p25_xy);
-        p25_max_relative_y_change = std::max(p25_max_relative_y_change, relative_y_change);
+        nonlinear_growth_max_linear_reference_xy = std::max(nonlinear_growth_max_linear_reference_xy, linear_reference_xy);
+        nonlinear_growth_max_xy = std::max(nonlinear_growth_max_xy, nonlinear_growth_xy);
+        nonlinear_growth_max_relative_y_change = std::max(nonlinear_growth_max_relative_y_change, relative_y_change);
     }
 
-    std::cout << "info: Prototype 25 active nonlinear-growth A/B" << std::endl;
+    std::cout << "info: nonlinear dye-growth model active nonlinear-growth A/B" << std::endl;
     std::cout << "info:   internal neutral ramp: 81 points (-4..+4 stops)" << std::endl;
-    std::cout << "info:   P19 max delta xy from Kodak Visual Neutral: " << p25_max_p19_xy << std::endl;
-    std::cout << "info:   P25 max delta xy from Kodak Visual Neutral: " << p25_max_xy << std::endl;
-    std::cout << "info:   P25 max relative Y change vs P19 tone: " << p25_max_relative_y_change << std::endl;
-    std::cout << "info:   NOTE: P25 production mapping is the P24-qualified 161-point monotone-cubic calibration" << std::endl;
+    std::cout << "info:   LINEAR REFERENCE max delta xy from Kodak Visual Neutral: " << nonlinear_growth_max_linear_reference_xy << std::endl;
+    std::cout << "info:   NONLINEAR GROWTH max delta xy from Kodak Visual Neutral: " << nonlinear_growth_max_xy << std::endl;
+    std::cout << "info:   NONLINEAR GROWTH max relative Y change vs LINEAR REFERENCE tone: " << nonlinear_growth_max_relative_y_change << std::endl;
+    std::cout << "info:   NOTE: NONLINEAR GROWTH production mapping is the MAPPING QUALIFICATION-qualified 161-point monotone-cubic calibration" << std::endl;
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 25 NEUTRAL DRIFT A/B";
-        options.subtitle = "P19 LINEAR VS P25 QUALIFIED NONLINEAR GROWTH  LOWER IS BETTER";
+        options.title = "KODAK 2383 NONLINEAR GROWTH NEUTRAL DRIFT A/B";
+        options.subtitle = "LINEAR REFERENCE VS NONLINEAR GROWTH QUALIFIED NONLINEAR GROWTH  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY FROM KODAK VISUAL NEUTRAL";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"P19 LINEAR", &p25_p19_delta_xy, {{0.85f,0.55f,0.25f}}, true, false, 2},
-            {"P25 NONLINEAR", &p25_active_delta_xy, {{0.25f,1.0f,0.55f}}, true, false, 2}
+            {"LINEAR REFERENCE", &nonlinear_growth_linear_reference_delta_xy, {{0.85f,0.55f,0.25f}}, true, false, 2},
+            {"NONLINEAR GROWTH NONLINEAR", &nonlinear_growth_active_delta_xy, {{0.25f,1.0f,0.55f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p25_neutral_drift_ab.png", series, options) && success;
+        success = write_plot(stem + "_2383_nonlinear_growth_neutral_drift_ab.png", series, options) && success;
     }
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 25 AP0 NEUTRAL BALANCE A/B";
-        options.subtitle = "P19 LINEAR VS P25 QUALIFIED NONLINEAR GROWTH  LOWER IS BETTER";
+        options.title = "KODAK 2383 NONLINEAR GROWTH AP0 NEUTRAL BALANCE A/B";
+        options.subtitle = "LINEAR REFERENCE VS NONLINEAR GROWTH QUALIFIED NONLINEAR GROWTH  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RELATIVE AP0 CHANNEL SPREAD";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"P19 LINEAR", &p25_p19_ap0_spread, {{0.85f,0.55f,0.25f}}, true, false, 2},
-            {"P25 NONLINEAR", &p25_active_ap0_spread, {{0.25f,1.0f,0.55f}}, true, false, 2}
+            {"LINEAR REFERENCE", &nonlinear_growth_linear_reference_ap0_spread, {{0.85f,0.55f,0.25f}}, true, false, 2},
+            {"NONLINEAR GROWTH NONLINEAR", &nonlinear_growth_active_ap0_spread, {{0.25f,1.0f,0.55f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p25_ap0_neutral_balance_ab.png", series, options) && success;
+        success = write_plot(stem + "_2383_nonlinear_growth_ap0_neutral_balance_ab.png", series, options) && success;
     }
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 PROTOTYPE 25 DYE AMPLITUDE A/B";
-        options.subtitle = "P19 LINEAR AMPLITUDES VS P25 QUALIFIED NONLINEAR AMPLITUDES";
+        options.title = "KODAK 2383 NONLINEAR GROWTH DYE AMPLITUDE A/B";
+        options.subtitle = "LINEAR REFERENCE AMPLITUDES VS NONLINEAR GROWTH QUALIFIED NONLINEAR AMPLITUDES";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DYE-SHAPE AMPLITUDE";
         options.has_x_range = true; options.x_min = -4.0f; options.x_max = 4.0f;
         options.x_padding_fraction = 0.0f; options.include_zero_y = true;
         const std::vector<Series> series = {
-            {"P19 C", &p25_linear_c, {{0.20f,0.55f,0.55f}}, true, false, 2},
-            {"P25 C", &p25_active_c, {{0.25f,1.0f,1.0f}}, true, false, 2},
-            {"P19 M", &p25_linear_m, {{0.55f,0.20f,0.50f}}, true, false, 2},
-            {"P25 M", &p25_active_m, {{1.0f,0.25f,0.85f}}, true, false, 2},
-            {"P19 Y", &p25_linear_y, {{0.55f,0.50f,0.15f}}, true, false, 2},
-            {"P25 Y", &p25_active_y, {{1.0f,0.90f,0.20f}}, true, false, 2}
+            {"LINEAR REFERENCE C", &nonlinear_growth_linear_c, {{0.20f,0.55f,0.55f}}, true, false, 2},
+            {"NONLINEAR GROWTH C", &nonlinear_growth_active_c, {{0.25f,1.0f,1.0f}}, true, false, 2},
+            {"LINEAR REFERENCE M", &nonlinear_growth_linear_m, {{0.55f,0.20f,0.50f}}, true, false, 2},
+            {"NONLINEAR GROWTH M", &nonlinear_growth_active_m, {{1.0f,0.25f,0.85f}}, true, false, 2},
+            {"LINEAR REFERENCE Y", &nonlinear_growth_linear_y, {{0.55f,0.50f,0.15f}}, true, false, 2},
+            {"NONLINEAR GROWTH Y", &nonlinear_growth_active_y, {{1.0f,0.90f,0.20f}}, true, false, 2}
         };
-        success = write_plot(stem + "_2383_p25_dye_amplitude_ab.png", series, options) && success;
+        success = write_plot(stem + "_2383_nonlinear_growth_dye_amplitude_ab.png", series, options) && success;
     }
 
     // ------------------------------------------------------------------

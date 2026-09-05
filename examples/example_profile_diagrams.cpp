@@ -35,7 +35,7 @@ main(
     const std::filesystem::path resources =
         argc > 1
             ? argv[1]
-            : "Resources";
+            : "resources";
 
     const std::filesystem::path output_directory =
         argc > 2

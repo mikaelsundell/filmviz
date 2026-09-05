@@ -1,8 +1,14 @@
 # FilmViz
 
-FilmViz is a spectral colour-negative and print-film simulation tool. The
-production pipeline is derived from the validated Status-M calibration work and
-is split into reusable, documented classes.
+FilmViz is experimental software for learning about spectral colour-negative
+and print-film processing. It is a research and education project, not a
+production-certified film-stock or colour-management product. The simulator
+uses measured stock data to make each stage inspectable: spectral exposure,
+densitometric development, dye-density synthesis, print exposure, viewing,
+LUT generation and image-grain rendering.
+
+The current pipeline is derived from documented Status-M validation work and is
+split into reusable C++ classes, a command-line application and a Python GUI.
 
 The current production profile is:
 
@@ -21,12 +27,19 @@ depending on obsolete profile JSON files.
 
 ## Build
 
-FilmViz requires CMake 3.23+, a C++17 compiler, Imath and OpenImageIO.
+FilmViz requires CMake 3.23+, a C++17 compiler, Imath and OpenImageIO. The
+optional Python application additionally uses pybind11 and PySide6.
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build \
+    -DCMAKE_PREFIX_PATH=/Volumes/Projects/github/3rdparty/build/macosx/arm64.debug
 cmake --build build -j
 ```
+
+On macOS, select exactly one matching dependency tree per build directory:
+`arm64.debug` for Debug or `arm64.release` for Release. The Python application
+uses that configured prefix and sets `DYLD_IMAGE_SUFFIX=_debug` when launching
+against the debug Qt frameworks.
 
 By default the CTest regression suite and `rgb2spec_opt` are also built. For a
 production-only build:
@@ -50,19 +63,19 @@ ctest --test-dir build -C Debug --output-on-failure
 Process one AWG3/LogC3 value through every production stage:
 
 ```bash
-./build/Debug/example_process_pixel Resources
+./build/Debug/example_process_pixel resources
 ```
 
 Inspect a nonlinear Status-M closure solve:
 
 ```bash
-./build/Debug/example_density_calibration Resources
+./build/Debug/example_density_calibration resources
 ```
 
 Write diagrams for the current Verita 200D and corrected Kodak 2383 profiles:
 
 ```bash
-./build/Debug/example_profile_diagrams Resources build/profile_diagrams
+./build/Debug/example_profile_diagrams resources build/profile_diagrams
 ```
 
 Convert the bundled ARRI AWG3/LogC3 reference image to a 16-bit Rec.709/Gamma
@@ -71,12 +84,13 @@ Convert the bundled ARRI AWG3/LogC3 reference image to a 16-bit Rec.709/Gamma
 ```bash
 ./build/Debug/filmviz \
     -v \
-    --resources Resources \
+    --resources resources \
     --input awg3-logc3-ei800 \
     --output rec709-gamma24 \
-    --input-image Resources/references/images/ARRI_Helen_John_ALEXA_Mini_LF_AWG3_LogC3.tif \
+    --input-image resources/references/images/ARRI_Helen_John_ALEXA_Mini_LF_AWG3_LogC3.tif \
     --output-image build/ARRI_Helen_John_filmviz_rec709_gamma24_grain.tif \
     --lutsize 33 \
+    --threads 0 \
     --exposure 0 \
     --push-pull 0 \
     --negative-grain 1 \
@@ -101,21 +115,24 @@ between them reduce colour speckling without weakening luminance grain.
 negative contrast around calibrated middle gray. Push/pull is explicitly an
 approximation: FilmViz has no alternate-development Verita measurements.
 
+`--threads 0` uses the machine's hardware concurrency. A positive value sets a
+process-wide worker limit shared by LUT sampling and image-row conversion.
+
 The examples use only the current C++ API and measured CSV resources. They do
 not load profile JSON files. See [examples/README.md](examples/README.md).
 
 ## Resources
 
-Place the existing FilmSim `Resources` directory next to the built executable,
+Place the FilmViz `resources` directory next to the built executable,
 or pass an explicit path:
 
 ```bash
-./filmviz --resources /path/to/Resources
+./filmviz --resources /path/to/resources
 ```
 
-Runtime resources are grouped by purpose beneath `Resources/profiles/`,
-`Resources/colorimetry/` and `Resources/spectral/`. Reference images, charts
-and source publications live under `Resources/references/`. Editable working
+Runtime resources are grouped by purpose beneath `resources/profiles/`,
+`resources/colorimetry/` and `resources/spectral/`. Reference images, charts
+and source publications live under `resources/references/`. Editable working
 material is kept outside the runtime tree under `working/`.
 
 ## Basic use
@@ -124,7 +141,7 @@ Generate the reference 33³ LUT:
 
 ```bash
 ./filmviz \
-    --resources ./Resources \
+    --resources ./resources \
     --input awg3-logc3-ei800 \
     --negative verita-200d \
     --print kodak-2383 \
@@ -202,13 +219,30 @@ Bradford D55 -> D60
 linear ACES2065-1 / AP0
 ```
 
-The important production change discovered in Calibrate5-7 is the explicit
+The important production change established by measurement validation is the explicit
 `FilmDensityCalibration` stage. Kodak sensitometric Status-M densities are not
 numerically interchangeable with the internal spectral-dye basis coordinates.
 The calibration solves that measurement-coordinate conversion nonlinearly and
 keeps the measured spectral D-min as the lower physical boundary.
 
 There is no empirical `1.5x` contrast multiplier in the production path.
+
+## Python application
+
+The PySide6 application exposes the same supported profiles and controls as the
+main command-line tool. It converts images and writes `.cube` LUTs through the
+`filmviz_python` pybind11 module, without launching a subprocess. Build its
+target and use the generated environment-aware launcher:
+
+```bash
+cmake --build build --config Debug --target python_filmviz_app
+./build/Debug/python_filmviz_app.sh
+```
+
+The launcher uses the Python executable, dependency prefix, module path and
+macOS Qt framework suffix selected during CMake configuration. The worker-count
+field controls the same global C++ thread setting as `filmviz --threads`. See
+[python/README.md](python/README.md) for complete build and launch details.
 
 ## Source layout
 
@@ -220,13 +254,15 @@ There is no empirical `1.5x` contrast multiplier in the production path.
 - `lut3d.*` — LUT generation, interpolation, validation and `.cube` output
 - `granularitymodel.*` — measured negative/print diffuse-RMS lookup and seeded noise
 - `imageprocessor.*` — image I/O, LUT application and two-stage grain rendering
+- `threading.*` — process-wide worker configuration
+- `python/` — pybind11 module and PySide6 image/LUT application
 - `filmprocessor.*` — negative spectral exposure + characteristic development
 - `filmdyemodel.*` — negative spectral-density synthesis
 - `printfilmprocessor.*` — print exposure/development
 - `printviewer.*` — spectral print viewing -> XYZ -> D60/AP0
 - `tests/` — deterministic CTest regression suite
 - `examples/` — current production API and calibration examples
-- `Resources/` — organized runtime data and references
+- `resources/` — organized runtime data and references
 - `working/` — non-runtime source artwork and digitization material
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the model boundaries,

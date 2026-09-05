@@ -21,7 +21,7 @@ class PrintViewer;
 class SpectralIlluminant;
 class SpectralReconstructor;
 
-// Production end-to-end spectral film pipeline derived from Final1d.
+// Production end-to-end spectral film pipeline derived from validated production.
 //
 // Input  : linear ACES2065-1 (AP0/D60)
 // Output : viewed print represented as linear ACES2065-1 (AP0/D60)
@@ -35,7 +35,7 @@ class FilmPipeline
 public:
     struct Settings
     {
-        std::string resources_directory = "Resources";
+        std::string resources_directory = "resources";
 
         float middle_gray = 0.18f;
         float negative_zero_stop_log_exposure = -0.515f;
@@ -52,7 +52,7 @@ public:
         float wavelength_max_nm = 700.0f;
         float wavelength_step_nm = 5.0f;
 
-        // Kodak 2383 dye-amplitude calibration selected in Calibrate2.
+        // Kodak 2383 dye-amplitude calibration selected in JIS/D55 calibration.
         double print_cyan_amplitude = 1.10093;
         double print_magenta_amplitude = 1.09650;
         double print_yellow_amplitude = 1.14626;

@@ -15,7 +15,7 @@ class FilmDyeModel;
 //
 // Why this exists:
 // Kodak's characteristic curves are Status-M measurements, while FilmDyeModel
-// synthesizes a wavelength-dependent optical-density spectrum. Calibrate5-7
+// synthesizes a wavelength-dependent optical-density spectrum. measurement-validation diagnostics
 // established that these coordinate systems are not numerically identical.
 // This class solves the nonlinear inverse problem so that a synthesized
 // negative, remeasured with Status M, reproduces the requested characteristic-

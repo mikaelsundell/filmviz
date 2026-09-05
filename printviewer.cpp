@@ -717,7 +717,7 @@ PrintViewer::initialize_colorimetry()
         static_cast<float>(
             1.0 / denominator);
 
-    // Prototype 31: precompute the complete normalized XYZ integration
+    // optimized production synthesis: precompute the complete normalized XYZ integration
     // weights on the active wavelength grid. The print dye model emits this
     // exact grid, so the per-pixel viewer can use direct indexed dot products
     // instead of repeatedly interpolating the illuminant and CMFs.

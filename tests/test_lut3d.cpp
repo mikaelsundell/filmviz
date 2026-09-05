@@ -3,8 +3,13 @@
 
 #include "lut3d.h"
 #include "test_common.h"
+#include "threading.h"
 
 #include <array>
+#include <chrono>
+#include <mutex>
+#include <set>
+#include <thread>
 
 namespace {
 
@@ -78,6 +83,68 @@ main()
         && validation.samples == 125
         && validation.max_abs_error < 1e-6,
         "direct-versus-LUT validation is accurate");
+
+    std::mutex worker_mutex;
+    std::set<std::thread::id> worker_ids;
+    FilmVizThreading::set_thread_count(4);
+    Lut3D parallel_lut;
+
+    passed &= test::check(
+        parallel_lut.generate(
+            8,
+            [&](const Lut3D::RGB& threaded_input,
+                Lut3D::RGB& threaded_output) {
+
+                {
+                    const std::lock_guard<std::mutex> lock(
+                        worker_mutex);
+                    worker_ids.insert(
+                        std::this_thread::get_id());
+                }
+
+                std::this_thread::sleep_for(
+                    std::chrono::microseconds(100));
+                return affine_pipeline(
+                    threaded_input,
+                    threaded_output);
+            }),
+        "parallel LUT generation succeeds");
+
+    passed &= test::check(
+        worker_ids.size() > 1,
+        "global worker setting distributes LUT slices across threads");
+
+    FilmVizThreading::set_thread_count(1);
+    Lut3D serial_lut;
+
+    passed &= test::check(
+        serial_lut.generate(
+            8,
+            affine_pipeline),
+        "single-thread LUT generation succeeds");
+
+    bool deterministic = true;
+
+    for (int blue = 0; blue < 8; ++blue) {
+        for (int green = 0; green < 8; ++green) {
+            for (int red = 0; red < 8; ++red) {
+                for (int channel = 0; channel < 3; ++channel) {
+                    deterministic =
+                        deterministic
+                        && std::abs(
+                            parallel_lut.at(red, green, blue)[channel]
+                            - serial_lut.at(red, green, blue)[channel])
+                            < 1e-8f;
+                }
+            }
+        }
+    }
+
+    passed &= test::check(
+        deterministic,
+        "LUT values are independent of worker count");
+
+    FilmVizThreading::set_thread_count(0);
 
     return
         test::finish(

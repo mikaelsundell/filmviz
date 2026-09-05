@@ -139,7 +139,7 @@ public:
         const PrintFilmProcessor& print_processor,
         const PrintDyeModel& print_dye_model);
 
-    // Prototype 14 output-side viewing diagnostics: viewing SPD plus the
+    // viewing integration diagnostic output-side viewing diagnostics: viewing SPD plus the
     // viewed neutral ladder in xy and linear ACES2065-1/AP0.
     static bool write_print_viewer_diagnostics(
         const std::string& output_image_filename,

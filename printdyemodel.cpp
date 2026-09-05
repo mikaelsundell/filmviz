@@ -113,7 +113,7 @@ PrintDyeModel::build(
         reference_status_a_density
         - diagnostics_.minimum_record_density.blue;
 
-    // Prototype 18 D55/CIE 1931 colorimetric reference calibration.
+    // D55 colorimetric reference calibration D55/CIE 1931 colorimetric reference calibration.
     // These amplitudes make the three peak-normalized Kodak dye shapes a
     // metameric match to the measured Visual Neutral reference under the
     // current viewing condition. They are not claimed to be absolute physical
@@ -466,7 +466,7 @@ PrintDyeModel::sample_growth_mapping(
         return std::max(0.0f, x);
     }
 
-    // Prototype 24 qualified the mapping only over this calibrated domain.
+    // The production mapping is qualified only over this calibrated domain.
     // Preserve that exact qualification behavior by clamping to the endpoint
     // values instead of inventing an unvalidated extrapolation law.
     if (x <= curve.x.front()) {
@@ -627,10 +627,10 @@ PrintDyeModel::blended_reference_amplitudes(
     const FilmDensity& density,
     float fade_end) const
 {
-    const FilmDensity p19 = linear_reference_amplitudes(density);
-    const FilmDensity p25 = mapped_reference_amplitudes(density);
+    const FilmDensity linear_reference = linear_reference_amplitudes(density);
+    const FilmDensity nonlinear_growth = mapped_reference_amplitudes(density);
 
-    FilmDensity result = p19;
+    FilmDensity result = linear_reference;
     if (!valid_) {
         return result;
     }
@@ -641,9 +641,9 @@ PrintDyeModel::blended_reference_amplitudes(
     const float smooth = t * t * (3.0f - 2.0f * t);
     const float weight = 1.0f - smooth;
 
-    result.red = p19.red + weight * (p25.red - p19.red);
-    result.green = p19.green + weight * (p25.green - p19.green);
-    result.blue = p19.blue + weight * (p25.blue - p19.blue);
+    result.red = linear_reference.red + weight * (nonlinear_growth.red - linear_reference.red);
+    result.green = linear_reference.green + weight * (nonlinear_growth.green - linear_reference.green);
+    result.blue = linear_reference.blue + weight * (nonlinear_growth.blue - linear_reference.blue);
     return result;
 }
 
@@ -683,7 +683,7 @@ PrintDyeModel::synthesize_transmittance_from_amplitudes(
 }
 
 SampledCurve
-PrintDyeModel::synthesize_density_p26(
+PrintDyeModel::synthesize_density_signal_blended(
     const FilmDensity& density,
     float fade_end) const
 {
@@ -705,11 +705,11 @@ PrintDyeModel::synthesize_density_p26(
 }
 
 SampledCurve
-PrintDyeModel::synthesize_transmittance_p26(
+PrintDyeModel::synthesize_transmittance_signal_blended(
     const FilmDensity& density,
     float fade_end) const
 {
-    const SampledCurve spectral_density = synthesize_density_p26(density, fade_end);
+    const SampledCurve spectral_density = synthesize_density_signal_blended(density, fade_end);
     SampledCurve result;
     if (!spectral_density.valid()) {
         return result;
@@ -839,16 +839,16 @@ PrintDyeModel::neutrality_distance_relative_log_rms(
 
 
 FilmDensity
-PrintDyeModel::blended_reference_amplitudes_p29(
+PrintDyeModel::blended_reference_amplitudes_relative_rms(
     const FilmDensity& density,
     const FilmDensity& neutral_density,
     float neutral_end,
     float chroma_start) const
 {
-    const FilmDensity p19 = linear_reference_amplitudes(density);
-    const FilmDensity p25 = mapped_reference_amplitudes(density);
+    const FilmDensity linear_reference = linear_reference_amplitudes(density);
+    const FilmDensity nonlinear_growth = mapped_reference_amplitudes(density);
 
-    FilmDensity result = p19;
+    FilmDensity result = linear_reference;
     if (!valid_) {
         return result;
     }
@@ -870,14 +870,14 @@ PrintDyeModel::blended_reference_amplitudes_p29(
         weight = 1.0f - smooth;
     }
 
-    result.red = p19.red + weight * (p25.red - p19.red);
-    result.green = p19.green + weight * (p25.green - p19.green);
-    result.blue = p19.blue + weight * (p25.blue - p19.blue);
+    result.red = linear_reference.red + weight * (nonlinear_growth.red - linear_reference.red);
+    result.green = linear_reference.green + weight * (nonlinear_growth.green - linear_reference.green);
+    result.blue = linear_reference.blue + weight * (nonlinear_growth.blue - linear_reference.blue);
     return result;
 }
 
 SampledCurve
-PrintDyeModel::synthesize_density_p29(
+PrintDyeModel::synthesize_density_relative_rms(
     const FilmDensity& density,
     const FilmDensity& neutral_density,
     float neutral_end,
@@ -888,7 +888,7 @@ PrintDyeModel::synthesize_density_p29(
         return result;
     }
 
-    const FilmDensity amplitude = blended_reference_amplitudes_p29(
+    const FilmDensity amplitude = blended_reference_amplitudes_relative_rms(
         density, neutral_density, neutral_end, chroma_start);
 
     for (std::size_t i = 0; i < cyan_reference_density_.x.size(); ++i) {
@@ -905,14 +905,14 @@ PrintDyeModel::synthesize_density_p29(
 }
 
 SampledCurve
-PrintDyeModel::synthesize_transmittance_p29(
+PrintDyeModel::synthesize_transmittance_relative_rms(
     const FilmDensity& density,
     const FilmDensity& neutral_density,
     float neutral_end,
     float chroma_start) const
 {
     return synthesize_transmittance_from_amplitudes(
-        blended_reference_amplitudes_p29(
+        blended_reference_amplitudes_relative_rms(
             density,
             neutral_density,
             neutral_end,
@@ -920,15 +920,15 @@ PrintDyeModel::synthesize_transmittance_p29(
 }
 
 FilmDensity
-PrintDyeModel::blended_reference_amplitudes_p27(
+PrintDyeModel::blended_reference_amplitudes_neutral_relative(
     const FilmDensity& density,
     const FilmDensity& neutral_density,
     float fade_end) const
 {
-    const FilmDensity p19 = linear_reference_amplitudes(density);
-    const FilmDensity p25 = mapped_reference_amplitudes(density);
+    const FilmDensity linear_reference = linear_reference_amplitudes(density);
+    const FilmDensity nonlinear_growth = mapped_reference_amplitudes(density);
 
-    FilmDensity result = p19;
+    FilmDensity result = linear_reference;
     if (!valid_) {
         return result;
     }
@@ -939,14 +939,14 @@ PrintDyeModel::blended_reference_amplitudes_p27(
     const float smooth = t * t * (3.0f - 2.0f * t);
     const float weight = 1.0f - smooth;
 
-    result.red = p19.red + weight * (p25.red - p19.red);
-    result.green = p19.green + weight * (p25.green - p19.green);
-    result.blue = p19.blue + weight * (p25.blue - p19.blue);
+    result.red = linear_reference.red + weight * (nonlinear_growth.red - linear_reference.red);
+    result.green = linear_reference.green + weight * (nonlinear_growth.green - linear_reference.green);
+    result.blue = linear_reference.blue + weight * (nonlinear_growth.blue - linear_reference.blue);
     return result;
 }
 
 SampledCurve
-PrintDyeModel::synthesize_density_p27(
+PrintDyeModel::synthesize_density_neutral_relative(
     const FilmDensity& density,
     const FilmDensity& neutral_density,
     float fade_end) const
@@ -956,7 +956,7 @@ PrintDyeModel::synthesize_density_p27(
         return result;
     }
 
-    const FilmDensity amplitude = blended_reference_amplitudes_p27(
+    const FilmDensity amplitude = blended_reference_amplitudes_neutral_relative(
         density, neutral_density, fade_end);
     for (std::size_t i = 0; i < cyan_reference_density_.x.size(); ++i) {
         const float total_density =
@@ -970,12 +970,12 @@ PrintDyeModel::synthesize_density_p27(
 }
 
 SampledCurve
-PrintDyeModel::synthesize_transmittance_p27(
+PrintDyeModel::synthesize_transmittance_neutral_relative(
     const FilmDensity& density,
     const FilmDensity& neutral_density,
     float fade_end) const
 {
-    const SampledCurve spectral_density = synthesize_density_p27(
+    const SampledCurve spectral_density = synthesize_density_neutral_relative(
         density, neutral_density, fade_end);
     SampledCurve result;
     if (!spectral_density.valid()) {
@@ -991,14 +991,14 @@ PrintDyeModel::synthesize_transmittance_p27(
 
 
 SampledCurve
-PrintDyeModel::synthesize_density_p30(
+PrintDyeModel::synthesize_density_qualified(
     const FilmDensity& density,
     const FilmDensity& neutral_density) const
 {
     static const float kNeutralEnd = 0.012f;
     static const float kChromaStart = 0.018f;
 
-    return synthesize_density_p29(
+    return synthesize_density_relative_rms(
         density,
         neutral_density,
         kNeutralEnd,
@@ -1006,14 +1006,14 @@ PrintDyeModel::synthesize_density_p30(
 }
 
 SampledCurve
-PrintDyeModel::synthesize_transmittance_p30(
+PrintDyeModel::synthesize_transmittance_qualified(
     const FilmDensity& density,
     const FilmDensity& neutral_density) const
 {
     static const float kNeutralEnd = 0.012f;
     static const float kChromaStart = 0.018f;
 
-    return synthesize_transmittance_p29(
+    return synthesize_transmittance_relative_rms(
         density,
         neutral_density,
         kNeutralEnd,
@@ -1099,7 +1099,7 @@ PrintDyeModel::synthesize_transmittance_unbiased(
 }
 
 SampledCurve
-PrintDyeModel::synthesize_density_p19(
+PrintDyeModel::synthesize_density_linear_reference(
     const FilmDensity& density) const
 {
     SampledCurve result;
@@ -1120,7 +1120,7 @@ PrintDyeModel::synthesize_density_p19(
 }
 
 SampledCurve
-PrintDyeModel::synthesize_transmittance_p19(
+PrintDyeModel::synthesize_transmittance_linear_reference(
     const FilmDensity& density) const
 {
     return synthesize_transmittance_from_amplitudes(
@@ -1145,7 +1145,7 @@ PrintDyeModel::synthesize_density_legacy(
     const float blue_increment = std::max(0.0f, density.blue - minimum.blue);
 
     for (std::size_t i = 0; i < neutral_residual_density_.x.size(); ++i) {
-        // Reconstruct the pre-Prototype-19 basis by undoing the calibrated
+        // Reconstruct the pre-reference basis by undoing the calibrated
         // amplitude factors now embedded in the active per-record bases.
         const float legacy_cyan_basis =
             cyan_basis_per_record_density_.y[i]

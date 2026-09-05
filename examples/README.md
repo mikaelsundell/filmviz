@@ -7,27 +7,27 @@ do not load external profile JSON files.
 the important negative, print and viewing stages:
 
 ```bash
-./build/Debug/example_process_pixel Resources
+./build/Debug/example_process_pixel resources
 ```
 
 `example_density_calibration` demonstrates the nonlinear conversion from a
 requested Kodak Status-M density to `FilmDyeModel` spectral coordinates:
 
 ```bash
-./build/Debug/example_density_calibration Resources
+./build/Debug/example_density_calibration resources
 ```
 
-Both accept the Resources directory as their optional first argument.
+Both accept the resources directory as their optional first argument.
 
 `example_profile_diagrams` loads the current Verita 200D and corrected Kodak
 2383 profiles and writes their measured sensitivities, characteristic curves,
 dye-density data and related diagnostics as PNG files:
 
 ```bash
-./build/Debug/example_profile_diagrams Resources build/profile_diagrams
+./build/Debug/example_profile_diagrams resources build/profile_diagrams
 ```
 
-Its first argument is the Resources directory and its second argument is the
+Its first argument is the resources directory and its second argument is the
 output directory. It uses `DiagramWriter` and does not load profile JSON files.
 
 `example_convert_arri_image` converts the bundled Helen and John AWG3/LogC3
@@ -36,8 +36,8 @@ with both measured grain stages enabled:
 
 ```bash
 ./build/Debug/example_convert_arri_image \
-    Resources \
-    Resources/references/images/ARRI_Helen_John_ALEXA_Mini_LF_AWG3_LogC3.tif \
+    resources \
+    resources/references/images/ARRI_Helen_John_ALEXA_Mini_LF_AWG3_LogC3.tif \
     build/ARRI_Helen_John_filmviz_rec709_gamma24_grain.tif \
     33 0 0 1 1 1.5 42 1
 ```

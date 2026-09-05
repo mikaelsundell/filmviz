@@ -80,10 +80,12 @@ the measured per-channel result and `0` producing neutral grain.
 - `lut3d.*`: generic LUT storage/generation/validation only.
 - `granularitymodel.*`: measured density-to-RMS curves and deterministic noise only.
 - `imageprocessor.*`: image I/O, LUT application and two-stage grain rendering.
+- `threading.*`: process-wide worker count for LUT and image parallelism.
+- `python/`: thin pybind11 and PySide6 application adapters; no spectral algorithms.
 
 Avoid collapsing these boundaries.
 
-The ACES APD scanner resource under `Resources/densitometry/apd/` is a separate
+The ACES APD scanner resource under `resources/densitometry/apd/` is a separate
 densitometric system. It is not AP0 colour-matching data and must not replace
 Status-M calibration without an explicit, independently validated model change.
 
@@ -106,7 +108,7 @@ invariant.
 ## Resources
 
 The source archive may omit measured resource files. Runtime code should find
-`Resources` beside the executable or use `--resources`. CMake must remain
+`resources` beside the executable or use `--resources`. CMake must remain
 configurable when the resource directory is absent.
 
 ## Build

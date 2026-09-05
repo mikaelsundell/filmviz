@@ -2,11 +2,15 @@
 // Copyright (c) 2025 - present Mikael Sundell.
 
 #include "lut3d.h"
+#include "threading.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
+#include <thread>
 
 bool
 Lut3D::generate(
@@ -24,47 +28,98 @@ Lut3D::generate(
             size * size * size),
         {{0.0f, 0.0f, 0.0f}});
 
-    for (int blue = 0;
-         blue < size;
-         ++blue) {
+    std::atomic<int> next_blue(0);
+    std::atomic<int> completed(0);
+    std::atomic<bool> failed(false);
+    std::mutex progress_mutex;
+    const int worker_count =
+        FilmVizThreading::effective_thread_count(size);
+    std::vector<std::thread> workers;
+    workers.reserve(
+        static_cast<std::size_t>(worker_count));
 
-        for (int green = 0;
-             green < size;
-             ++green) {
+    for (int worker = 0;
+         worker < worker_count;
+         ++worker) {
 
-            for (int red = 0;
-                 red < size;
-                 ++red) {
+        workers.emplace_back(
+            [&]() {
+                while (!failed.load(
+                           std::memory_order_relaxed)) {
 
-                const RGB input = {{
-                    static_cast<float>(red)
-                        / static_cast<float>(size - 1),
-                    static_cast<float>(green)
-                        / static_cast<float>(size - 1),
-                    static_cast<float>(blue)
-                        / static_cast<float>(size - 1)
-                }};
+                    const int blue =
+                        next_blue.fetch_add(
+                            1,
+                            std::memory_order_relaxed);
 
-                RGB output;
+                    if (blue >= size) {
+                        break;
+                    }
 
-                if (!evaluator(input, output)) {
-                    values_.clear();
-                    size_ = 0;
-                    return false;
+                    for (int green = 0;
+                         green < size
+                         && !failed.load(
+                             std::memory_order_relaxed);
+                         ++green) {
+
+                        for (int red = 0;
+                             red < size;
+                             ++red) {
+
+                            const RGB input = {{
+                                static_cast<float>(red)
+                                    / static_cast<float>(size - 1),
+                                static_cast<float>(green)
+                                    / static_cast<float>(size - 1),
+                                static_cast<float>(blue)
+                                    / static_cast<float>(size - 1)
+                            }};
+
+                            RGB output;
+
+                            if (!evaluator(input, output)) {
+                                failed.store(
+                                    true,
+                                    std::memory_order_relaxed);
+                                break;
+                            }
+
+                            at_mutable(
+                                red,
+                                green,
+                                blue) = output;
+                        }
+                    }
+
+                    if (failed.load(
+                            std::memory_order_relaxed)) {
+                        break;
+                    }
+
+                    const int finished =
+                        completed.fetch_add(
+                            1,
+                            std::memory_order_relaxed)
+                        + 1;
+
+                    if (progress) {
+                        const std::lock_guard<std::mutex> lock(
+                            progress_mutex);
+                        progress(finished, size);
+                    }
                 }
+            });
+    }
 
-                at_mutable(
-                    red,
-                    green,
-                    blue) = output;
-            }
-        }
+    for (std::thread& worker : workers) {
+        worker.join();
+    }
 
-        if (progress) {
-            progress(
-                blue + 1,
-                size);
-        }
+    if (failed.load(
+            std::memory_order_relaxed)) {
+        values_.clear();
+        size_ = 0;
+        return false;
     }
 
     return valid();

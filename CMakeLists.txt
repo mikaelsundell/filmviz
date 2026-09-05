@@ -11,6 +11,7 @@ project(
 
 option(FILMVIZ_BUILD_RGB2SPEC_OPT "Build the rgb2spec table optimizer" ON)
 option(FILMVIZ_BUILD_EXAMPLES "Build current FilmViz API examples" ON)
+option(FILMVIZ_BUILD_PYTHON_APP "Build the pybind11 module for the PySide6 app" ON)
 
 include(CTest)
 
@@ -55,15 +56,13 @@ set(FILMVIZ_CORE_SOURCES
     spectralilluminant.cpp
     spectralreconstructor.cpp
     statusmdensitometer.cpp
+    threading.cpp
     mitsuba/rgb2spec.c
 )
 
 add_library(filmviz_core SHARED
     ${FILMVIZ_CORE_SOURCES}
 )
-
-# Compatibility name for older local CMake snippets/documentation.
-add_library(filmsim_core ALIAS filmviz_core)
 
 target_include_directories(filmviz_core
     PUBLIC
@@ -74,6 +73,7 @@ target_link_libraries(filmviz_core
     PUBLIC
         Imath::Imath
         OpenImageIO::OpenImageIO
+        Threads::Threads
 )
 
 target_compile_features(filmviz_core PUBLIC cxx_std_17)
@@ -91,16 +91,14 @@ target_link_libraries(filmviz
 # Resource layout
 # ---------------------------------------------------------------------------
 #
-# FilmViz expects a directory named Resources next to the executable at
+# FilmViz expects a directory named resources next to the executable at
 # runtime. Source archives may intentionally omit the measured resource files.
-# If Resources (or legacy lowercase resources) exists in the checkout, copy it
-# next to built executables. Missing resources do not make compilation fail.
+# If resources exists in the checkout, copy it next to built executables.
+# Missing resources do not make compilation fail.
 
 set(FILMVIZ_RESOURCE_DIR "")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Resources")
-    set(FILMVIZ_RESOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources")
     set(FILMVIZ_RESOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 endif()
 
@@ -111,7 +109,7 @@ function(filmviz_copy_resources target)
             POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${FILMVIZ_RESOURCE_DIR}"
-                "$<TARGET_FILE_DIR:${target}>/Resources"
+                "$<TARGET_FILE_DIR:${target}>/resources"
             VERBATIM
         )
     endif()
@@ -150,7 +148,7 @@ if(BUILD_TESTING)
 
         target_compile_definitions(${test_name}
             PRIVATE
-                FILMVIZ_TEST_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Resources"
+                FILMVIZ_TEST_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources"
         )
 
         add_test(
@@ -208,6 +206,84 @@ if(FILMVIZ_BUILD_EXAMPLES)
 endif()
 
 # ---------------------------------------------------------------------------
+# Python application binding
+# ---------------------------------------------------------------------------
+
+if(FILMVIZ_BUILD_PYTHON_APP)
+    set(PYBIND11_FINDPYTHON ON)
+    find_package(Python3 COMPONENTS Interpreter Development.Module QUIET)
+    find_package(pybind11 CONFIG QUIET)
+
+    if(Python3_FOUND AND pybind11_FOUND)
+        pybind11_add_module(filmviz_python MODULE
+            python/filmviz_pybind.cpp
+        )
+
+        target_link_libraries(filmviz_python
+            PRIVATE
+                filmviz_core
+        )
+
+        target_compile_features(filmviz_python PRIVATE cxx_std_17)
+        filmviz_copy_resources(filmviz_python)
+
+        add_custom_command(
+            TARGET filmviz_python
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/filmviz_app.py"
+                "$<TARGET_FILE_DIR:filmviz_python>/filmviz_app.py"
+            VERBATIM
+        )
+
+        set(FILMVIZ_PYTHON_DYLD_COMMAND ":")
+
+        if(APPLE AND CMAKE_PREFIX_PATH MATCHES "\\.debug($|;)")
+            set(FILMVIZ_PYTHON_DYLD_COMMAND
+                "export DYLD_IMAGE_SUFFIX=_debug")
+        elseif(APPLE AND CMAKE_PREFIX_PATH MATCHES "\\.release($|;)")
+            set(FILMVIZ_PYTHON_DYLD_COMMAND
+                "unset DYLD_IMAGE_SUFFIX")
+        endif()
+
+        file(GENERATE
+            OUTPUT "$<TARGET_FILE_DIR:filmviz_python>/python_filmviz_app.sh"
+            CONTENT "#!/bin/sh
+set -e
+
+filmviz_module_directory=\"$<TARGET_FILE_DIR:filmviz_python>\"
+export FILMVIZ_PROJECT_ROOT=\"${CMAKE_CURRENT_SOURCE_DIR}\"
+export FILMVIZ_DEPENDENCY_PREFIX=\"${CMAKE_PREFIX_PATH}\"
+
+if [ -n \"$PYTHONPATH\" ]; then
+    export PYTHONPATH=\"$filmviz_module_directory:$PYTHONPATH\"
+else
+    export PYTHONPATH=\"$filmviz_module_directory\"
+fi
+
+${FILMVIZ_PYTHON_DYLD_COMMAND}
+
+exec \"${Python3_EXECUTABLE}\" \"$filmviz_module_directory/filmviz_app.py\" \"$@\"
+"
+            TARGET filmviz_python
+            FILE_PERMISSIONS
+                OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                GROUP_READ GROUP_EXECUTE
+                WORLD_READ WORLD_EXECUTE
+        )
+
+        add_custom_target(python_filmviz_app
+            DEPENDS filmviz_python
+            COMMENT
+                "Build the FilmViz Python module and generated application launcher"
+        )
+    else()
+        message(STATUS
+            "FilmViz Python binding disabled: Python3 development files or pybind11 were not found")
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # rgb2spec optimizer
 # ---------------------------------------------------------------------------
 
@@ -257,6 +333,8 @@ install(
         filmpipeline.h
         filmprocessor.h
         filmstock.h
+        granularitymodel.h
+        imageprocessor.h
         inputtransform.h
         lut3d.h
         printfilmprocessor.h
@@ -265,6 +343,7 @@ install(
         spectralilluminant.h
         spectralreconstructor.h
         statusmdensitometer.h
+        threading.h
     DESTINATION include/filmviz
 )
 
@@ -275,10 +354,25 @@ if(FILMVIZ_BUILD_RGB2SPEC_OPT)
     )
 endif()
 
+if(TARGET filmviz_python)
+    install(
+        TARGETS filmviz_python
+        LIBRARY DESTINATION python
+        RUNTIME DESTINATION python
+    )
+
+    install(
+        PROGRAMS python/filmviz_app.py
+        DESTINATION bin
+        RENAME filmviz-app
+    )
+
+endif()
+
 if(FILMVIZ_RESOURCE_DIR)
     install(
         DIRECTORY "${FILMVIZ_RESOURCE_DIR}/"
-        DESTINATION bin/Resources
+        DESTINATION bin/resources
     )
 endif()
 

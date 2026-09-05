@@ -17,7 +17,7 @@ Current API examples live under `examples/` and are excluded with
 
 Configure without resource files if necessary; compilation must not depend on
 the resource directory being present. Runtime spectral tests do require the
-full Resources set.
+full resources set.
 
 ## Working rule
 
@@ -30,20 +30,12 @@ evidence establishes why it belongs there.
 Do not replace a measured/modelled relationship with a visual tuning constant
 unless the project explicitly decides to add a creative look layer.
 
-## Validation sequence
+## Validation record
 
-The measurements and conclusions from the original numbered calibration work
-are recorded in `CALIBRATION.md`. The important reasoning chain is:
-
-- `calibrate3` — physical contrast-budget and negative forensics
-- `calibrate4` — independent/reference-coordinate investigation
-- `calibrate5` — Kodak-vs-Kodak Status-M closure and digitization audit
-- `calibrate6` — nonlinear Status-M -> spectral coordinate closure
-- `calibrate7` — chromatic closure, separability and stage tracing
-- `final1d` — end-to-end validated production baseline and LUT bake
-
-The current production architecture is based on the Calibrate5-7 result, not on
-the earlier empirical Final1c contrast multiplier.
+The measurements and conclusions from the exploratory calibration work are
+recorded directly in `CALIBRATION.md`. The production architecture follows the
+documented Status-M closure, chromatic-closure and end-to-end pipeline results,
+not the retired empirical contrast multiplier or the names of old executables.
 
 ## What must remain true
 
@@ -69,13 +61,11 @@ First run the deterministic suite:
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-For a full 33^3 LUT smoke test with Resources available:
-
-With Resources available:
+For a full 33^3 LUT smoke test with resources available:
 
 ```bash
 ./filmviz \
-    --resources ./Resources \
+    --resources ./resources \
     --input awg3-logc3-ei800 \
     --output ap0-linear \
     --lutsize 33 \
@@ -99,11 +89,11 @@ explicitly established:
 - spectral D-min/midscale source is 10 nm data represented on a 5 nm working
   grid by linear interpolation.
 
-If source data changes, rerun the relevant calibration program rather than
-assuming compatibility.
+If source data changes, extend the relevant focused diagnostic and CTest
+regression rather than assuming compatibility.
 
 ## Source-editing policy
 
-Prefer surgical changes. Preserve unrelated formatting and the historical test
-programs. Production classes should stay small and single-purpose; diagnostics
+Prefer surgical changes. Preserve unrelated formatting and the active CTest
+coverage. Production classes should stay small and single-purpose; diagnostics
 may be verbose because they exist to expose intermediate states.

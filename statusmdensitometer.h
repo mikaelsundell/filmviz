@@ -8,7 +8,7 @@
 #include <array>
 
 // ISO Status-M transmission densitometry used by Kodak colour-negative
-// sensitometric data. FilmSim uses this class only as a measurement system:
+// sensitometric data. FilmViz uses this class only as a measurement system:
 // it converts a spectral optical-density curve back into the R/G/B density
 // coordinates used by the published characteristic curves.
 class StatusMDensitometer

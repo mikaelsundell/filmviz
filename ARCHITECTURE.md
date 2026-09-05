@@ -18,7 +18,7 @@ Three density domains must be kept distinct:
 3. **Spectral-model coordinates** — the internal coefficients consumed by
    `FilmDyeModel` to synthesize wavelength-dependent optical density.
 
-Calibrate5-7 demonstrated that domains 2 and 3 are not numerically identical.
+measurement-validation diagnostics demonstrated that domains 2 and 3 are not numerically identical.
 `FilmDensityCalibration` is the explicit bridge.
 
 ## Main classes
@@ -55,7 +55,7 @@ coordinates as Kodak's characteristic curves.
 
 ### Supplementary APD resource
 
-`Resources/densitometry/apd/aces_apd_scanner_responsivities.csv` contains ACES
+`resources/densitometry/apd/aces_apd_scanner_responsivities.csv` contains ACES
 Academy Printing Density scanner responses. APD is a separate densitometric
 measurement system, not an AP0 colour conversion. It is retained for future
 measurement work and is not part of the production pipeline.
@@ -108,6 +108,8 @@ preview.
 
 Samples the full spectral pipeline into an RGB 3D LUT, writes `.cube`, applies
 trilinear interpolation and validates the LUT against direct spectral samples.
+Blue-axis slices are evaluated concurrently through the global FilmViz worker
+setting while retaining deterministic LUT ordering.
 
 ### `GranularityModel`
 
@@ -134,6 +136,15 @@ noise into a Rec.709-weighted neutral component and channel-difference
 components. Scaling the differences leaves weighted luminance noise unchanged:
 zero produces neutral grain and one preserves the measured per-channel result.
 
+Image conversion distributes independent output rows over the same global
+worker setting. Image I/O remains serialized, and seeded grain remains
+deterministic regardless of worker count.
+
+### `FilmVizThreading`
+
+Owns the process-wide worker count used by both the C++ CLI and Python binding.
+Zero selects hardware concurrency; positive values impose an explicit limit.
+
 ### `FilmPipeline`
 
 Owns and connects the production components. Its public contract is deliberately
@@ -155,7 +166,7 @@ M = 1.09650
 Y = 1.14626
 ```
 
-These came from the Calibrate2 JIS/D55 compromise and are profile calibration
+These came from the JIS/D55 calibration JIS/D55 compromise and are profile calibration
 values, not user look controls.
 
 The Verita Status-M calibration is data-driven and replaces the earlier
