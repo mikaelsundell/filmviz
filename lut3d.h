@@ -41,6 +41,9 @@ public:
     RGB sample_trilinear(
         const RGB& input) const;
 
+    RGB sample_tetrahedral(
+        const RGB& input) const;
+
     bool write_cube(
         const std::string& filename,
         const std::string& title,

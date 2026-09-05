@@ -12,6 +12,14 @@ project(
 option(FILMVIZ_BUILD_RGB2SPEC_OPT "Build the rgb2spec table optimizer" ON)
 option(FILMVIZ_BUILD_EXAMPLES "Build current FilmViz API examples" ON)
 option(FILMVIZ_BUILD_PYTHON_APP "Build the pybind11 module for the PySide6 app" ON)
+option(FILMVIZ_BUILD_OFX "Build the FilmViz OpenFX plug-in" ON)
+
+set(FILMVIZ_OFX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/openfx" CACHE PATH
+    "OpenFX SDK/source root")
+set(FILMVIZ_OFX_INCLUDE_DIR "" CACHE PATH
+    "Directory containing ofxImageEffect.h")
+set(FILMVIZ_OFX_INSTALL_DIR "" CACHE PATH
+    "OpenFX plug-in install directory")
 
 include(CTest)
 
@@ -172,6 +180,7 @@ if(BUILD_TESTING)
 
     set_tests_properties(
         test_density_calibration
+        test_negative_profile
         test_pipeline
         PROPERTIES LABELS "integration;spectral"
     )
@@ -290,6 +299,50 @@ exec \"${Python3_EXECUTABLE}\" \"$filmviz_module_directory/filmviz_app.py\" \"$@
     else()
         message(STATUS
             "FilmViz Python binding disabled: Python3 development files or pybind11 were not found")
+    endif()
+endif()
+
+
+# ---------------------------------------------------------------------------
+# OpenFX plug-in
+# ---------------------------------------------------------------------------
+
+if(FILMVIZ_BUILD_OFX)
+    if(NOT FILMVIZ_OFX_INCLUDE_DIR)
+        if(EXISTS "${FILMVIZ_OFX_ROOT}/include/ofxImageEffect.h")
+            set(FILMVIZ_OFX_INCLUDE_DIR "${FILMVIZ_OFX_ROOT}/include")
+        elseif(EXISTS "${FILMVIZ_OFX_ROOT}/include/openfx/ofxImageEffect.h")
+            set(FILMVIZ_OFX_INCLUDE_DIR "${FILMVIZ_OFX_ROOT}/include/openfx")
+        elseif(DEFINED ENV{OFX_HEADER_DIR}
+               AND EXISTS "$ENV{OFX_HEADER_DIR}/ofxImageEffect.h")
+            set(FILMVIZ_OFX_INCLUDE_DIR "$ENV{OFX_HEADER_DIR}")
+        endif()
+    endif()
+
+    if(NOT FILMVIZ_OFX_INSTALL_DIR)
+        if(APPLE)
+            set(FILMVIZ_OFX_INSTALL_DIR "/Library/OFX/Plugins")
+        elseif(WIN32)
+            set(FILMVIZ_OFX_INSTALL_DIR
+                "C:/Program Files/Common Files/OFX/Plugins")
+        else()
+            set(FILMVIZ_OFX_INSTALL_DIR "/usr/OFX/Plugins")
+        endif()
+    endif()
+
+    if(EXISTS "${FILMVIZ_OFX_INCLUDE_DIR}/ofxImageEffect.h")
+        message(STATUS
+            "FilmViz OFX headers: ${FILMVIZ_OFX_INCLUDE_DIR}")
+        add_subdirectory(ofx)
+    else()
+        message(STATUS
+            "FilmViz OFX disabled: OpenFX headers were not found")
+        message(STATUS
+            "  expected submodule: ${FILMVIZ_OFX_ROOT}")
+        message(STATUS
+            "  initialize with: git submodule update --init --recursive")
+        message(STATUS
+            "  or override FILMVIZ_OFX_INCLUDE_DIR explicitly")
     endif()
 endif()
 

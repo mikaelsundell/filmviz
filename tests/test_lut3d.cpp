@@ -58,8 +58,12 @@ main()
         input,
         expected);
 
-    const Lut3D::RGB sampled =
+    const Lut3D::RGB trilinear =
         lut.sample_trilinear(
+            input);
+
+    const Lut3D::RGB tetrahedral =
+        lut.sample_tetrahedral(
             input);
 
     for (int channel = 0;
@@ -67,10 +71,16 @@ main()
          ++channel) {
 
         passed &= test::near(
-            sampled[channel],
+            trilinear[channel],
             expected[channel],
             1e-6,
             "trilinear sampling preserves an affine pipeline");
+
+        passed &= test::near(
+            tetrahedral[channel],
+            expected[channel],
+            1e-6,
+            "tetrahedral sampling preserves an affine pipeline");
     }
 
     const Lut3D::Validation validation =
@@ -82,7 +92,7 @@ main()
         validation.valid
         && validation.samples == 125
         && validation.max_abs_error < 1e-6,
-        "direct-versus-LUT validation is accurate");
+        "direct-versus-LUT tetrahedral validation is accurate");
 
     std::mutex worker_mutex;
     std::set<std::thread::id> worker_ids;

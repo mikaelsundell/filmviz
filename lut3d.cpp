@@ -264,6 +264,142 @@ Lut3D::sample_trilinear(
     return lerp(c0, c1, tb);
 }
 
+Lut3D::RGB
+Lut3D::sample_tetrahedral(
+    const RGB& input) const
+{
+    if (!valid()) {
+        return {{0.0f, 0.0f, 0.0f}};
+    }
+
+    const float scale =
+        static_cast<float>(
+            size_ - 1);
+
+    const auto coordinate =
+        [scale](float value) {
+
+            return
+                std::clamp(
+                    value,
+                    0.0f,
+                    1.0f)
+                * scale;
+        };
+
+    const float rf = coordinate(input[0]);
+    const float gf = coordinate(input[1]);
+    const float bf = coordinate(input[2]);
+
+    const int r0 =
+        std::min(
+            size_ - 2,
+            static_cast<int>(
+                std::floor(rf)));
+
+    const int g0 =
+        std::min(
+            size_ - 2,
+            static_cast<int>(
+                std::floor(gf)));
+
+    const int b0 =
+        std::min(
+            size_ - 2,
+            static_cast<int>(
+                std::floor(bf)));
+
+    const int r1 = r0 + 1;
+    const int g1 = g0 + 1;
+    const int b1 = b0 + 1;
+
+    const float tr = rf - static_cast<float>(r0);
+    const float tg = gf - static_cast<float>(g0);
+    const float tb = bf - static_cast<float>(b0);
+
+    const RGB& c000 = at(r0, g0, b0);
+    const RGB& c100 = at(r1, g0, b0);
+    const RGB& c010 = at(r0, g1, b0);
+    const RGB& c110 = at(r1, g1, b0);
+    const RGB& c001 = at(r0, g0, b1);
+    const RGB& c101 = at(r1, g0, b1);
+    const RGB& c011 = at(r0, g1, b1);
+    const RGB& c111 = at(r1, g1, b1);
+
+    const auto combine =
+        [](const RGB& base,
+           const RGB& v1,
+           float w1,
+           const RGB& v2,
+           float w2,
+           const RGB& v3,
+           float w3) {
+
+            return RGB{{
+                base[0] + v1[0] * w1 + v2[0] * w2 + v3[0] * w3,
+                base[1] + v1[1] * w1 + v2[1] * w2 + v3[1] * w3,
+                base[2] + v1[2] * w1 + v2[2] * w2 + v3[2] * w3
+            }};
+        };
+
+    const auto difference =
+        [](const RGB& a,
+           const RGB& b) {
+
+            return RGB{{
+                a[0] - b[0],
+                a[1] - b[1],
+                a[2] - b[2]
+            }};
+        };
+
+    if (tr >= tg) {
+        if (tg >= tb) {
+            return combine(
+                c000,
+                difference(c100, c000), tr,
+                difference(c110, c100), tg,
+                difference(c111, c110), tb);
+        }
+
+        if (tr >= tb) {
+            return combine(
+                c000,
+                difference(c100, c000), tr,
+                difference(c101, c100), tb,
+                difference(c111, c101), tg);
+        }
+
+        return combine(
+            c000,
+            difference(c001, c000), tb,
+            difference(c101, c001), tr,
+            difference(c111, c101), tg);
+    }
+
+    if (tb >= tg) {
+        return combine(
+            c000,
+            difference(c001, c000), tb,
+            difference(c011, c001), tg,
+            difference(c111, c011), tr);
+    }
+
+    if (tb >= tr) {
+        return combine(
+            c000,
+            difference(c010, c000), tg,
+            difference(c011, c010), tb,
+            difference(c111, c011), tr);
+    }
+
+    return combine(
+        c000,
+        difference(c010, c000), tg,
+        difference(c110, c010), tr,
+        difference(c111, c110), tb);
+}
+
 bool
 Lut3D::write_cube(
     const std::string& filename,
@@ -376,7 +512,7 @@ Lut3D::validate(
                 }
 
                 const RGB interpolated =
-                    sample_trilinear(
+                    sample_tetrahedral(
                         input);
 
                 for (int channel = 0;
