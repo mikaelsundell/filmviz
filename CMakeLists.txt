@@ -124,7 +124,10 @@ filmviz_copy_resources(filmviz)
 
 if(BUILD_TESTING)
     set(FILMVIZ_TEST_SOURCES
+        tests/test_apd_densitometry.cpp
         tests/test_apd_resource.cpp
+        tests/test_apd_spectral_selectivity.cpp
+        tests/test_apd_verita_model.cpp
         tests/test_density_calibration.cpp
         tests/test_granularity.cpp
         tests/test_input_transform.cpp

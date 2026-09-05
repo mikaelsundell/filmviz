@@ -89,8 +89,8 @@ _ensure_macos_qt_runtime(DEPENDENCY_PREFIXES, CONFIGURED_PYTHON)
 
 try:
     import filmviz_python as filmviz
-    from PySide6.QtCore import QObject, QThread, QUrl, Signal, Slot
-    from PySide6.QtGui import QDesktopServices
+    from PySide6.QtCore import QObject, QPointF, QRectF, QThread, QUrl, Qt, Signal, Slot
+    from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPainterPath, QPen
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
@@ -190,6 +190,296 @@ def _double(value, minimum, maximum, step=0.1, decimals=3):
     return widget
 
 
+def _read_curve_csv(
+    filename: Path,
+    x_column: str | None = None,
+    y_columns: tuple[str, ...] | None = None,
+):
+    if not filename.is_file():
+        return "", []
+
+    rows = []
+    with filename.open("r", encoding="utf-8-sig", errors="replace") as handle:
+        header = None
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            fields = [field.strip() for field in line.split(",")]
+
+            if header is None:
+                header = fields
+                continue
+
+            values = {}
+            for index, name in enumerate(header):
+                if index >= len(fields) or not fields[index]:
+                    values[name] = None
+                    continue
+                try:
+                    values[name] = float(fields[index])
+                except ValueError:
+                    values[name] = None
+
+            rows.append(values)
+
+    if not rows or not header:
+        return "", []
+
+    x_name = x_column or header[0]
+    if x_name not in header:
+        return "", []
+
+    names = (
+        list(y_columns)
+        if y_columns is not None
+        else [name for name in header if name != x_name]
+    )
+
+    curves = []
+    for name in names:
+        if name not in header:
+            continue
+        points = [
+            (row[x_name], row[name])
+            for row in rows
+            if row.get(x_name) is not None
+            and row.get(name) is not None
+        ]
+        if points:
+            curves.append((name, points))
+
+    return x_name, curves
+
+
+class CurvePlotWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setMinimumHeight(330)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding)
+        self._title = ""
+        self._x_label = ""
+        self._curves = []
+        self._error = ""
+        self._stop_axis = None
+
+    def set_curves(
+        self,
+        title: str,
+        x_label: str,
+        curves,
+        stop_axis=None,
+    ):
+        self._title = title
+        self._x_label = x_label
+        self._curves = curves
+        self._stop_axis = stop_axis
+        self._error = ""
+        self.update()
+
+    def set_error(self, message: str):
+        self._title = ""
+        self._x_label = ""
+        self._curves = []
+        self._stop_axis = None
+        self._error = message
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        palette = self.palette()
+        text_color = palette.color(self.foregroundRole())
+        grid_color = palette.color(self.backgroundRole()).lighter(145)
+        frame_color = palette.color(self.backgroundRole()).lighter(175)
+
+        painter.fillRect(self.rect(), palette.color(self.backgroundRole()))
+
+        if self._error:
+            painter.setPen(text_color)
+            painter.drawText(
+                self.rect().adjusted(20, 20, -20, -20),
+                Qt.AlignmentFlag.AlignCenter
+                | Qt.TextFlag.TextWordWrap,
+                self._error)
+            return
+
+        all_points = [
+            point
+            for _, points in self._curves
+            for point in points
+        ]
+
+        if not all_points:
+            painter.setPen(text_color)
+            painter.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "No curve data")
+            return
+
+        x_min = min(point[0] for point in all_points)
+        x_max = max(point[0] for point in all_points)
+        y_min = min(point[1] for point in all_points)
+        y_max = max(point[1] for point in all_points)
+
+        if abs(x_max - x_min) < 1e-12:
+            x_max = x_min + 1.0
+        if abs(y_max - y_min) < 1e-12:
+            y_max = y_min + 1.0
+
+        y_padding = 0.06 * (y_max - y_min)
+        y_min -= y_padding
+        y_max += y_padding
+
+        left = 68.0
+        right = 24.0
+        top = 42.0
+        bottom = 72.0 if self._stop_axis else 52.0
+        plot = QRectF(
+            left,
+            top,
+            max(1.0, self.width() - left - right),
+            max(1.0, self.height() - top - bottom))
+
+        painter.setPen(QPen(frame_color, 1.0))
+        painter.drawRect(plot)
+
+        painter.setPen(QPen(grid_color, 1.0))
+        for index in range(1, 5):
+            t = index / 5.0
+            x = plot.left() + t * plot.width()
+            y = plot.top() + t * plot.height()
+            painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+            painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+
+        painter.setPen(text_color)
+        painter.drawText(
+            QRectF(0, 8, self.width(), 24),
+            Qt.AlignmentFlag.AlignCenter,
+            self._title)
+
+        def map_point(x, y):
+            px = plot.left() + (x - x_min) / (x_max - x_min) * plot.width()
+            py = plot.bottom() - (y - y_min) / (y_max - y_min) * plot.height()
+            return QPointF(px, py)
+
+        colors = [
+            QColor("#e05252"),
+            QColor("#59b66b"),
+            QColor("#5d87d7"),
+            QColor("#d6a84f"),
+            QColor("#b56bd4"),
+            QColor("#5bb9bf"),
+        ]
+
+        for curve_index, (name, points) in enumerate(self._curves):
+            if len(points) < 2:
+                continue
+
+            path = QPainterPath()
+            path.moveTo(map_point(points[0][0], points[0][1]))
+            for x, y in points[1:]:
+                path.lineTo(map_point(x, y))
+
+            painter.setPen(
+                QPen(
+                    colors[curve_index % len(colors)],
+                    1.8))
+            painter.drawPath(path)
+
+        painter.setPen(text_color)
+        painter.drawText(
+            QRectF(plot.left(), plot.bottom() + 22, plot.width(), 20),
+            Qt.AlignmentFlag.AlignCenter,
+            self._x_label)
+
+        if self._stop_axis:
+            stop_min, stop_max, zero_x = self._stop_axis
+            tick_count = int(round(stop_max - stop_min))
+            log10_two = 0.3010299956639812
+
+            secondary_color = QColor(text_color)
+            secondary_color.setAlpha(150)
+
+            painter.setPen(QPen(secondary_color, 1.0))
+            for index in range(tick_count + 1):
+                stop = stop_min + index
+                stop_x = zero_x + stop * log10_two
+
+                if stop_x < x_min - 1e-9 or stop_x > x_max + 1e-9:
+                    continue
+
+                x = map_point(stop_x, y_min).x()
+
+                painter.drawLine(
+                    QPointF(x, plot.bottom()),
+                    QPointF(x, plot.bottom() + 5))
+
+                if index % 2 == 0 or abs(stop) < 1e-9:
+                    painter.setPen(secondary_color)
+                    label = "0 stop" if abs(stop) < 1e-9 else f"{stop:+.0f}"
+                    painter.drawText(
+                        QRectF(x - 32, plot.bottom() + 42, 64, 18),
+                        Qt.AlignmentFlag.AlignCenter,
+                        label)
+
+            if x_min <= zero_x <= x_max:
+                zero_px = map_point(zero_x, y_min).x()
+                zero_pen = QPen(secondary_color, 1.0)
+                zero_pen.setStyle(Qt.PenStyle.DashLine)
+                painter.setPen(zero_pen)
+                painter.drawLine(
+                    QPointF(zero_px, plot.top()),
+                    QPointF(zero_px, plot.bottom()))
+
+            painter.setPen(secondary_color)
+            painter.drawText(
+                QRectF(plot.left(), plot.bottom() + 56, plot.width(), 18),
+                Qt.AlignmentFlag.AlignCenter,
+                "camera stops")
+
+        painter.drawText(
+            QRectF(4, plot.top() - 8, left - 12, 20),
+            Qt.AlignmentFlag.AlignRight,
+            f"{y_max:.4g}")
+        painter.drawText(
+            QRectF(4, plot.bottom() - 12, left - 12, 20),
+            Qt.AlignmentFlag.AlignRight,
+            f"{y_min:.4g}")
+        painter.drawText(
+            QRectF(plot.left() - 16, plot.bottom() + 2, 60, 20),
+            Qt.AlignmentFlag.AlignLeft,
+            f"{x_min:.4g}")
+        painter.drawText(
+            QRectF(plot.right() - 44, plot.bottom() + 2, 60, 20),
+            Qt.AlignmentFlag.AlignRight,
+            f"{x_max:.4g}")
+
+        legend_x = plot.left() + 8
+        legend_y = plot.top() + 8
+        for curve_index, (name, _) in enumerate(self._curves):
+            painter.setPen(
+                QPen(
+                    colors[curve_index % len(colors)],
+                    2.0))
+            painter.drawLine(
+                QPointF(legend_x, legend_y + 7),
+                QPointF(legend_x + 18, legend_y + 7))
+            painter.setPen(text_color)
+            painter.drawText(
+                QRectF(legend_x + 24, legend_y - 2, 220, 18),
+                Qt.AlignmentFlag.AlignLeft
+                | Qt.AlignmentFlag.AlignVCenter,
+                name)
+            legend_y += 20
+
+
+
 class FilmVizWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -259,8 +549,8 @@ class FilmVizWindow(QMainWindow):
         common_form.addRow(controls)
         root_layout.addWidget(common)
 
-        tabs = QTabWidget()
-        root_layout.addWidget(tabs)
+        self.tabs = QTabWidget()
+        root_layout.addWidget(self.tabs)
 
         image_tab = QWidget()
         image_form = QFormLayout(image_tab)
@@ -295,7 +585,7 @@ class FilmVizWindow(QMainWindow):
         image_actions_layout.addWidget(self.convert_button, 1)
         image_actions_layout.addWidget(self.open_output_button)
         image_form.addRow(image_actions)
-        tabs.addTab(image_tab, "Convert Image")
+        self.tabs.addTab(image_tab, "Convert Image")
 
         lut_tab = QWidget()
         lut_form = QFormLayout(lut_tab)
@@ -309,13 +599,146 @@ class FilmVizWindow(QMainWindow):
         self.lut_button = QPushButton("Generate LUT")
         self.lut_button.clicked.connect(self.generate_lut)
         lut_form.addRow(self.lut_button)
-        tabs.addTab(lut_tab, "Generate LUT")
+        self.tabs.addTab(lut_tab, "Generate LUT")
+
+
+        profiles_tab = QWidget()
+        profiles_layout = QVBoxLayout(profiles_tab)
+
+        profile_controls = QWidget()
+        profile_controls_layout = QHBoxLayout(profile_controls)
+        profile_controls_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.profile_family = QComboBox()
+        self.profile_family.addItems(("Negative — Verita 200D", "Print — Kodak 2383"))
+        self.profile_curve_type = QComboBox()
+
+        profile_controls_layout.addWidget(QLabel("Profile"))
+        profile_controls_layout.addWidget(self.profile_family)
+        profile_controls_layout.addSpacing(18)
+        profile_controls_layout.addWidget(QLabel("Curves"))
+        profile_controls_layout.addWidget(self.profile_curve_type, 1)
+
+        self.profile_plot = CurvePlotWidget()
+
+        profiles_layout.addWidget(profile_controls)
+        profiles_layout.addWidget(self.profile_plot, 1)
+
+        self.profile_family.currentIndexChanged.connect(
+            self._profile_family_changed)
+        self.profile_curve_type.currentIndexChanged.connect(
+            self._reload_profile_plot)
+        self.resources.edit.editingFinished.connect(
+            self._reload_profile_plot)
+
+        self.tabs.addTab(profiles_tab, "Profiles")
+        self._profile_family_changed()
 
         self.stage = QLabel("Ready")
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         root_layout.addWidget(self.stage)
         root_layout.addWidget(self.progress)
+
+
+    @Slot()
+    def _profile_family_changed(self):
+        current = self.profile_curve_type.currentData()
+        self.profile_curve_type.blockSignals(True)
+        self.profile_curve_type.clear()
+
+        if self.profile_family.currentIndex() == 0:
+            entries = (
+                ("Spectral sensitivity", "kodak_verita_200d_spectral_sensitivity_curves.csv"),
+                ("Sensitometric curves", "kodak_verita_200d_sensitometric_curves.csv"),
+                ("Spectral dye density", "kodak_verita_200d_spectral_dye_density_curves.csv"),
+                ("Diffuse RMS granularity", "kodak_verita_200d_diffuse_rms_granularity_curves.csv"),
+            )
+        else:
+            entries = (
+                ("Spectral sensitivity", "kodak_2383_spectral_sensitivity_curves.csv"),
+                ("Sensitometric curves", "kodak_2383_sensitometric_curves.csv"),
+                ("Spectral dye density", "kodak_2383_corrected_spectral_dye_density_curves.csv"),
+                ("MTF", "kodak_2383_modulation_transfer_function_curves.csv"),
+                ("Diffuse RMS granularity", "kodak_2383_diffuse_rms_granularity_curves.csv"),
+            )
+
+        for label, filename in entries:
+            self.profile_curve_type.addItem(label, filename)
+
+        if current:
+            index = self.profile_curve_type.findData(current)
+            if index >= 0:
+                self.profile_curve_type.setCurrentIndex(index)
+
+        self.profile_curve_type.blockSignals(False)
+        self._reload_profile_plot()
+
+    @Slot()
+    def _reload_profile_plot(self):
+        filename = self.profile_curve_type.currentData()
+        if not filename:
+            self.profile_plot.set_error("No profile curve selected.")
+            return
+
+        profile_directory = (
+            "verita_200d"
+            if self.profile_family.currentIndex() == 0
+            else "kodak_2383"
+        )
+
+        path = (
+            Path(self.resources.value())
+            / "profiles"
+            / profile_directory
+            / filename
+        )
+
+        x_column = None
+        y_columns = None
+        stop_axis = None
+
+        if filename.endswith("_sensitometric_curves.csv"):
+            if self.profile_family.currentIndex() == 0:
+                x_column = "log_exposure_lux_seconds"
+                y_columns = (
+                    "curve_high_density",
+                    "curve_mid_density",
+                    "curve_low_density",
+                )
+                # The Verita source table carries camera_stops and LogE together:
+                # stop 0 = -0.515 LogE, with -8..+8 stops across the curve.
+                stop_axis = (-8.0, 8.0, -0.515)
+            else:
+                # Kodak 2383 sensitometry already uses log exposure as its
+                # first column. Keep the file's native axis and plot all
+                # remaining density channels. No photographic stop axis is
+                # shown because there is no single calibrated 0-stop anchor
+                # for the print stock.
+                x_column = None
+                y_columns = None
+
+        x_label, curves = _read_curve_csv(
+            path,
+            x_column=x_column,
+            y_columns=y_columns)
+
+        if not curves:
+            self.profile_plot.set_error(
+                f"Could not load curve data:\n{path}")
+            return
+
+        title = (
+            f"{self.profile_family.currentText()} — "
+            f"{self.profile_curve_type.currentText()}"
+        )
+
+        self.profile_plot.set_curves(
+            title,
+            x_label,
+            curves,
+            stop_axis=stop_axis)
+
 
     def _common(self):
         return dict(
