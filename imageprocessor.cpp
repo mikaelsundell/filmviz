@@ -5,6 +5,7 @@
 
 #include "filmpipeline.h"
 #include "granularitymodel.h"
+#include "halationmodel.h"
 #include "lut3d.h"
 #include "threading.h"
 
@@ -16,6 +17,7 @@
 #include <atomic>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -168,6 +170,7 @@ from_linear(
             : value;
 }
 
+
 } // namespace
 
 std::array<float, 3>
@@ -205,85 +208,189 @@ ImageProcessor::process(
     const FilmPipeline& pipeline,
     const InputTransform& input_transform,
     const Settings& settings,
-    const Progress& progress)
+    const Progress& progress,
+    const Cancel& cancel)
 {
     error_.clear();
+
+    HalationModel::Settings halation_validation_settings;
+    halation_validation_settings.strength = settings.halation_strength;
+    halation_validation_settings.radius_pixels = settings.halation_radius_pixels;
+    halation_validation_settings.threshold = settings.halation_threshold;
 
     if (!pipeline.valid()
         || settings.lut_size < 2
         || settings.negative_grain_strength < 0.0f
         || settings.print_grain_strength < 0.0f
         || settings.grain_size_pixels < 1.0f
-        || settings.grain_chroma < 0.0f) {
+        || settings.grain_chroma < 0.0f
+        || !HalationModel::valid_settings(
+            halation_validation_settings)) {
 
         error_ = "invalid image-processing settings";
         return false;
     }
 
     const int size = settings.lut_size;
+    const bool halation_enabled =
+        settings.halation_strength > 0.0f
+        && settings.halation_radius_pixels > 0.0f;
+
     const std::size_t field_size =
         static_cast<std::size_t>(size * size * size);
     std::vector<GrainSample> grain_field(
         field_size);
     Lut3D lut;
+    Lut3D negative_exposure_lut;
+    std::atomic<bool> cancel_requested(false);
 
-    const bool generated =
-        lut.generate(
-            size,
-            [&](const Lut3D::RGB& encoded,
-                Lut3D::RGB& output) {
-
-                const FilmPipeline::Result result =
-                    pipeline.process(
-                        input_transform.to_ap0(
-                            encoded));
-
-                if (!result.valid) {
-                    return false;
-                }
-
-                output =
-                    settings.output == Output::Rec709Gamma24
-                        ? result.rec709_gamma24
-                        : result.ap0;
-
-                const int r =
-                    static_cast<int>(
-                        std::lround(encoded[0] * (size - 1)));
-                const int g =
-                    static_cast<int>(
-                        std::lround(encoded[1] * (size - 1)));
-                const int b =
-                    static_cast<int>(
-                        std::lround(encoded[2] * (size - 1)));
-                const std::size_t index =
-                    static_cast<std::size_t>(
-                        (b * size + g) * size + r);
-
-                grain_field[index] = {{
-                    result.negative_granularity_sigma.red,
-                    result.negative_granularity_sigma.green,
-                    result.negative_granularity_sigma.blue,
-                    result.print_granularity_sigma.red,
-                    result.print_granularity_sigma.green,
-                    result.print_granularity_sigma.blue
-                }};
-
+    const auto cancelled =
+        [&]() {
+            if (cancel_requested.load(
+                    std::memory_order_relaxed)) {
                 return true;
-            },
-            [&](int completed,
-                int total) {
+            }
 
-                if (progress) {
-                    progress(
-                        "LUT creation",
-                        completed,
-                        total);
-                }
-            });
+            if (cancel && cancel()) {
+                cancel_requested.store(
+                    true,
+                    std::memory_order_relaxed);
+                return true;
+            }
 
-    if (!generated) {
-        error_ = "could not generate image-processing LUT";
+            return false;
+        };
+
+    if (!halation_enabled) {
+        const bool generated =
+            lut.generate(
+                size,
+                [&](const Lut3D::RGB& lookup_input,
+                    Lut3D::RGB& output) {
+
+                    if (cancel_requested.load(
+                            std::memory_order_relaxed)) {
+                        return false;
+                    }
+
+                    const FilmPipeline::Result result =
+                        pipeline.process(
+                            input_transform.to_ap0(
+                                lookup_input));
+
+                    if (!result.valid) {
+                        return false;
+                    }
+
+                    output =
+                        settings.output == Output::Rec709Gamma24
+                            ? result.rec709_gamma24
+                            : result.ap0;
+
+                    const int r =
+                        static_cast<int>(
+                            std::lround(lookup_input[0] * (size - 1)));
+                    const int g =
+                        static_cast<int>(
+                            std::lround(lookup_input[1] * (size - 1)));
+                    const int b =
+                        static_cast<int>(
+                            std::lround(lookup_input[2] * (size - 1)));
+                    const std::size_t index =
+                        static_cast<std::size_t>(
+                            (b * size + g) * size + r);
+
+                    grain_field[index] = {{
+                        result.negative_granularity_sigma.red,
+                        result.negative_granularity_sigma.green,
+                        result.negative_granularity_sigma.blue,
+                        result.print_granularity_sigma.red,
+                        result.print_granularity_sigma.green,
+                        result.print_granularity_sigma.blue
+                    }};
+
+                    return true;
+                },
+                [&](int completed,
+                    int total) {
+
+                    if (cancelled()) {
+                        return;
+                    }
+
+                    if (progress) {
+                        progress(
+                            "LUT creation",
+                            completed,
+                            total);
+                    }
+                });
+
+        if (!generated) {
+            error_ =
+                cancel_requested.load(
+                    std::memory_order_relaxed)
+                    ? "image processing cancelled"
+                    : "could not generate image-processing LUT";
+            return false;
+        }
+    }
+    else {
+        const bool generated =
+            negative_exposure_lut.generate(
+                size,
+                [&](const Lut3D::RGB& lookup_input,
+                    Lut3D::RGB& output) {
+
+                    if (cancel_requested.load(
+                            std::memory_order_relaxed)) {
+                        return false;
+                    }
+
+                    FilmExposure exposure;
+
+                    if (!pipeline.negative_exposure(
+                            input_transform.to_ap0(
+                                lookup_input),
+                            exposure)) {
+                        return false;
+                    }
+
+                    output = {{
+                        exposure.red,
+                        exposure.green,
+                        exposure.blue
+                    }};
+
+                    return true;
+                },
+                [&](int completed,
+                    int total) {
+
+                    if (cancelled()) {
+                        return;
+                    }
+
+                    if (progress) {
+                        progress(
+                            "Negative exposure LUT",
+                            completed,
+                            total);
+                    }
+                });
+
+        if (!generated) {
+            error_ =
+                cancel_requested.load(
+                    std::memory_order_relaxed)
+                    ? "image processing cancelled"
+                    : "could not generate negative-exposure LUT";
+            return false;
+        }
+    }
+
+    if (cancelled()) {
+        error_ = "image processing cancelled";
         return false;
     }
 
@@ -324,12 +431,365 @@ ImageProcessor::process(
         return false;
     }
 
+    std::vector<float> scene_ap0_pixels;
+    std::vector<FilmExposure> negative_exposure_pixels;
+
+    if (halation_enabled) {
+        scene_ap0_pixels.assign(
+            pixel_count * 3u,
+            0.0f);
+
+        negative_exposure_pixels.assign(
+            pixel_count,
+            FilmExposure());
+
+        if (progress) {
+            progress(
+                "Halation exposure",
+                0,
+                input_spec.height);
+        }
+
+        std::atomic<int> exposure_next_row(0);
+        std::atomic<int> exposure_completed_rows(0);
+        std::mutex exposure_progress_mutex;
+        const int exposure_worker_count =
+            FilmVizThreading::effective_thread_count(
+                input_spec.height);
+        std::vector<std::thread> exposure_workers;
+        exposure_workers.reserve(
+            static_cast<std::size_t>(exposure_worker_count));
+
+        for (int worker = 0;
+             worker < exposure_worker_count;
+             ++worker) {
+
+            exposure_workers.emplace_back(
+                [&]() {
+                    while (!cancelled()) {
+                        const int y =
+                            exposure_next_row.fetch_add(
+                                1,
+                                std::memory_order_relaxed);
+
+                        if (y >= input_spec.height) {
+                            break;
+                        }
+
+                        for (int x = 0;
+                             x < input_spec.width;
+                             ++x) {
+
+                            const std::size_t pixel =
+                                static_cast<std::size_t>(y)
+                                * static_cast<std::size_t>(input_spec.width)
+                                + static_cast<std::size_t>(x);
+
+                            const std::size_t input_offset =
+                                pixel
+                                * static_cast<std::size_t>(
+                                    input_spec.nchannels);
+
+                            const Lut3D::RGB encoded = {{
+                                input_pixels[input_offset + 0],
+                                input_pixels[input_offset + 1],
+                                input_pixels[input_offset + 2]
+                            }};
+
+                            const std::array<float, 3> ap0 =
+                                input_transform.to_ap0(
+                                    encoded);
+
+                            scene_ap0_pixels[pixel * 3u + 0] = ap0[0];
+                            scene_ap0_pixels[pixel * 3u + 1] = ap0[1];
+                            scene_ap0_pixels[pixel * 3u + 2] = ap0[2];
+
+                            const Lut3D::RGB exposure =
+                                negative_exposure_lut.sample_trilinear(
+                                    encoded);
+
+                            negative_exposure_pixels[pixel] = {
+                                exposure[0],
+                                exposure[1],
+                                exposure[2]
+                            };
+                        }
+
+                        const int finished =
+                            exposure_completed_rows.fetch_add(
+                                1,
+                                std::memory_order_relaxed)
+                            + 1;
+
+                        if (progress) {
+                            const std::lock_guard<std::mutex> lock(
+                                exposure_progress_mutex);
+                            progress(
+                                "Halation exposure",
+                                finished,
+                                input_spec.height);
+                        }
+                    }
+                });
+        }
+
+        for (std::thread& worker : exposure_workers) {
+            worker.join();
+        }
+
+        if (cancelled()) {
+            error_ = "image processing cancelled";
+            return false;
+        }
+
+        HalationModel::Settings halation_settings;
+        halation_settings.strength = settings.halation_strength;
+        halation_settings.radius_pixels = settings.halation_radius_pixels;
+        halation_settings.threshold = settings.halation_threshold;
+
+        if (!HalationModel::apply(
+                negative_exposure_pixels,
+                scene_ap0_pixels,
+                input_spec.width,
+                input_spec.height,
+                halation_settings,
+                cancel,
+                [&](int completed,
+                    int total) {
+
+                    if (progress) {
+                        progress(
+                            "Halation scatter",
+                            completed,
+                            total);
+                    }
+                })) {
+
+            error_ =
+                cancelled()
+                    ? "image processing cancelled"
+                    : "halation processing failed";
+            return false;
+        }
+
+        if (cancelled()) {
+            error_ = "image processing cancelled";
+            return false;
+        }
+
+        std::array<float, 3> log_min = {{
+            std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::infinity()
+        }};
+        std::array<float, 3> log_max = {{
+            -std::numeric_limits<float>::infinity(),
+            -std::numeric_limits<float>::infinity(),
+            -std::numeric_limits<float>::infinity()
+        }};
+
+        for (const FilmExposure& exposure : negative_exposure_pixels) {
+            const float values[3] = {
+                exposure.red,
+                exposure.green,
+                exposure.blue
+            };
+
+            for (int channel = 0;
+                 channel < 3;
+                 ++channel) {
+
+                const float log_value =
+                    std::log10(
+                        std::max(
+                            values[channel],
+                            1e-20f));
+
+                log_min[channel] =
+                    std::min(
+                        log_min[channel],
+                        log_value);
+
+                log_max[channel] =
+                    std::max(
+                        log_max[channel],
+                        log_value);
+            }
+        }
+
+        constexpr float log_padding = 0.02f;
+
+        for (int channel = 0;
+             channel < 3;
+             ++channel) {
+
+            if (!std::isfinite(log_min[channel])
+                || !std::isfinite(log_max[channel])) {
+
+                error_ = "invalid negative exposure range after halation";
+                return false;
+            }
+
+            if (log_max[channel] - log_min[channel] < 1e-4f) {
+                const float center =
+                    0.5f
+                    * (log_min[channel]
+                       + log_max[channel]);
+
+                log_min[channel] = center - 0.05f;
+                log_max[channel] = center + 0.05f;
+            }
+            else {
+                log_min[channel] -= log_padding;
+                log_max[channel] += log_padding;
+            }
+        }
+
+        lut = Lut3D();
+        grain_field.assign(
+            field_size,
+            GrainSample());
+
+        const bool generated =
+            lut.generate(
+                size,
+                [&](const Lut3D::RGB& lookup_input,
+                    Lut3D::RGB& output) {
+
+                    if (cancel_requested.load(
+                            std::memory_order_relaxed)) {
+                        return false;
+                    }
+
+                    FilmExposure exposure;
+                    float* channels[3] = {
+                        &exposure.red,
+                        &exposure.green,
+                        &exposure.blue
+                    };
+
+                    for (int channel = 0;
+                         channel < 3;
+                         ++channel) {
+
+                        const float log_value =
+                            log_min[channel]
+                            + lookup_input[channel]
+                                * (log_max[channel]
+                                   - log_min[channel]);
+
+                        *channels[channel] =
+                            std::pow(
+                                10.0f,
+                                log_value);
+                    }
+
+                    const FilmPipeline::Result result =
+                        pipeline.process_negative_exposure(
+                            exposure);
+
+                    if (!result.valid) {
+                        return false;
+                    }
+
+                    output =
+                        settings.output == Output::Rec709Gamma24
+                            ? result.rec709_gamma24
+                            : result.ap0;
+
+                    const int r =
+                        static_cast<int>(
+                            std::lround(lookup_input[0] * (size - 1)));
+                    const int g =
+                        static_cast<int>(
+                            std::lround(lookup_input[1] * (size - 1)));
+                    const int b =
+                        static_cast<int>(
+                            std::lround(lookup_input[2] * (size - 1)));
+                    const std::size_t index =
+                        static_cast<std::size_t>(
+                            (b * size + g) * size + r);
+
+                    grain_field[index] = {{
+                        result.negative_granularity_sigma.red,
+                        result.negative_granularity_sigma.green,
+                        result.negative_granularity_sigma.blue,
+                        result.print_granularity_sigma.red,
+                        result.print_granularity_sigma.green,
+                        result.print_granularity_sigma.blue
+                    }};
+
+                    return true;
+                },
+                [&](int completed,
+                    int total) {
+
+                    if (cancelled()) {
+                        return;
+                    }
+
+                    if (progress) {
+                        progress(
+                            "Halation development LUT",
+                            completed,
+                            total);
+                    }
+                });
+
+        if (!generated) {
+            error_ =
+                cancel_requested.load(
+                    std::memory_order_relaxed)
+                    ? "image processing cancelled"
+                    : "could not generate halation development LUT";
+            return false;
+        }
+
+        if (cancelled()) {
+            error_ = "image processing cancelled";
+            return false;
+        }
+
+        // Re-map the modified negative exposure into the normalized domain of
+        // the second LUT. From this point onward the normal fast image path is
+        // used; no full spectral evaluation occurs per image pixel.
+        scene_ap0_pixels.clear();
+        scene_ap0_pixels.shrink_to_fit();
+
+        for (FilmExposure& exposure : negative_exposure_pixels) {
+            float* channels[3] = {
+                &exposure.red,
+                &exposure.green,
+                &exposure.blue
+            };
+
+            for (int channel = 0;
+                 channel < 3;
+                 ++channel) {
+
+                const float log_value =
+                    std::log10(
+                        std::max(
+                            *channels[channel],
+                            1e-20f));
+
+                *channels[channel] =
+                    std::clamp(
+                        (log_value - log_min[channel])
+                        / (log_max[channel] - log_min[channel]),
+                        0.0f,
+                        1.0f);
+            }
+        }
+    }
+
     if (progress) {
         progress("Image conversion", 0, input_spec.height);
     }
 
     std::atomic<int> next_row(0);
     std::atomic<int> completed_rows(0);
+    std::atomic<bool> processing_failed(false);
     std::mutex progress_mutex;
     const int worker_count =
         FilmVizThreading::effective_thread_count(
@@ -344,7 +804,9 @@ ImageProcessor::process(
 
         workers.emplace_back(
             [&]() {
-                while (true) {
+                while (!cancel_requested.load(
+                           std::memory_order_relaxed)) {
+
                     const int y =
                         next_row.fetch_add(
                             1,
@@ -357,6 +819,7 @@ ImageProcessor::process(
                     for (int x = 0;
                          x < input_spec.width;
                          ++x) {
+
                         const std::size_t pixel =
                             static_cast<std::size_t>(y)
                             * static_cast<std::size_t>(input_spec.width)
@@ -364,22 +827,43 @@ ImageProcessor::process(
                         const std::size_t input_offset =
                             pixel
                             * static_cast<std::size_t>(input_spec.nchannels);
-                        const Lut3D::RGB encoded = {{
-                            input_pixels[input_offset + 0],
-                            input_pixels[input_offset + 1],
-                            input_pixels[input_offset + 2]
-                        }};
-                        Lut3D::RGB converted =
-                            lut.sample_trilinear(encoded);
-                        const GrainSample sigma =
+
+                        Lut3D::RGB lookup_input;
+
+                        if (halation_enabled) {
+                            const FilmExposure& normalized =
+                                negative_exposure_pixels[pixel];
+
+                            lookup_input = {{
+                                normalized.red,
+                                normalized.green,
+                                normalized.blue
+                            }};
+                        }
+                        else {
+                            lookup_input = {{
+                                input_pixels[input_offset + 0],
+                                input_pixels[input_offset + 1],
+                                input_pixels[input_offset + 2]
+                            }};
+                        }
+
+                        const Lut3D::RGB converted =
+                            lut.sample_trilinear(
+                                lookup_input);
+
+                        GrainSample sigma =
                             sample_field(
                                 grain_field,
                                 size,
-                                encoded);
+                                lookup_input);
 
                         std::array<float, 3> density_noise;
 
-                        for (int channel = 0; channel < 3; ++channel) {
+                        for (int channel = 0;
+                             channel < 3;
+                             ++channel) {
+
                             const float negative_noise =
                                 settings.negative_grain_strength
                                 * sigma[channel]
@@ -411,12 +895,10 @@ ImageProcessor::process(
                                 density_noise,
                                 settings.grain_chroma);
 
-                        for (int channel = 0; channel < 3; ++channel) {
+                        for (int channel = 0;
+                             channel < 3;
+                             ++channel) {
 
-                            // Higher negative density produces a lighter
-                            // print; higher print density produces a darker
-                            // viewed result. This is the first-order
-                            // density-domain propagation used by image mode.
                             float linear =
                                 to_linear(
                                     converted[channel],
@@ -443,13 +925,20 @@ ImageProcessor::process(
                             std::memory_order_relaxed)
                         + 1;
 
-                    if (progress) {
+                    {
                         const std::lock_guard<std::mutex> lock(
                             progress_mutex);
-                        progress(
-                            "Image conversion",
-                            finished,
-                            input_spec.height);
+
+                        if (cancelled()) {
+                            break;
+                        }
+
+                        if (progress) {
+                            progress(
+                                "Image conversion",
+                                finished,
+                                input_spec.height);
+                        }
                     }
                 }
             });
@@ -457,6 +946,19 @@ ImageProcessor::process(
 
     for (std::thread& worker : workers) {
         worker.join();
+    }
+
+    if (cancel_requested.load(
+            std::memory_order_relaxed)) {
+        error_ = "image processing cancelled";
+        return false;
+    }
+
+    if (processing_failed.load(
+            std::memory_order_relaxed)) {
+
+        error_ = "spectral evaluation failed during image processing";
+        return false;
     }
 
     const std::filesystem::path output_path(output_filename);
@@ -498,6 +1000,15 @@ ImageProcessor::process(
     output_spec.attribute(
         "filmviz:grain_chroma",
         settings.grain_chroma);
+    output_spec.attribute(
+        "filmviz:halation_strength",
+        settings.halation_strength);
+    output_spec.attribute(
+        "filmviz:halation_radius_pixels",
+        settings.halation_radius_pixels);
+    output_spec.attribute(
+        "filmviz:halation_threshold",
+        settings.halation_threshold);
     output_spec.attribute("compression", "zip");
 
     ImageBuf output_image(

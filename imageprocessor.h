@@ -27,6 +27,9 @@ public:
             int completed,
             int total)>;
 
+    using Cancel =
+        std::function<bool()>;
+
     struct Settings
     {
         int lut_size = 33;
@@ -37,6 +40,13 @@ public:
         float grain_size_pixels = 1.0f;
         float grain_chroma = 1.0f;
         std::uint32_t grain_seed = 1u;
+
+        // Spatial negative-stage halation. It is deliberately excluded from
+        // LUT generation because it depends on neighbouring pixels and is
+        // applied to negative exposure before development.
+        float halation_strength = 0.0f;
+        float halation_radius_pixels = 12.0f;
+        float halation_threshold = 0.7f;
     };
 
     // Keeps Rec.709-weighted grain luminance fixed while scaling only the
@@ -52,7 +62,8 @@ public:
         const FilmPipeline& pipeline,
         const InputTransform& input_transform,
         const Settings& settings,
-        const Progress& progress = Progress());
+        const Progress& progress = Progress(),
+        const Cancel& cancel = Cancel());
 
     const std::string& error() const;
 

@@ -21,6 +21,13 @@ public:
         // Kodak's spectral dye-density graph is normalized around a
         // visual-neutral density of 1.0.
         float reference_status_a_density = 1.0f;
+
+        // Traditional printer-light scale. The neutral calibration point is
+        // 25/25/25 and one printer-light point equals 0.025 LogE.
+        float printer_light_red = 25.0f;
+        float printer_light_green = 25.0f;
+        float printer_light_blue = 25.0f;
+        float printer_light_log_exposure_per_point = 0.025f;
     };
 
     struct Balance

@@ -45,8 +45,24 @@ public:
         // Verita curves are available. Positive values increase negative
         // contrast around the calibrated middle-gray density.
         float push_pull_stops = 0.0f;
+
+        // Profile-independent bleach-bypass look controls. Zero is normal
+        // processing; one is the full modeled process look. The current
+        // approximation preserves mean spectral density to avoid introducing
+        // a large contrast shift: negative bypass adds a cool/cyan spectral
+        // tilt, while print bypass contracts spectral colour differences.
+        float negative_bleach_bypass = 0.0f;
+        float print_bleach_bypass = 0.0f;
+
         float print_reference_status_a_density = 1.0f;
         float printer_temperature_kelvin = 3200.0f;
+
+        // Traditional printer-light controls. 25/25/25 is the calibrated
+        // neutral operating point. Each point changes the corresponding
+        // print-record log exposure by 0.025.
+        float printer_light_red = 25.0f;
+        float printer_light_green = 25.0f;
+        float printer_light_blue = 25.0f;
 
         float wavelength_min_nm = 380.0f;
         float wavelength_max_nm = 700.0f;
@@ -65,6 +81,12 @@ public:
         FilmDensity print_density;
         FilmDensity negative_granularity_sigma;
         FilmDensity print_granularity_sigma;
+
+        // Mean-density diagnostics from the profile-independent bypass model.
+        // These should remain close to zero because the process look preserves
+        // mean spectral density instead of adding a neutral density veil.
+        float negative_bleach_mean_density_delta = 0.0f;
+        float print_bleach_mean_density_delta = 0.0f;
 
         std::array<float, 3> ap0 = {{0.0f, 0.0f, 0.0f}};
         std::array<float, 3> rec709_gamma24 = {{0.0f, 0.0f, 0.0f}};
@@ -87,6 +109,16 @@ public:
 
     Result process(
         const std::array<float, 3>& ap0_linear) const;
+
+    // Image-space effects such as halation need access to the developed film
+    // path at the negative-exposure boundary. These helpers expose that
+    // boundary without exposing stock/profile internals.
+    bool negative_exposure(
+        const std::array<float, 3>& ap0_linear,
+        FilmExposure& exposure) const;
+
+    Result process_negative_exposure(
+        const FilmExposure& negative_exposure) const;
 
     const Settings& settings() const;
     const std::string& error() const;

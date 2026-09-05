@@ -52,6 +52,14 @@ main(
 {
     FilmPipeline::Settings settings;
 
+    // Optional processing controls. These defaults preserve the calibrated
+    // baseline. Printer lights use the traditional 0-50 scale with 25 neutral.
+    settings.negative_bleach_bypass = 0.0f;
+    settings.print_bleach_bypass = 0.0f;
+    settings.printer_light_red = 25.0f;
+    settings.printer_light_green = 25.0f;
+    settings.printer_light_blue = 25.0f;
+
     if (argc > 1) {
         settings.resources_directory = argv[1];
     }
@@ -96,6 +104,14 @@ main(
     print_density("negative Status-M", result.negative_status_m_density);
     print_density("negative spectral coordinates", result.calibrated_negative_density);
     print_density("print records", result.print_density);
+    std::cout
+        << "negative/print bleach bypass = "
+        << settings.negative_bleach_bypass << " / "
+        << settings.print_bleach_bypass << "\n"
+        << "printer lights R/G/B = "
+        << settings.printer_light_red << " / "
+        << settings.printer_light_green << " / "
+        << settings.printer_light_blue << "\n";
     print_rgb("viewed print AP0", result.ap0);
     print_rgb("Rec.709/Gamma 2.4 preview", result.rec709_gamma24);
 

@@ -8,7 +8,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import threading
+import time
 import traceback
+from datetime import datetime
 
 
 def _add_local_paths():
@@ -89,7 +92,7 @@ _ensure_macos_qt_runtime(DEPENDENCY_PREFIXES, CONFIGURED_PYTHON)
 
 try:
     import filmviz_python as filmviz
-    from PySide6.QtCore import QObject, QPointF, QRectF, QThread, QUrl, Qt, Signal, Slot
+    from PySide6.QtCore import QObject, QPointF, QRectF, QThread, QTimer, QUrl, Qt, Signal, Slot
     from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPainterPath, QPen
     from PySide6.QtWidgets import (
         QApplication,
@@ -123,37 +126,49 @@ class OperationWorker(QObject):
     progress = Signal(str, int, int)
     finished = Signal(str)
     failed = Signal(str)
+    cancelled = Signal(str)
 
-    def __init__(self, operation, success_message: str):
+    def __init__(self, operation, success_message: str, cancel_event):
         super().__init__()
         self.operation = operation
         self.success_message = success_message
+        self.cancel_event = cancel_event
 
     @Slot()
     def run(self):
         try:
-            self.operation(self.progress.emit)
+            self.operation(
+                self.progress.emit,
+                self.cancel_event.is_set)
         except Exception:
-            self.failed.emit(traceback.format_exc())
+            if self.cancel_event.is_set():
+                self.cancelled.emit("Cancelled")
+            else:
+                self.failed.emit(traceback.format_exc())
         else:
-            self.finished.emit(self.success_message)
+            if self.cancel_event.is_set():
+                self.cancelled.emit("Cancelled")
+            else:
+                self.finished.emit(self.success_message)
 
 
 class PathRow(QWidget):
-    def __init__(self, mode: str, initial: str = ""):
+    def __init__(self, mode: str, initial: str = "", minimum_width: int = 0):
         super().__init__()
         self.mode = mode
         self.edit = QLineEdit(initial)
-        self.edit.setMinimumWidth(520)
+        self.edit.setMinimumWidth(minimum_width)
         self.edit.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         button = QPushButton("Browse…")
+        button.setMinimumWidth(110)
+        button.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         button.clicked.connect(self._browse)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.edit)
-        layout.addWidget(button)
-        layout.setStretch(0, 1)
+        layout.addWidget(self.edit, 1)
+        layout.addWidget(button, 0)
 
     @Slot()
     def _browse(self):
@@ -484,11 +499,17 @@ class FilmVizWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("FilmViz — Experimental Spectral Film Processor")
-        self.resize(980, 700)
+        self.resize(820, 700)
         self._thread = None
         self._worker = None
         self._pending_output_image = None
         self._last_output_image = None
+        self._cancel_event = None
+        self._start_time = None
+        self._current_stage = None
+        self._stage_start_time = None
+        self._last_logged_percent = -1
+        self._log_path = PROJECT_ROOT / "build" / "filmviz_timings.log"
 
         central = QWidget()
         root_layout = QVBoxLayout(central)
@@ -521,6 +542,17 @@ class FilmVizWindow(QMainWindow):
 
         self.exposure = _double(0.0, -10.0, 10.0, 0.25)
         self.push_pull = _double(0.0, -5.0, 5.0, 0.25)
+        self.negative_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
+        self.print_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
+        self.printer_light_red = QSpinBox()
+        self.printer_light_red.setRange(0, 50)
+        self.printer_light_red.setValue(25)
+        self.printer_light_green = QSpinBox()
+        self.printer_light_green.setRange(0, 50)
+        self.printer_light_green.setValue(25)
+        self.printer_light_blue = QSpinBox()
+        self.printer_light_blue.setRange(0, 50)
+        self.printer_light_blue.setValue(25)
         self.middle_gray = _double(0.18, 0.001, 2.0, 0.01, 4)
         self.printer_temperature = _double(3200.0, 1000.0, 10000.0, 50.0, 0)
         self.lut_size = QSpinBox()
@@ -537,8 +569,13 @@ class FilmVizWindow(QMainWindow):
         for row, (label, widget) in enumerate((
             ("Exposure stops", self.exposure),
             ("Push/pull stops", self.push_pull),
-            ("Middle gray", self.middle_gray),
+            ("Negative bypass", self.negative_bleach_bypass),
+            ("Print bypass", self.print_bleach_bypass),
+            ("Printer R light", self.printer_light_red),
+            ("Printer G light", self.printer_light_green),
+            ("Printer B light", self.printer_light_blue),
             ("Printer K", self.printer_temperature),
+            ("Middle gray", self.middle_gray),
             ("LUT size", self.lut_size),
             ("Worker threads", self.threads),
         )):
@@ -558,7 +595,9 @@ class FilmVizWindow(QMainWindow):
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         default_image = PROJECT_ROOT / "resources" / "references" / "images" / "ARRI_Helen_John_ALEXA_Mini_LF_AWG3_LogC3.tif"
         self.input_image = PathRow("input", str(default_image))
-        self.output_image = PathRow("output", str(PROJECT_ROOT / "build" / "filmviz_output.tif"))
+        self.output_image = PathRow(
+            "output",
+            str(PROJECT_ROOT / "build" / "filmviz_output.tif"))
         image_form.addRow("Input image", self.input_image)
         image_form.addRow("Output image", self.output_image)
         self.negative_grain = _double(0.0, 0.0, 10.0)
@@ -568,11 +607,17 @@ class FilmVizWindow(QMainWindow):
         self.grain_seed = QSpinBox()
         self.grain_seed.setRange(0, 2_147_483_647)
         self.grain_seed.setValue(1)
+        self.halation_strength = _double(0.0, 0.0, 1.0, 0.05)
+        self.halation_radius = _double(12.0, 0.0, 200.0, 1.0, 1)
+        self.halation_threshold = _double(0.7, 0.0, 4.0, 0.05, 3)
         image_form.addRow("Negative grain", self.negative_grain)
         image_form.addRow("Print grain", self.print_grain)
         image_form.addRow("Grain size (px)", self.grain_size)
         image_form.addRow("Grain chroma", self.grain_chroma)
         image_form.addRow("Grain seed", self.grain_seed)
+        image_form.addRow("Halation", self.halation_strength)
+        image_form.addRow("Halation radius (px)", self.halation_radius)
+        image_form.addRow("Halation threshold", self.halation_threshold)
         self.convert_button = QPushButton("Convert image")
         self.convert_button.clicked.connect(self.convert_image)
         self.open_output_button = QPushButton("Open output")
@@ -634,10 +679,32 @@ class FilmVizWindow(QMainWindow):
         self.tabs.addTab(profiles_tab, "Profiles")
         self._profile_family_changed()
 
+        status = QWidget()
+        status_layout = QHBoxLayout(status)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+
         self.stage = QLabel("Ready")
+        self.elapsed = QLabel("Elapsed 00:00.0")
+        self.open_log_button = QPushButton("Open log")
+        self.open_log_button.clicked.connect(self.open_timing_log)
+        self.open_log_button.setEnabled(self._log_path.is_file())
+        self.cancel_button = QPushButton("Stop")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_operation)
+
+        status_layout.addWidget(self.stage, 1)
+        status_layout.addWidget(self.elapsed)
+        status_layout.addWidget(self.open_log_button)
+        status_layout.addWidget(self.cancel_button)
+
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
-        root_layout.addWidget(self.stage)
+
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.setInterval(100)
+        self.elapsed_timer.timeout.connect(self._update_elapsed)
+
+        root_layout.addWidget(status)
         root_layout.addWidget(self.progress)
 
 
@@ -750,6 +817,11 @@ class FilmVizWindow(QMainWindow):
             lut_size=self.lut_size.value(),
             exposure=self.exposure.value(),
             push_pull=self.push_pull.value(),
+            negative_bleach_bypass=self.negative_bleach_bypass.value(),
+            print_bleach_bypass=self.print_bleach_bypass.value(),
+            printer_light_red=self.printer_light_red.value(),
+            printer_light_green=self.printer_light_green.value(),
+            printer_light_blue=self.printer_light_blue.value(),
             middle_gray=self.middle_gray.value(),
             printer_temperature=self.printer_temperature.value(),
             threads=self.threads.value(),
@@ -766,12 +838,19 @@ class FilmVizWindow(QMainWindow):
             grain_size=self.grain_size.value(),
             grain_chroma=self.grain_chroma.value(),
             grain_seed=self.grain_seed.value(),
+            halation_strength=self.halation_strength.value(),
+            halation_radius=self.halation_radius.value(),
+            halation_threshold=self.halation_threshold.value(),
         )
         output = arguments["output_filename"]
         self._start(
-            lambda progress: filmviz.process_image(**arguments, progress=progress),
+            lambda progress, cancel: filmviz.process_image(
+                **arguments,
+                progress=progress,
+                cancel=cancel),
             f"Wrote {output}",
             output_image=output,
+            log_context=arguments,
         )
 
     @Slot()
@@ -780,30 +859,58 @@ class FilmVizWindow(QMainWindow):
         arguments["output_filename"] = self.output_lut.value()
         output = arguments["output_filename"]
         self._start(
-            lambda progress: filmviz.generate_lut(**arguments, progress=progress),
+            lambda progress, cancel: filmviz.generate_lut(
+                **arguments,
+                progress=progress,
+                cancel=cancel),
             f"Wrote {output}",
+            log_context=arguments,
         )
 
-    def _start(self, operation, success_message, output_image=None):
+    def _start(
+        self,
+        operation,
+        success_message,
+        output_image=None,
+        log_context=None,
+    ):
         if self._thread is not None:
             return
+
         self._pending_output_image = output_image
+        self._cancel_event = threading.Event()
+        self._start_time = time.monotonic()
+        self._current_stage = None
+        self._stage_start_time = None
+        self._last_logged_percent = -1
+        self._begin_timing_log(log_context or {})
+        self.elapsed.setText("Elapsed 00:00.0")
+        self.elapsed_timer.start()
+        self.cancel_button.setEnabled(True)
+
         if output_image is not None:
             self.open_output_button.setVisible(False)
             self.open_output_button.setEnabled(False)
+
         self.convert_button.setEnabled(False)
         self.lut_button.setEnabled(False)
         self.progress.setValue(0)
         self.stage.setText("Starting…")
+
         thread = QThread(self)
-        worker = OperationWorker(operation, success_message)
+        worker = OperationWorker(
+            operation,
+            success_message,
+            self._cancel_event)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._progress)
         worker.finished.connect(self._finished)
         worker.failed.connect(self._failed)
+        worker.cancelled.connect(self._cancelled)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear_worker)
@@ -811,13 +918,109 @@ class FilmVizWindow(QMainWindow):
         self._worker = worker
         thread.start()
 
+    @Slot()
+    def cancel_operation(self):
+        if self._cancel_event is None:
+            return
+        self._cancel_event.set()
+        self.cancel_button.setEnabled(False)
+        self.stage.setText("Stopping…")
+
+    @Slot()
+    def _update_elapsed(self):
+        if self._start_time is None:
+            return
+
+        elapsed = max(0.0, time.monotonic() - self._start_time)
+        minutes = int(elapsed // 60.0)
+        seconds = elapsed - minutes * 60.0
+        self.elapsed.setText(
+            f"Elapsed {minutes:02d}:{seconds:04.1f}")
+
+    def _stop_elapsed_timer(self):
+        self._update_elapsed()
+        self.elapsed_timer.stop()
+        self.cancel_button.setEnabled(False)
+
+    def _append_timing_log(self, message):
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._log_path.open("a", encoding="utf-8") as handle:
+                handle.write(message + "\n")
+            self.open_log_button.setEnabled(True)
+        except OSError:
+            pass
+
+    def _begin_timing_log(self, context):
+        self._append_timing_log("")
+        self._append_timing_log(
+            "=" * 72)
+        self._append_timing_log(
+            f"Run started {datetime.now().isoformat(timespec='seconds')}")
+        try:
+            effective_threads = filmviz.effective_threads(4096)
+            self._append_timing_log(
+                f"effective_threads: {effective_threads}")
+        except Exception:
+            pass
+        for key in sorted(context):
+            self._append_timing_log(
+                f"{key}: {context[key]}")
+
+    def _finish_stage_log(self):
+        if self._current_stage is None or self._stage_start_time is None:
+            return
+        duration = max(0.0, time.monotonic() - self._stage_start_time)
+        self._append_timing_log(
+            f"stage {self._current_stage}: {duration:.3f} s")
+        self._current_stage = None
+        self._stage_start_time = None
+        self._last_logged_percent = -1
+
+    @Slot()
+    def open_timing_log(self):
+        if not self._log_path.is_file():
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._log_path))):
+            QMessageBox.warning(
+                self,
+                "Could not open timing log",
+                f"Could not open:\n{self._log_path}")
+
     @Slot(str, int, int)
     def _progress(self, stage, completed, total):
+        now = time.monotonic()
+
+        if stage != self._current_stage:
+            self._finish_stage_log()
+            self._current_stage = stage
+            self._stage_start_time = now
+            self._last_logged_percent = -1
+            self._append_timing_log(f"stage {stage}: started")
+
+        percent = round(100 * completed / total) if total else 0
         self.stage.setText(stage)
-        self.progress.setValue(round(100 * completed / total) if total else 0)
+        self.progress.setValue(percent)
+
+        log_percent = (percent // 10) * 10
+        if log_percent != self._last_logged_percent:
+            elapsed = (
+                now - self._stage_start_time
+                if self._stage_start_time is not None
+                else 0.0)
+            self._append_timing_log(
+                f"  {stage}: {percent}% at {elapsed:.3f} s")
+            self._last_logged_percent = log_percent
 
     @Slot(str)
     def _finished(self, message):
+        self._finish_stage_log()
+        total = (
+            max(0.0, time.monotonic() - self._start_time)
+            if self._start_time is not None
+            else 0.0)
+        self._append_timing_log(f"run completed: {total:.3f} s")
+        self._stop_elapsed_timer()
         self.progress.setValue(100)
         self.stage.setText(message)
         if self._pending_output_image is not None:
@@ -828,11 +1031,34 @@ class FilmVizWindow(QMainWindow):
 
     @Slot(str)
     def _failed(self, message):
+        self._finish_stage_log()
+        total = (
+            max(0.0, time.monotonic() - self._start_time)
+            if self._start_time is not None
+            else 0.0)
+        self._append_timing_log(f"run failed after: {total:.3f} s")
+        self._append_timing_log(message.rstrip())
+        self._stop_elapsed_timer()
         self.stage.setText("Failed")
         if self._pending_output_image is not None:
             self.open_output_button.setVisible(False)
             self.open_output_button.setEnabled(False)
         QMessageBox.critical(self, "FilmViz failed", message)
+
+    @Slot(str)
+    def _cancelled(self, message):
+        self._finish_stage_log()
+        total = (
+            max(0.0, time.monotonic() - self._start_time)
+            if self._start_time is not None
+            else 0.0)
+        self._append_timing_log(f"run cancelled after: {total:.3f} s")
+        self._stop_elapsed_timer()
+        self.stage.setText(message)
+        self.progress.setValue(0)
+        if self._pending_output_image is not None:
+            self.open_output_button.setVisible(False)
+            self.open_output_button.setEnabled(False)
 
     @Slot()
     def open_output_image(self):
@@ -853,6 +1079,12 @@ class FilmVizWindow(QMainWindow):
         self._thread = None
         self._worker = None
         self._pending_output_image = None
+        self._cancel_event = None
+        self._start_time = None
+        self._current_stage = None
+        self._stage_start_time = None
+        self._last_logged_percent = -1
+        self._log_path = PROJECT_ROOT / "build" / "filmviz_timings.log"
         self.convert_button.setEnabled(True)
         self.lut_button.setEnabled(True)
 

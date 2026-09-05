@@ -6,8 +6,10 @@
 // Convenience production API entry point. Individual headers remain available
 // for specialized diagnostics and integration work.
 
+#include "bleachbypass.h"
 #include "filmdensitycalibration.h"
 #include "filmpipeline.h"
+#include "halationmodel.h"
 #include "inputtransform.h"
 #include "lut3d.h"
 #include "statusmdensitometer.h"

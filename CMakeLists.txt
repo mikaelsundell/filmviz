@@ -34,6 +34,7 @@ find_package(OpenImageIO CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 set(FILMVIZ_CORE_SOURCES
+    bleachbypass.cpp
     cieobserver.cpp
     colorimetry.cpp
     colortransform.cpp
@@ -44,6 +45,7 @@ set(FILMVIZ_CORE_SOURCES
     filmprocessor.cpp
     filmstock.cpp
     granularitymodel.cpp
+    halationmodel.cpp
     imageprocessor.cpp
     inputtransform.cpp
     lut3d.cpp
@@ -128,8 +130,10 @@ if(BUILD_TESTING)
         tests/test_apd_resource.cpp
         tests/test_apd_spectral_selectivity.cpp
         tests/test_apd_verita_model.cpp
+        tests/test_bleach_bypass.cpp
         tests/test_density_calibration.cpp
         tests/test_granularity.cpp
+        tests/test_halation_model.cpp
         tests/test_input_transform.cpp
         tests/test_lut3d.cpp
         tests/test_pipeline.cpp
@@ -173,7 +177,9 @@ if(BUILD_TESTING)
 
     set_tests_properties(
         test_apd_resource
+        test_bleach_bypass
         test_granularity
+        test_halation_model
         test_input_transform
         test_lut3d
         PROPERTIES LABELS "unit"
@@ -329,6 +335,7 @@ install(
 
 install(
     FILES
+        bleachbypass.h
         filmviz.h
         filmdata.h
         filmdensitycalibration.h
@@ -337,6 +344,7 @@ install(
         filmprocessor.h
         filmstock.h
         granularitymodel.h
+        halationmodel.h
         imageprocessor.h
         inputtransform.h
         lut3d.h

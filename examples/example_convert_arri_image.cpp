@@ -101,11 +101,32 @@ main(
             argc > 10 ? std::stoi(argv[10]) : 1;
         const float grain_chroma =
             argument_float(argc, argv, 11, 1.0f);
+        const float negative_bleach_bypass =
+            argument_float(argc, argv, 12, 0.0f);
+        const float print_bleach_bypass =
+            argument_float(argc, argv, 13, 0.0f);
+        const float printer_light_red =
+            argument_float(argc, argv, 14, 25.0f);
+        const float printer_light_green =
+            argument_float(argc, argv, 15, 25.0f);
+        const float printer_light_blue =
+            argument_float(argc, argv, 16, 25.0f);
+        const float halation_strength =
+            argument_float(argc, argv, 17, 0.0f);
+        const float halation_radius =
+            argument_float(argc, argv, 18, 12.0f);
+        const float halation_threshold =
+            argument_float(argc, argv, 19, 0.7f);
 
         FilmPipeline::Settings pipeline_settings;
         pipeline_settings.resources_directory = resources.string();
         pipeline_settings.exposure_stops = exposure_stops;
         pipeline_settings.push_pull_stops = push_pull_stops;
+        pipeline_settings.negative_bleach_bypass = negative_bleach_bypass;
+        pipeline_settings.print_bleach_bypass = print_bleach_bypass;
+        pipeline_settings.printer_light_red = printer_light_red;
+        pipeline_settings.printer_light_green = printer_light_green;
+        pipeline_settings.printer_light_blue = printer_light_blue;
 
         FilmPipeline pipeline;
 
@@ -130,6 +151,9 @@ main(
         image_settings.grain_chroma = grain_chroma;
         image_settings.grain_seed =
             static_cast<std::uint32_t>(grain_seed);
+        image_settings.halation_strength = halation_strength;
+        image_settings.halation_radius_pixels = halation_radius;
+        image_settings.halation_threshold = halation_threshold;
 
         std::cout
             << "AWG3/LogC3 -> FilmViz -> Rec.709/Gamma 2.4\n"
@@ -137,7 +161,17 @@ main(
             << "Push/pull: " << push_pull_stops << " stops\n"
             << "Negative/print grain: "
             << negative_grain << " / " << print_grain << "\n"
-            << "Grain chroma: " << grain_chroma << "\n";
+            << "Grain chroma: " << grain_chroma << "\n"
+            << "Negative/print bleach bypass: "
+            << negative_bleach_bypass << " / " << print_bleach_bypass << "\n"
+            << "Printer lights R/G/B: "
+            << printer_light_red << " / "
+            << printer_light_green << " / "
+            << printer_light_blue << "\n"
+            << "Halation strength/radius/threshold: "
+            << halation_strength << " / "
+            << halation_radius << " / "
+            << halation_threshold << "\n";
 
         std::string previous_stage;
         int previous_percent = -1;

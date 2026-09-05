@@ -40,10 +40,18 @@ struct FilmVizTool
     float printer_temperature = 3200.0f;
     float exposure_stops = 0.0f;
     float push_pull_stops = 0.0f;
+    float negative_bleach_bypass = 0.0f;
+    float print_bleach_bypass = 0.0f;
+    float printer_light_red = 25.0f;
+    float printer_light_green = 25.0f;
+    float printer_light_blue = 25.0f;
     float negative_grain = 0.0f;
     float print_grain = 0.0f;
     float grain_size = 1.0f;
     float grain_chroma = 1.0f;
+    float halation_strength = 0.0f;
+    float halation_radius = 12.0f;
+    float halation_threshold = 0.7f;
     int grain_seed = 1;
 
     std::string resources;
@@ -238,6 +246,30 @@ validate_profile_options(
         return false;
     }
 
+    if (tool.negative_bleach_bypass < 0.0f
+        || tool.negative_bleach_bypass > 1.0f
+        || tool.print_bleach_bypass < 0.0f
+        || tool.print_bleach_bypass > 1.0f) {
+
+        print_error(
+            "bleach-bypass controls must be in [0,1]: ",
+            tool.negative_bleach_bypass);
+        return false;
+    }
+
+    if (tool.printer_light_red < 0.0f
+        || tool.printer_light_red > 50.0f
+        || tool.printer_light_green < 0.0f
+        || tool.printer_light_green > 50.0f
+        || tool.printer_light_blue < 0.0f
+        || tool.printer_light_blue > 50.0f) {
+
+        print_error(
+            "printer lights must be in [0,50]: ",
+            tool.printer_light_red);
+        return false;
+    }
+
     if (tool.negative_grain < 0.0f
         || tool.print_grain < 0.0f) {
 
@@ -258,6 +290,17 @@ validate_profile_options(
         print_error(
             "grain chroma must be non-negative: ",
             tool.grain_chroma);
+        return false;
+    }
+
+    if (tool.halation_strength < 0.0f
+        || tool.halation_strength > 1.0f
+        || tool.halation_radius < 0.0f
+        || tool.halation_threshold < 0.0f) {
+
+        print_error(
+            "invalid halation settings: ",
+            tool.halation_strength);
         return false;
     }
 
@@ -338,6 +381,21 @@ main(
     ap.arg("--push-pull %f:STOPS", &tool.push_pull_stops)
       .help("Approximate negative-development push (+) or pull (-) (default: 0)");
 
+    ap.arg("--negative-bleach-bypass %f:AMOUNT", &tool.negative_bleach_bypass)
+      .help("Negative bleach bypass; 0 normal, 1 full modeled bypass (default: 0)");
+
+    ap.arg("--print-bleach-bypass %f:AMOUNT", &tool.print_bleach_bypass)
+      .help("Print bleach bypass; 0 normal, 1 full modeled bypass (default: 0)");
+
+    ap.arg("--printer-light-r %f:POINTS", &tool.printer_light_red)
+      .help("Red printer light on 0-50 scale; 25 is neutral (default: 25)");
+
+    ap.arg("--printer-light-g %f:POINTS", &tool.printer_light_green)
+      .help("Green printer light on 0-50 scale; 25 is neutral (default: 25)");
+
+    ap.arg("--printer-light-b %f:POINTS", &tool.printer_light_blue)
+      .help("Blue printer light on 0-50 scale; 25 is neutral (default: 25)");
+
     ap.separator("Image processing flags:");
 
     ap.arg("--input-image %s:FILE", &tool.input_image)
@@ -360,6 +418,15 @@ main(
 
     ap.arg("--grain-seed %d:SEED", &tool.grain_seed)
       .help("Deterministic grain seed (default: 1)");
+
+    ap.arg("--halation %f:STRENGTH", &tool.halation_strength)
+      .help("Image-space halation strength; 0 disables, 1 full effect (default: 0)");
+
+    ap.arg("--halation-radius %f:PIXELS", &tool.halation_radius)
+      .help("Halation blur radius in pixels (default: 12)");
+
+    ap.arg("--halation-threshold %f:AP0", &tool.halation_threshold)
+      .help("Scene-linear AP0 luminance threshold for halation (default: 0.7)");
 
     ap.separator("LUT output flags:");
 
@@ -461,6 +528,21 @@ main(
     pipeline_settings.push_pull_stops =
         tool.push_pull_stops;
 
+    pipeline_settings.negative_bleach_bypass =
+        tool.negative_bleach_bypass;
+
+    pipeline_settings.print_bleach_bypass =
+        tool.print_bleach_bypass;
+
+    pipeline_settings.printer_light_red =
+        tool.printer_light_red;
+
+    pipeline_settings.printer_light_green =
+        tool.printer_light_green;
+
+    pipeline_settings.printer_light_blue =
+        tool.printer_light_blue;
+
     FilmPipeline pipeline;
 
     if (!pipeline.initialize(
@@ -486,6 +568,9 @@ main(
         print_info("negative grain: ", tool.negative_grain);
         print_info("print grain: ", tool.print_grain);
         print_info("grain chroma: ", tool.grain_chroma);
+        print_info("halation: ", tool.halation_strength);
+        print_info("halation radius: ", tool.halation_radius);
+        print_info("halation threshold: ", tool.halation_threshold);
 
         ImageProcessor::Settings image_settings;
         image_settings.lut_size = tool.lut_size;
@@ -503,6 +588,12 @@ main(
             tool.grain_chroma;
         image_settings.grain_seed =
             static_cast<std::uint32_t>(tool.grain_seed);
+        image_settings.halation_strength =
+            tool.halation_strength;
+        image_settings.halation_radius_pixels =
+            tool.halation_radius;
+        image_settings.halation_threshold =
+            tool.halation_threshold;
 
         int last_percent = -1;
         std::string last_stage;
@@ -682,6 +773,12 @@ main(
         std::string("Negative: ") + tool.negative + " / ISO Status-M density calibration",
         std::string("Exposure stops: ") + std::to_string(tool.exposure_stops),
         std::string("Push/pull stops: ") + std::to_string(tool.push_pull_stops) + " / approximate contrast",
+        std::string("Negative bleach bypass: ") + std::to_string(tool.negative_bleach_bypass),
+        std::string("Print bleach bypass: ") + std::to_string(tool.print_bleach_bypass),
+        std::string("Printer lights R/G/B: ")
+            + std::to_string(tool.printer_light_red) + "/"
+            + std::to_string(tool.printer_light_green) + "/"
+            + std::to_string(tool.printer_light_blue),
         std::string("Print: ") + tool.print + " / printer K=" + std::to_string(tool.printer_temperature),
         std::string("Output: ") + tool.output,
         "No ACES RRT/ODT is applied by FilmViz"

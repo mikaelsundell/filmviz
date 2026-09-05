@@ -140,26 +140,41 @@ PrintFilmProcessor::log_exposure(
         settings_.exposure_stops
         * kLog10Two;
 
+    const float printer_red_offset =
+        (settings_.printer_light_red - 25.0f)
+        * settings_.printer_light_log_exposure_per_point;
+
+    const float printer_green_offset =
+        (settings_.printer_light_green - 25.0f)
+        * settings_.printer_light_log_exposure_per_point;
+
+    const float printer_blue_offset =
+        (settings_.printer_light_blue - 25.0f)
+        * settings_.printer_light_log_exposure_per_point;
+
     result.red =
         safe_log10(
             exposure.red)
         + settings_.log_exposure_calibration
         + exposure_offset
-        + balance_.red_log_offset;
+        + balance_.red_log_offset
+        + printer_red_offset;
 
     result.green =
         safe_log10(
             exposure.green)
         + settings_.log_exposure_calibration
         + exposure_offset
-        + balance_.green_log_offset;
+        + balance_.green_log_offset
+        + printer_green_offset;
 
     result.blue =
         safe_log10(
             exposure.blue)
         + settings_.log_exposure_calibration
         + exposure_offset
-        + balance_.blue_log_offset;
+        + balance_.blue_log_offset
+        + printer_blue_offset;
 
     return result;
 }

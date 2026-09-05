@@ -10,6 +10,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <atomic>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -71,6 +72,11 @@ pipeline_settings(
     const std::string& resources,
     float exposure,
     float push_pull,
+    float negative_bleach_bypass,
+    float print_bleach_bypass,
+    float printer_light_red,
+    float printer_light_green,
+    float printer_light_blue,
     float middle_gray,
     float printer_temperature)
 {
@@ -78,6 +84,11 @@ pipeline_settings(
     settings.resources_directory = resources;
     settings.exposure_stops = exposure;
     settings.push_pull_stops = push_pull;
+    settings.negative_bleach_bypass = negative_bleach_bypass;
+    settings.print_bleach_bypass = print_bleach_bypass;
+    settings.printer_light_red = printer_light_red;
+    settings.printer_light_green = printer_light_green;
+    settings.printer_light_blue = printer_light_blue;
     settings.middle_gray = middle_gray;
     settings.printer_temperature_kelvin = printer_temperature;
     return settings;
@@ -105,6 +116,26 @@ report_progress(
     }
 }
 
+bool
+is_cancelled(
+    const py::object& callback,
+    bool enabled)
+{
+    if (!enabled) {
+        return false;
+    }
+
+    py::gil_scoped_acquire acquire;
+
+    try {
+        return py::cast<bool>(callback());
+    }
+    catch (py::error_already_set& error) {
+        error.discard_as_unraisable("FilmViz cancellation callback");
+        return false;
+    }
+}
+
 void
 generate_lut(
     const std::string& resources,
@@ -116,10 +147,16 @@ generate_lut(
     int lut_size,
     float exposure,
     float push_pull,
+    float negative_bleach_bypass,
+    float print_bleach_bypass,
+    float printer_light_red,
+    float printer_light_green,
+    float printer_light_blue,
     float middle_gray,
     float printer_temperature,
     int threads,
-    const py::object& progress)
+    const py::object& progress,
+    const py::object& cancel)
 {
     validate_stock_profiles(negative, print);
 
@@ -139,6 +176,11 @@ generate_lut(
                 resources,
                 exposure,
                 push_pull,
+                negative_bleach_bypass,
+                print_bleach_bypass,
+                printer_light_red,
+                printer_light_green,
+                printer_light_blue,
                 middle_gray,
                 printer_temperature))) {
 
@@ -150,6 +192,8 @@ generate_lut(
     const InputTransform transform(encoding);
     Lut3D lut;
     const bool has_progress = !progress.is_none();
+    const bool has_cancel = !cancel.is_none();
+    std::atomic<bool> cancel_requested(false);
     bool generated = false;
 
     {
@@ -159,6 +203,11 @@ generate_lut(
                 lut_size,
                 [&](const Lut3D::RGB& encoded,
                     Lut3D::RGB& converted) {
+
+                    if (cancel_requested.load(
+                            std::memory_order_relaxed)) {
+                        return false;
+                    }
 
                     const FilmPipeline::Result result =
                         pipeline.process(
@@ -177,6 +226,16 @@ generate_lut(
                 [&](int completed,
                     int total) {
 
+                    if (is_cancelled(
+                            cancel,
+                            has_cancel)) {
+
+                        cancel_requested.store(
+                            true,
+                            std::memory_order_relaxed);
+                        return;
+                    }
+
                     report_progress(
                         progress,
                         has_progress,
@@ -187,7 +246,11 @@ generate_lut(
     }
 
     if (!generated) {
-        throw std::runtime_error("spectral LUT generation failed");
+        throw std::runtime_error(
+            cancel_requested.load(
+                std::memory_order_relaxed)
+                ? "operation cancelled"
+                : "spectral LUT generation failed");
     }
 
     const std::filesystem::path output_path(output_filename);
@@ -203,6 +266,12 @@ generate_lut(
         "Negative: " + negative + " / ISO Status-M density calibration",
         "Exposure stops: " + std::to_string(exposure),
         "Push/pull stops: " + std::to_string(push_pull) + " / approximate contrast",
+        "Negative bleach bypass: " + std::to_string(negative_bleach_bypass),
+        "Print bleach bypass: " + std::to_string(print_bleach_bypass),
+        "Printer lights R/G/B: "
+            + std::to_string(printer_light_red) + " / "
+            + std::to_string(printer_light_green) + " / "
+            + std::to_string(printer_light_blue),
         "Print: " + print + " / printer K=" + std::to_string(printer_temperature),
         "Output: " + output,
         "No ACES RRT/ODT is applied by FilmViz"
@@ -230,6 +299,11 @@ process_image(
     int lut_size,
     float exposure,
     float push_pull,
+    float negative_bleach_bypass,
+    float print_bleach_bypass,
+    float printer_light_red,
+    float printer_light_green,
+    float printer_light_blue,
     float middle_gray,
     float printer_temperature,
     float negative_grain,
@@ -237,8 +311,12 @@ process_image(
     float grain_size,
     float grain_chroma,
     unsigned int grain_seed,
+    float halation_strength,
+    float halation_radius,
+    float halation_threshold,
     int threads,
-    const py::object& progress)
+    const py::object& progress,
+    const py::object& cancel)
 {
     validate_stock_profiles(negative, print);
     const InputTransform::Encoding encoding = input_encoding(input);
@@ -252,6 +330,11 @@ process_image(
                 resources,
                 exposure,
                 push_pull,
+                negative_bleach_bypass,
+                print_bleach_bypass,
+                printer_light_red,
+                printer_light_green,
+                printer_light_blue,
                 middle_gray,
                 printer_temperature))) {
 
@@ -268,10 +351,14 @@ process_image(
     settings.grain_size_pixels = grain_size;
     settings.grain_chroma = grain_chroma;
     settings.grain_seed = grain_seed;
+    settings.halation_strength = halation_strength;
+    settings.halation_radius_pixels = halation_radius;
+    settings.halation_threshold = halation_threshold;
 
     const InputTransform transform(encoding);
     ImageProcessor processor;
     const bool has_progress = !progress.is_none();
+    const bool has_cancel = !cancel.is_none();
     bool processed = false;
 
     {
@@ -293,6 +380,12 @@ process_image(
                         stage,
                         completed,
                         total);
+                },
+                [&]() {
+                    return
+                        is_cancelled(
+                            cancel,
+                            has_cancel);
                 });
     }
 
@@ -355,10 +448,16 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("lut_size") = 33,
         py::arg("exposure") = 0.0f,
         py::arg("push_pull") = 0.0f,
+        py::arg("negative_bleach_bypass") = 0.0f,
+        py::arg("print_bleach_bypass") = 0.0f,
+        py::arg("printer_light_red") = 25.0f,
+        py::arg("printer_light_green") = 25.0f,
+        py::arg("printer_light_blue") = 25.0f,
         py::arg("middle_gray") = 0.18f,
         py::arg("printer_temperature") = 3200.0f,
         py::arg("threads") = 0,
-        py::arg("progress") = py::none());
+        py::arg("progress") = py::none(),
+        py::arg("cancel") = py::none());
 
     module.def(
         "process_image",
@@ -373,6 +472,11 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("lut_size") = 33,
         py::arg("exposure") = 0.0f,
         py::arg("push_pull") = 0.0f,
+        py::arg("negative_bleach_bypass") = 0.0f,
+        py::arg("print_bleach_bypass") = 0.0f,
+        py::arg("printer_light_red") = 25.0f,
+        py::arg("printer_light_green") = 25.0f,
+        py::arg("printer_light_blue") = 25.0f,
         py::arg("middle_gray") = 0.18f,
         py::arg("printer_temperature") = 3200.0f,
         py::arg("negative_grain") = 0.0f,
@@ -380,6 +484,10 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("grain_size") = 1.0f,
         py::arg("grain_chroma") = 1.0f,
         py::arg("grain_seed") = 1u,
+        py::arg("halation_strength") = 0.0f,
+        py::arg("halation_radius") = 12.0f,
+        py::arg("halation_threshold") = 0.7f,
         py::arg("threads") = 0,
-        py::arg("progress") = py::none());
+        py::arg("progress") = py::none(),
+        py::arg("cancel") = py::none());
 }

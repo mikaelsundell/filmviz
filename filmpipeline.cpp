@@ -3,6 +3,7 @@
 
 #include "filmpipeline.h"
 
+#include "bleachbypass.h"
 #include "colortransform.h"
 #include "filmdensitycalibration.h"
 #include "filmdyemodel.h"
@@ -40,6 +41,30 @@ FilmPipeline::initialize(
     settings_ = settings;
     error_.clear();
     valid_ = false;
+
+    const auto valid_unit_control =
+        [](float value) {
+            return std::isfinite(value)
+                && value >= 0.0f
+                && value <= 1.0f;
+        };
+
+    const auto valid_printer_light =
+        [](float value) {
+            return std::isfinite(value)
+                && value >= 0.0f
+                && value <= 50.0f;
+        };
+
+    if (!valid_unit_control(settings_.negative_bleach_bypass)
+        || !valid_unit_control(settings_.print_bleach_bypass)
+        || !valid_printer_light(settings_.printer_light_red)
+        || !valid_printer_light(settings_.printer_light_green)
+        || !valid_printer_light(settings_.printer_light_blue)) {
+
+        error_ = "invalid bleach-bypass or printer-light settings";
+        return false;
+    }
 
     const std::string rgb2spec_file =
         resource_path("spectral/reconstruction/ACES2065_1.spec");
@@ -242,6 +267,12 @@ FilmPipeline::initialize(
     print_settings.wavelength_step_nm = settings_.wavelength_step_nm;
     print_settings.reference_status_a_density =
         settings_.print_reference_status_a_density;
+    print_settings.printer_light_red =
+        settings_.printer_light_red;
+    print_settings.printer_light_green =
+        settings_.printer_light_green;
+    print_settings.printer_light_blue =
+        settings_.printer_light_blue;
 
     print_processor_ =
         std::make_unique<PrintFilmProcessor>(
@@ -298,10 +329,29 @@ FilmPipeline::Result
 FilmPipeline::process(
     const std::array<float, 3>& ap0_linear) const
 {
-    Result result;
+    FilmExposure exposure;
+
+    if (!negative_exposure(
+            ap0_linear,
+            exposure)) {
+
+        return Result();
+    }
+
+    return
+        process_negative_exposure(
+            exposure);
+}
+
+bool
+FilmPipeline::negative_exposure(
+    const std::array<float, 3>& ap0_linear,
+    FilmExposure& exposure) const
+{
+    exposure = FilmExposure();
 
     if (!valid_) {
-        return result;
+        return false;
     }
 
     const auto spectrum =
@@ -321,12 +371,31 @@ FilmPipeline::process(
             factor);
 
     if (!illuminated.valid()) {
-        return result;
+        return false;
     }
 
-    const FilmExposure negative_exposure =
+    exposure =
         negative_processor_->expose(
             illuminated);
+
+    return
+        std::isfinite(exposure.red)
+        && std::isfinite(exposure.green)
+        && std::isfinite(exposure.blue);
+}
+
+FilmPipeline::Result
+FilmPipeline::process_negative_exposure(
+    const FilmExposure& negative_exposure) const
+{
+    Result result;
+
+    if (!valid_
+        || !std::isfinite(negative_exposure.red)
+        || !std::isfinite(negative_exposure.green)
+        || !std::isfinite(negative_exposure.blue)) {
+        return result;
+    }
 
     result.negative_status_m_density =
         negative_processor_->develop(
@@ -372,9 +441,25 @@ FilmPipeline::process(
         return result;
     }
 
-    const SampledCurve negative_density =
+    SampledCurve negative_density =
         negative_dye_model_->synthesize_density(
             result.calibrated_negative_density);
+
+    const BleachBypass::Result negative_bypass =
+        BleachBypass::apply_negative(
+            negative_density,
+            settings_.negative_bleach_bypass);
+
+    if (!negative_bypass.valid) {
+        return result;
+    }
+
+    negative_density =
+        negative_bypass.spectral_density;
+
+    result.negative_bleach_mean_density_delta =
+        negative_bypass.mean_density_after
+        - negative_bypass.mean_density_before;
 
     const SampledCurve negative_transmittance =
         transmittance_from_density(
@@ -397,9 +482,25 @@ FilmPipeline::process(
         granularity_model_->print_sigma(
             result.print_density);
 
-    const SampledCurve print_density =
+    SampledCurve print_density =
         density_from_print_records(
             result.print_density);
+
+    const BleachBypass::Result print_bypass =
+        BleachBypass::apply_print(
+            print_density,
+            settings_.print_bleach_bypass);
+
+    if (!print_bypass.valid) {
+        return result;
+    }
+
+    print_density =
+        print_bypass.spectral_density;
+
+    result.print_bleach_mean_density_delta =
+        print_bypass.mean_density_after
+        - print_bypass.mean_density_before;
 
     const SampledCurve print_transmittance =
         transmittance_from_density(
