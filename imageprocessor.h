@@ -33,6 +33,7 @@ public:
     struct Settings
     {
         int lut_size = 33;
+        bool use_lut_acceleration = true;
         Output output = Output::Rec709Gamma24;
 
         float negative_grain_strength = 0.0f;

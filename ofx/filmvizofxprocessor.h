@@ -72,6 +72,7 @@ struct FilmVizOfxRenderSettings
 struct FilmVizOfxGpuSnapshot
 {
     std::uint64_t revision = 0;
+    std::uint64_t transform_hash = 0;
     int lut_size = 0;
     int input_profile = 0;
     int output_profile = 1;
@@ -123,10 +124,20 @@ public:
         FilmVizOfxGpuSnapshot& snapshot,
         std::string& error);
 
+    // Write the currently configured transform to a persistent OFX cache.
+    // Used by the build-time pregenerator and available for diagnostics.
+    bool write_prebaked_cache(
+        const std::string& directory,
+        bool include_negative_exposure,
+        std::string& error);
+
+    std::string transform_cache_name() const;
+
 private:
     struct Cache;
 
     mutable std::mutex mutex_;
-    std::unique_ptr<Cache> cache_;
+    std::shared_ptr<Cache> cache_;
+    FilmVizOfxRenderSettings settings_;
     std::uint64_t revision_ = 0;
 };

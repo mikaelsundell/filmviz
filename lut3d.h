@@ -30,6 +30,13 @@ public:
         const Evaluator& evaluator,
         const Progress& progress = Progress());
 
+    // Assign already-evaluated LUT values in FilmViz/.cube storage order
+    // (red fastest, then green, then blue). Used by persistent/prebaked caches
+    // to avoid re-running the generation/threading path while loading.
+    bool assign(
+        int size,
+        const std::vector<RGB>& values);
+
     bool valid() const;
     int size() const;
 

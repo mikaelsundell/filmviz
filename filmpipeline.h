@@ -37,6 +37,7 @@ public:
     {
         std::string resources_directory = "resources";
         std::string negative_profile = "verita-200d";
+        std::string print_profile = "kodak-2383";
 
         float middle_gray = 0.18f;
         float negative_zero_stop_log_exposure = -0.515f;
@@ -165,4 +166,5 @@ private:
     FilmExposure reference_negative_exposure_;
     FilmDensity reference_negative_density_;
     SampledCurve reference_negative_transmittance_;
+
 };

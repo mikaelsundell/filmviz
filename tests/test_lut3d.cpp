@@ -52,6 +52,31 @@ main()
         && lut.size() == 5,
         "generated LUT reports the correct shape");
 
+    std::vector<Lut3D::RGB> assigned_values;
+    assigned_values.reserve(125);
+
+    for (int blue = 0; blue < 5; ++blue) {
+        for (int green = 0; green < 5; ++green) {
+            for (int red = 0; red < 5; ++red) {
+                assigned_values.push_back(
+                    lut.at(red, green, blue));
+            }
+        }
+    }
+
+    Lut3D assigned_lut;
+
+    passed &= test::check(
+        assigned_lut.assign(
+            5,
+            assigned_values),
+        "precomputed LUT values can be assigned directly");
+
+    passed &= test::check(
+        assigned_lut.valid()
+        && assigned_lut.at(3, 2, 4) == lut.at(3, 2, 4),
+        "assigned LUT preserves FilmViz storage order");
+
     const Lut3D::RGB input = {{0.17f, 0.43f, 0.81f}};
     Lut3D::RGB expected;
     affine_pipeline(

@@ -140,6 +140,7 @@ if(BUILD_TESTING)
         tests/test_apd_verita_model.cpp
         tests/test_bleach_bypass.cpp
         tests/test_density_calibration.cpp
+        tests/test_exposure_boundary.cpp
         tests/test_granularity.cpp
         tests/test_halation_model.cpp
         tests/test_input_transform.cpp
@@ -180,6 +181,7 @@ if(BUILD_TESTING)
 
     set_tests_properties(
         test_density_calibration
+        test_exposure_boundary
         test_negative_profile
         test_pipeline
         PROPERTIES LABELS "integration;spectral"

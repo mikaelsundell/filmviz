@@ -236,6 +236,16 @@ ImageProcessor::process(
         settings.halation_strength > 0.0f
         && settings.halation_radius_pixels > 0.0f;
 
+    if (!settings.use_lut_acceleration
+        && (halation_enabled
+            || settings.negative_grain_strength > 0.0f
+            || settings.print_grain_strength > 0.0f)) {
+
+        error_ =
+            "direct spectral mode requires grain and halation to be disabled";
+        return false;
+    }
+
     const std::size_t field_size =
         static_cast<std::size_t>(size * size * size);
     std::vector<GrainSample> grain_field(
@@ -261,7 +271,8 @@ ImageProcessor::process(
             return false;
         };
 
-    if (!halation_enabled) {
+    if (settings.use_lut_acceleration
+        && !halation_enabled) {
         const bool generated =
             lut.generate(
                 size,
@@ -335,7 +346,7 @@ ImageProcessor::process(
             return false;
         }
     }
-    else {
+    else if (settings.use_lut_acceleration) {
         const bool generated =
             negative_exposure_lut.generate(
                 size,
@@ -505,7 +516,7 @@ ImageProcessor::process(
                             scene_ap0_pixels[pixel * 3u + 2] = ap0[2];
 
                             const Lut3D::RGB exposure =
-                                negative_exposure_lut.sample_trilinear(
+                                negative_exposure_lut.sample_tetrahedral(
                                     encoded);
 
                             negative_exposure_pixels[pixel] = {
@@ -828,6 +839,47 @@ ImageProcessor::process(
                             pixel
                             * static_cast<std::size_t>(input_spec.nchannels);
 
+                        if (!settings.use_lut_acceleration) {
+                            const Lut3D::RGB encoded = {{
+                                input_pixels[input_offset + 0],
+                                input_pixels[input_offset + 1],
+                                input_pixels[input_offset + 2]
+                            }};
+
+                            const FilmPipeline::Result direct =
+                                pipeline.process(
+                                    input_transform.to_ap0(
+                                        encoded));
+
+                            if (!direct.valid) {
+                                processing_failed.store(
+                                    true,
+                                    std::memory_order_relaxed);
+                                cancel_requested.store(
+                                    true,
+                                    std::memory_order_relaxed);
+                                break;
+                            }
+
+                            const Lut3D::RGB converted =
+                                settings.output == Output::Rec709Gamma24
+                                    ? direct.rec709_gamma24
+                                    : direct.ap0;
+
+                            for (int channel = 0;
+                                 channel < 3;
+                                 ++channel) {
+
+                                output_pixels[pixel * 3u + channel] =
+                                    std::clamp(
+                                        converted[channel],
+                                        0.0f,
+                                        1.0f);
+                            }
+
+                            continue;
+                        }
+
                         Lut3D::RGB lookup_input;
 
                         if (halation_enabled) {
@@ -849,7 +901,7 @@ ImageProcessor::process(
                         }
 
                         const Lut3D::RGB converted =
-                            lut.sample_trilinear(
+                            lut.sample_tetrahedral(
                                 lookup_input);
 
                         GrainSample sigma =

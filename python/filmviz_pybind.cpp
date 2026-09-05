@@ -7,10 +7,15 @@
 #include "lut3d.h"
 #include "threading.h"
 
+#include <OpenImageIO/imagebuf.h>
+
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -62,7 +67,8 @@ validate_stock_profiles(
             "unknown negative profile: " + negative);
     }
 
-    if (print != "kodak-2383") {
+    if (print != "kodak-2383"
+        && print != "none") {
         throw std::invalid_argument(
             "unknown print profile: " + print);
     }
@@ -72,6 +78,7 @@ FilmPipeline::Settings
 pipeline_settings(
     const std::string& resources,
     const std::string& negative,
+    const std::string& print,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -85,6 +92,7 @@ pipeline_settings(
     FilmPipeline::Settings settings;
     settings.resources_directory = resources;
     settings.negative_profile = negative;
+    settings.print_profile = print;
     settings.exposure_stops = exposure;
     settings.push_pull_stops = push_pull;
     settings.negative_bleach_bypass = negative_bleach_bypass;
@@ -178,6 +186,7 @@ generate_lut(
             pipeline_settings(
                 resources,
                 negative,
+                print,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -301,6 +310,7 @@ process_image(
     const std::string& print,
     const std::string& output,
     int lut_size,
+    bool use_lut_acceleration,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -333,6 +343,7 @@ process_image(
             pipeline_settings(
                 resources,
                 negative,
+                print,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -350,6 +361,7 @@ process_image(
 
     ImageProcessor::Settings settings;
     settings.lut_size = lut_size;
+    settings.use_lut_acceleration = use_lut_acceleration;
     settings.output = output_encoding;
     settings.negative_grain_strength = negative_grain;
     settings.print_grain_strength = print_grain;
@@ -401,6 +413,126 @@ process_image(
     }
 }
 
+
+py::dict
+read_image_preview(
+    const std::string& filename,
+    int max_dimension)
+{
+    OIIO::ImageBuf image(filename);
+
+    if (!image.read(0, 0, true, OIIO::TypeDesc::FLOAT)) {
+        throw std::runtime_error(
+            "could not read preview image: "
+            + image.geterror());
+    }
+
+    const OIIO::ImageSpec& spec = image.spec();
+
+    if (spec.nchannels < 3
+        || spec.width <= 0
+        || spec.height <= 0) {
+
+        throw std::runtime_error(
+            "preview image must contain RGB channels");
+    }
+
+    const int limit = std::max(64, max_dimension);
+    const float scale =
+        std::min(
+            1.0f,
+            static_cast<float>(limit)
+                / static_cast<float>(
+                    std::max(spec.width, spec.height)));
+
+    const int width =
+        std::max(
+            1,
+            static_cast<int>(
+                std::lround(spec.width * scale)));
+
+    const int height =
+        std::max(
+            1,
+            static_cast<int>(
+                std::lround(spec.height * scale)));
+
+    std::vector<float> source(
+        static_cast<std::size_t>(spec.width)
+        * static_cast<std::size_t>(spec.height)
+        * static_cast<std::size_t>(spec.nchannels));
+
+    if (!image.get_pixels(
+            image.roi(),
+            OIIO::TypeDesc::FLOAT,
+            source.data())) {
+
+        throw std::runtime_error(
+            "could not read preview pixels: "
+            + image.geterror());
+    }
+
+    std::vector<std::uint8_t> rgb(
+        static_cast<std::size_t>(width)
+        * static_cast<std::size_t>(height)
+        * 3u);
+
+    for (int y = 0; y < height; ++y) {
+        const int source_y =
+            std::min(
+                spec.height - 1,
+                static_cast<int>(
+                    static_cast<double>(y)
+                    * static_cast<double>(spec.height)
+                    / static_cast<double>(height)));
+
+        for (int x = 0; x < width; ++x) {
+            const int source_x =
+                std::min(
+                    spec.width - 1,
+                    static_cast<int>(
+                        static_cast<double>(x)
+                        * static_cast<double>(spec.width)
+                        / static_cast<double>(width)));
+
+            const std::size_t source_offset =
+                (static_cast<std::size_t>(source_y)
+                    * static_cast<std::size_t>(spec.width)
+                    + static_cast<std::size_t>(source_x))
+                * static_cast<std::size_t>(spec.nchannels);
+
+            const std::size_t destination_offset =
+                (static_cast<std::size_t>(y)
+                    * static_cast<std::size_t>(width)
+                    + static_cast<std::size_t>(x))
+                * 3u;
+
+            for (int channel = 0; channel < 3; ++channel) {
+                const float value =
+                    std::clamp(
+                        source[source_offset
+                            + static_cast<std::size_t>(channel)],
+                        0.0f,
+                        1.0f);
+
+                rgb[destination_offset
+                    + static_cast<std::size_t>(channel)] =
+                    static_cast<std::uint8_t>(
+                        std::lround(value * 255.0f));
+            }
+        }
+    }
+
+    py::dict result;
+    result["width"] = width;
+    result["height"] = height;
+    result["rgb"] =
+        py::bytes(
+            reinterpret_cast<const char*>(rgb.data()),
+            rgb.size());
+    return result;
+}
+
 } // namespace
 
 PYBIND11_MODULE(filmviz_python, module)
@@ -436,7 +568,9 @@ PYBIND11_MODULE(filmviz_python, module)
             result["negative"] = py::make_tuple(
                 "verita-200d",
                 "kodak-50d");
-            result["print"] = py::make_tuple("kodak-2383");
+            result["print"] = py::make_tuple(
+                "kodak-2383",
+                "none");
             result["output"] = py::make_tuple(
                 "ap0-linear",
                 "rec709-gamma24");
@@ -477,6 +611,7 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("print") = "kodak-2383",
         py::arg("output") = "rec709-gamma24",
         py::arg("lut_size") = 33,
+        py::arg("use_lut_acceleration") = true,
         py::arg("exposure") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
@@ -497,4 +632,11 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("threads") = 0,
         py::arg("progress") = py::none(),
         py::arg("cancel") = py::none());
+    module.def(
+        "read_image_preview",
+        &read_image_preview,
+        py::arg("filename"),
+        py::arg("max_dimension") = 1600,
+        "Read an image through OpenImageIO and return an 8-bit RGB preview.");
+
 }

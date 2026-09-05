@@ -6,6 +6,7 @@
 
 #include "ofxCore.h"
 #include "filmvizofxprocessor.h"
+#include "filmvizofxlog.h"
 
 #if FILMVIZ_HAS_METAL
 #include "filmvizmetalprocessor.h"
@@ -22,6 +23,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <sstream>
 #include <string>
 
 #if defined(_WIN32)
@@ -409,11 +411,22 @@ create_instance(
         return kOfxStatFailed;
     }
 
+    InstanceData* instance_pointer =
+        instance.get();
+
     gPropertySuite->propSetPointer(
         properties,
         kOfxPropInstanceData,
         0,
         instance.release());
+
+    {
+        std::ostringstream stream;
+        stream
+            << "node=" << instance_pointer
+            << " resources=" << instance_pointer->resources_directory;
+        FilmVizOfxLog::write("node_create", stream.str());
+    }
 
     return kOfxStatOK;
 }
@@ -438,6 +451,12 @@ destroy_instance(
         kOfxPropInstanceData,
         0,
         &pointer);
+
+    {
+        std::ostringstream stream;
+        stream << "node=" << pointer;
+        FilmVizOfxLog::write("node_destroy", stream.str());
+    }
 
     delete static_cast<InstanceData*>(pointer);
 
@@ -1098,6 +1117,21 @@ render(
         return kOfxStatFailed;
     }
 
+    std::ostringstream render_details;
+    render_details
+        << "node=" << instance
+        << " time=" << time
+        << " backend_request=" << backend
+        << " enabled=" << (enabled ? 1 : 0)
+        << " negative=" << settings.negative_profile
+        << " exposure=" << settings.exposure_stops
+        << " grain=" << (settings.grain_enabled ? 1 : 0)
+        << " halation=" << (settings.halation_enabled ? 1 : 0);
+
+    FilmVizOfxLog::Scope render_scope(
+        "render",
+        render_details.str());
+
     int metal_enabled = 0;
     void* metal_command_queue = nullptr;
 
@@ -1208,6 +1242,11 @@ render(
         release_images();
 
         if (!rendered) {
+            render_scope.finish(
+                std::string("backend=")
+                    + (backend == 2 ? "cpu_bridge" : "metal")
+                    + " result=failed error=" + error);
+
             if (error == "render aborted") {
                 return kOfxStatOK;
             }
@@ -1217,6 +1256,10 @@ render(
                 : kOfxStatGPURenderFailed;
         }
 
+        render_scope.finish(
+            std::string("backend=")
+                + (backend == 2 ? "cpu_bridge" : "metal")
+                + " result=ok");
         return kOfxStatOK;
     }
 #endif
@@ -1300,6 +1343,7 @@ render(
         }
 
         release_images();
+        render_scope.finish("backend=cpu_bypass result=ok");
         return kOfxStatOK;
     }
 
@@ -1333,11 +1377,14 @@ render(
     release_images();
 
     if (!rendered) {
+        render_scope.finish(
+            "backend=cpu result=failed error=" + error);
         return error == "render aborted"
             ? kOfxStatOK
             : kOfxStatFailed;
     }
 
+    render_scope.finish("backend=cpu result=ok");
     return kOfxStatOK;
 }
 
@@ -1355,7 +1402,12 @@ plugin_main(
     if (std::strcmp(
             action,
             kOfxActionLoad) == 0) {
-        return fetch_suites()
+        const bool loaded = fetch_suites();
+        FilmVizOfxLog::write(
+            "plugin_load",
+            std::string("result=") + (loaded ? "ok" : "missing_host_feature")
+                + " log=" + FilmVizOfxLog::path());
+        return loaded
             ? kOfxStatOK
             : kOfxStatErrMissingHostFeature;
     }
@@ -1363,6 +1415,7 @@ plugin_main(
     if (std::strcmp(
             action,
             kOfxActionUnload) == 0) {
+        FilmVizOfxLog::write("plugin_unload");
         return kOfxStatOK;
     }
 

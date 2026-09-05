@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell.
 
 #include "filmvizmetalprocessor.h"
+#include "filmvizofxlog.h"
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -11,6 +12,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -50,7 +54,7 @@ struct alignas(16) MetalParams
 
     float halation_strength = 0.0f;
     float halation_threshold = 0.7f;
-    float reserved1 = 0.0f;
+    float exposure_stops = 0.0f;
     float reserved2 = 0.0f;
 
     float halation_log_min[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -99,7 +103,7 @@ struct MetalParams
 
     float halation_strength;
     float halation_threshold;
-    float reserved1;
+    float exposure_stops;
     float reserved2;
 
     float4 halation_log_min;
@@ -326,7 +330,7 @@ inline float3 apply_grain(
     return clamp(encoded, 0.0f, 1.0f);
 }
 
-inline float3 logc3_to_ap0(float3 encoded)
+inline float3 logc3_to_awg3_linear(float3 encoded)
 {
     const float cut = 0.010591f;
     const float a = 5.555556f;
@@ -346,6 +350,35 @@ inline float3 logc3_to_ap0(float3 encoded)
                 : (y - f) / e;
         linear[channel] = max(0.0f, x);
     }
+
+    return linear;
+}
+
+inline float3 awg3_linear_to_logc3(float3 linear)
+{
+    const float cut = 0.010591f;
+    const float a = 5.555556f;
+    const float b = 0.052272f;
+    const float c = 0.247190f;
+    const float d = 0.385537f;
+    const float e = 5.367655f;
+    const float f = 0.092809f;
+
+    float3 encoded;
+    for (int channel = 0; channel < 3; ++channel) {
+        const float x = max(0.0f, linear[channel]);
+        encoded[channel] =
+            x > cut
+                ? c * log10(a * x + b) + d
+                : e * x + f;
+    }
+
+    return encoded;
+}
+
+inline float3 logc3_to_ap0(float3 encoded)
+{
+    const float3 linear = logc3_to_awg3_linear(encoded);
 
     // AWG3 linear -> ACES2065-1/AP0, including D65 -> D60 adaptation.
     return float3(
@@ -386,10 +419,11 @@ inline void write_pixel(
 kernel void filmviz_color_grain(
     device const uchar* source [[buffer(0)]],
     device uchar* destination [[buffer(1)]],
-    device const float4* color_lut [[buffer(2)]],
-    device const float4* grain_negative [[buffer(3)]],
-    device const float4* grain_print [[buffer(4)]],
-    constant MetalParams& p [[buffer(5)]],
+    device const float4* exposure_lut [[buffer(2)]],
+    device const float4* color_lut [[buffer(3)]],
+    device const float4* grain_negative [[buffer(4)]],
+    device const float4* grain_print [[buffer(5)]],
+    constant MetalParams& p [[buffer(6)]],
     uint2 gid [[thread_position_in_grid]])
 {
     const int x = p.render_x1 + int(gid.x);
@@ -406,7 +440,21 @@ kernel void filmviz_color_grain(
         p.source_x1,
         p.source_y1);
 
-    const float3 lookup = src.xyz;
+    // Exposure is applied at the same raw-negative-exposure boundary used by
+    // FilmPipeline. It therefore remains live without rebuilding either LUT.
+    const float exposure_scale = exp2(p.exposure_stops);
+    const float3 exposure =
+        tetrahedral_sample(exposure_lut, p.lut_size, src.xyz)
+        * exposure_scale;
+
+    const float3 log_exposure =
+        log10(max(exposure, float3(1e-20f)));
+    const float3 lookup = clamp(
+        (log_exposure - p.halation_log_min.xyz)
+        / (p.halation_log_max.xyz - p.halation_log_min.xyz),
+        0.0f,
+        1.0f);
+
     float3 converted = tetrahedral_sample(color_lut, p.lut_size, lookup);
     converted = apply_grain(
         converted,
@@ -451,12 +499,15 @@ kernel void filmviz_prepare_halation(
         p.source_x1,
         p.source_y1);
 
+    const float exposure_scale = exp2(p.exposure_stops);
     const float3 exposure =
-        tetrahedral_sample(exposure_lut, p.lut_size, src.xyz);
+        tetrahedral_sample(exposure_lut, p.lut_size, src.xyz)
+        * exposure_scale;
     const float3 ap0 =
-        p.input_profile == 0u
+        (p.input_profile == 0u
             ? logc3_to_ap0(src.xyz)
-            : src.xyz;
+            : src.xyz)
+        * exposure_scale;
 
     const float luminance = max(
         0.0f,
@@ -603,6 +654,51 @@ encode_compute(
         threadsPerThreadgroup:threadgroup_size(pipeline)];
 }
 
+struct SharedMetalResources
+{
+    id<MTLBuffer> color_lut = nil;
+    id<MTLBuffer> grain_negative = nil;
+    id<MTLBuffer> grain_print = nil;
+    id<MTLBuffer> negative_exposure_lut = nil;
+    id<MTLBuffer> halation_lut = nil;
+    id<MTLBuffer> halation_grain_negative = nil;
+    id<MTLBuffer> halation_grain_print = nil;
+    FilmVizOfxGpuSnapshot snapshot;
+};
+
+struct MetalCacheKey
+{
+    std::uintptr_t device = 0;
+    std::uint64_t transform_hash = 0;
+    bool operator==(const MetalCacheKey& other) const
+    {
+        return
+            device == other.device
+            && transform_hash == other.transform_hash;
+    }
+};
+
+struct MetalCacheKeyHash
+{
+    std::size_t operator()(const MetalCacheKey& key) const
+    {
+        std::size_t value =
+            static_cast<std::size_t>(key.device);
+        value ^=
+            static_cast<std::size_t>(key.transform_hash)
+            + 0x9e3779b9u
+            + (value << 6u)
+            + (value >> 2u);
+        return value;
+    }
+};
+
+std::mutex gMetalCacheMutex;
+std::unordered_map<
+    MetalCacheKey,
+    std::weak_ptr<SharedMetalResources>,
+    MetalCacheKeyHash> gMetalCache;
+
 } // namespace
 
 struct FilmVizMetalProcessor::Impl
@@ -622,6 +718,7 @@ struct FilmVizMetalProcessor::Impl
     id<MTLBuffer> halation_grain_print = nil;
 
     FilmVizOfxGpuSnapshot snapshot;
+    std::shared_ptr<SharedMetalResources> shared_resources;
     std::uint64_t uploaded_revision = 0;
 };
 
@@ -639,6 +736,10 @@ FilmVizMetalProcessor::configure(
     std::string& error)
 {
     error.clear();
+
+    FilmVizOfxLog::Scope configure_scope(
+        "metal_configure",
+        "cache=" + cpu_processor.transform_cache_name());
 
     if (!command_queue) {
         error = "Resolve did not provide a Metal command queue";
@@ -725,14 +826,46 @@ FilmVizMetalProcessor::configure(
 
     if (revision == impl_->uploaded_revision
         && impl_->color_lut
+        && impl_->negative_exposure_lut
         && impl_->grain_negative
         && impl_->grain_print) {
+        configure_scope.finish("result=resident_hit");
         return true;
     }
 
     FilmVizOfxGpuSnapshot snapshot;
     if (!cpu_processor.gpu_snapshot(snapshot, error)) {
         return false;
+    }
+
+    const MetalCacheKey metal_key = {
+        reinterpret_cast<std::uintptr_t>((__bridge void*)device),
+        snapshot.transform_hash
+    };
+
+    {
+        const std::lock_guard<std::mutex> lock(gMetalCacheMutex);
+        const auto found = gMetalCache.find(metal_key);
+
+        if (found != gMetalCache.end()) {
+            std::shared_ptr<SharedMetalResources> shared =
+                found->second.lock();
+
+            if (shared) {
+                impl_->shared_resources = shared;
+                impl_->color_lut = shared->color_lut;
+                impl_->grain_negative = shared->grain_negative;
+                impl_->grain_print = shared->grain_print;
+                impl_->negative_exposure_lut = shared->negative_exposure_lut;
+                impl_->halation_lut = shared->halation_lut;
+                impl_->halation_grain_negative = shared->halation_grain_negative;
+                impl_->halation_grain_print = shared->halation_grain_print;
+                impl_->snapshot = shared->snapshot;
+                impl_->uploaded_revision = revision;
+                configure_scope.finish("result=global_gpu_hit");
+                return true;
+            }
+        }
     }
 
     impl_->color_lut = make_buffer(device, snapshot.color_lut_rgba);
@@ -748,6 +881,7 @@ FilmVizMetalProcessor::configure(
         make_buffer(device, snapshot.halation_grain_print_rgba);
 
     if (!impl_->color_lut
+        || !impl_->negative_exposure_lut
         || !impl_->grain_negative
         || !impl_->grain_print) {
         error = "could not upload FilmViz Metal LUT resources";
@@ -755,7 +889,26 @@ FilmVizMetalProcessor::configure(
     }
 
     impl_->snapshot = std::move(snapshot);
-    impl_->uploaded_revision = impl_->snapshot.revision;
+    impl_->uploaded_revision = revision;
+
+    auto shared =
+        std::make_shared<SharedMetalResources>();
+    shared->color_lut = impl_->color_lut;
+    shared->grain_negative = impl_->grain_negative;
+    shared->grain_print = impl_->grain_print;
+    shared->negative_exposure_lut = impl_->negative_exposure_lut;
+    shared->halation_lut = impl_->halation_lut;
+    shared->halation_grain_negative = impl_->halation_grain_negative;
+    shared->halation_grain_print = impl_->halation_grain_print;
+    shared->snapshot = impl_->snapshot;
+    impl_->shared_resources = shared;
+
+    {
+        const std::lock_guard<std::mutex> lock(gMetalCacheMutex);
+        gMetalCache[metal_key] = shared;
+    }
+
+    configure_scope.finish("result=uploaded_shared");
     return true;
 }
 
@@ -774,12 +927,20 @@ FilmVizMetalProcessor::render(
 {
     error.clear();
 
+    FilmVizOfxLog::Scope render_scope(
+        "metal_encode",
+        std::string("time=") + std::to_string(time)
+            + " exposure=" + std::to_string(settings.exposure_stops)
+            + " grain=" + (settings.grain_enabled ? "1" : "0")
+            + " halation=" + (settings.halation_enabled ? "1" : "0"));
+
     if (!command_queue
         || !source.buffer
         || !destination.buffer
         || !impl_->device
         || !impl_->color_pipeline
-        || !impl_->color_lut) {
+        || !impl_->color_lut
+        || !impl_->negative_exposure_lut) {
 
         error = "FilmViz Metal processor is not configured";
         return false;
@@ -832,6 +993,7 @@ FilmVizMetalProcessor::render(
     params.grain_chroma = settings.grain_chroma;
     params.halation_strength = settings.halation_strength;
     params.halation_threshold = settings.halation_threshold;
+    params.exposure_stops = settings.exposure_stops;
 
     for (int channel = 0; channel < 3; ++channel) {
         params.halation_log_min[channel] =
@@ -864,10 +1026,11 @@ FilmVizMetalProcessor::render(
 
         [encoder setBuffer:source_buffer offset:0 atIndex:0];
         [encoder setBuffer:destination_buffer offset:0 atIndex:1];
-        [encoder setBuffer:impl_->color_lut offset:0 atIndex:2];
-        [encoder setBuffer:impl_->grain_negative offset:0 atIndex:3];
-        [encoder setBuffer:impl_->grain_print offset:0 atIndex:4];
-        [encoder setBytes:&params length:sizeof(params) atIndex:5];
+        [encoder setBuffer:impl_->negative_exposure_lut offset:0 atIndex:2];
+        [encoder setBuffer:impl_->color_lut offset:0 atIndex:3];
+        [encoder setBuffer:impl_->grain_negative offset:0 atIndex:4];
+        [encoder setBuffer:impl_->grain_print offset:0 atIndex:5];
+        [encoder setBytes:&params length:sizeof(params) atIndex:6];
 
         encode_compute(
             encoder,

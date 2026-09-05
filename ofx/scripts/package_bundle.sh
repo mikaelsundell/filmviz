@@ -22,8 +22,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     xattr -cr "$BUNDLE_DIR" 2>/dev/null || true
 fi
 
-# Bundle non-system dylibs recursively. The red test has none, but this is the
-# packaging contract we will retain when FilmViz dependencies return.
+# Bundle non-system dylibs recursively and rewrite them to bundle-relative paths.
 changed=1
 while [ "$changed" -eq 1 ]; do
     changed=0

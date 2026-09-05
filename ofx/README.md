@@ -10,19 +10,164 @@ The **Processing** control selects the render backend:
 
 - **Auto** — uses Metal when the OpenFX host supplies a Metal render, otherwise
   uses the CPU reference renderer. This is the recommended setting.
-- **Metal** — prefers the Metal implementation. If the host does not enable
-  Metal for a render action, FilmViz falls back to CPU.
-- **CPU** — forces the reference CPU implementation. When Resolve has supplied
-  Metal buffers, this mode stages the image through shared buffers and is
-  intended primarily for validation/comparison rather than performance.
+- **Metal** — prefers Metal and falls back to CPU when the host does not provide
+  a Metal render action.
+- **CPU** — forces the reference CPU implementation. In a Metal render this
+  stages through shared buffers and is intended mainly for validation.
 
-On non-macOS builds the UI exposes Auto and CPU only.
+The CPU and Metal paths use the same cached FilmViz transform products. Color
+LUTs use tetrahedral interpolation; granularity sigma fields remain trilinear.
 
-The CPU path remains the reference implementation. The Metal path accelerates
-the complete per-frame image path: cached color LUT evaluation, negative and
-print grain, and negative-stage halation. Film profile parsing, spectral model
-setup, calibration, and cached LUT construction remain on CPU because they are
-parameter-change work rather than per-pixel frame work.
+## Interactive transform behavior
+
+The OFX transform cache is process-wide, not node-local. Resolve nodes with
+matching film-transform settings share the input-to-negative-exposure LUT,
+development/output LUT, development log domain, and granularity field. The
+heavy `FilmPipeline` is needed only to build a cache miss and is released once
+those immutable transform products have been generated. Cache ownership uses
+`weak_ptr`, so unused in-memory transforms can be released automatically.
+
+Exposure is deliberately excluded from the expensive transform key. The cached
+transform is split at FilmViz's physical negative-exposure boundary:
+
+```text
+encoded input
+  -> cached input-to-negative-exposure LUT
+  -> raw FilmExposure * 2^ExposureStops
+  -> logarithmic development shaper
+  -> cached negative-development / print / output LUT
+```
+
+Multiplying `FilmExposure` by `2^stops` is mathematically the same operation as
+the LogE exposure offset used by `FilmPipeline::relative_negative_log_exposure`.
+Changing Exposure therefore preserves the FilmViz model while avoiding LUT
+regeneration and Metal re-upload. Grain and halation spatial controls are also
+live parameters and do not invalidate the shared transform.
+
+Transform-changing controls such as negative stock, push/pull, bleach bypass,
+printer lights, printer temperature, input/output profile, and LUT size select
+or build a different shared transform cache.
+
+## Persistent and bundled caches
+
+FilmViz checks transform caches in this order:
+
+1. process-wide shared memory cache;
+2. pre-generated cache bundled in `Contents/Resources/filmviz/cache/ofx`;
+3. persistent user cache;
+4. generate the transform and save it to the persistent cache.
+
+On macOS the persistent cache defaults to:
+
+```text
+~/Library/Caches/FilmViz/ofx
+```
+
+Override it with:
+
+```bash
+export FILMVIZ_OFX_CACHE_DIR=/path/to/cache
+```
+
+### Pre-generating common combinations
+
+A normal OFX build pre-generates the neutral/common FilmViz combinations at LUT
+size 33 when `FILMVIZ_OFX_PREBAKE_CACHE=ON` (default). The generated cache
+contains both negative stocks, both input profiles, and both output profiles,
+with Kodak 2383, 25/25/25 printer lights, 3200 K, zero push/pull, zero bleach
+bypass, and middle gray 0.18. Each `.fvcache` contains the input-to-negative-
+exposure LUT, the log-exposure development domain, the developed/output LUT,
+and the granularity sigma field, so those common combinations are ready when
+Resolve creates the node.
+
+The build tool is:
+
+```text
+filmviz_ofx_pregenerate
+```
+
+and the convenience script is:
+
+```bash
+./ofx/scripts/pregenerate_cache.sh build
+```
+
+The cache is generated under:
+
+```text
+build/ofx/prebaked
+```
+
+and copied automatically into the OFX bundle. Change the bundled pre-bake LUT
+size with:
+
+```bash
+-DFILMVIZ_OFX_PREBAKE_LUT_SIZE=33
+```
+
+Disable build-time pre-generation with:
+
+```bash
+-DFILMVIZ_OFX_PREBAKE_CACHE=OFF
+```
+
+## Metal cache
+
+On macOS, matching Resolve nodes on the same `MTLDevice` also share the uploaded
+Metal LUT/granularity buffers. The first matching node uploads the transform;
+subsequent nodes reuse the same GPU resources. Exposure changes do not trigger
+another upload.
+
+Metal accelerates:
+
+- tetrahedral final color LUT evaluation;
+- negative and print grain;
+- negative-stage halation extraction and development;
+- near/far Gaussian scatter through Metal Performance Shaders.
+
+Profile parsing, calibration, and cache generation remain CPU tasks because
+they occur only on transform cache misses.
+
+## Timeline/performance logging
+
+FilmViz writes a thread-safe OFX performance log by default. On macOS:
+
+```text
+~/Library/Logs/FilmViz/filmviz_ofx.log
+```
+
+The log includes plug-in load/unload, node creation/destruction, frame time,
+backend requests, exposure, stock selection, cache hits/misses, bundled/disk
+cache hits, LUT-generation time, Metal upload/reuse, and render/encode timing.
+The log rotates at approximately 32 MB.
+
+Open it with:
+
+```bash
+./ofx/scripts/open_log.sh
+```
+
+Summarize the recent node/cache/render timeline with:
+
+```bash
+./ofx/scripts/analyze_log.py --last 200
+```
+
+The analyzer also reports cache-result counts and average/max timing by event,
+which makes it easy to see whether a slow node load was a bundled hit, a
+process-wide hit, a disk hit, or an actual transform generation.
+
+Disable logging with:
+
+```bash
+export FILMVIZ_OFX_LOG=0
+```
+
+or override the path with:
+
+```bash
+export FILMVIZ_OFX_LOG_PATH=/path/to/filmviz_ofx.log
+```
 
 ## Controls
 
@@ -60,38 +205,9 @@ Halation:
 Performance:
 
 - LUT size
-- Worker threads (CPU processing and cached LUT generation)
+- Worker threads
 
 Grain and halation are disabled by default.
-
-## Metal implementation
-
-On macOS FilmViz advertises OpenFX Metal rendering. When Resolve enables Metal,
-`kOfxImagePropData` is treated as an `id<MTLBuffer>` and work is enqueued on
-the host-provided `id<MTLCommandQueue>`. Normal Metal rendering is asynchronous
-and does not wait for final GPU completion before returning from Render.
-
-The Metal backend keeps the cached FilmViz LUT products resident in GPU buffers:
-
-- final color LUT
-- negative and print granularity sigma fields
-- negative-exposure LUT for halation
-- post-halation development LUT and granularity fields
-
-Color LUTs use tetrahedral interpolation. Granularity sigma fields remain
-trilinear because they represent smooth statistical fields rather than final
-RGB transforms. Grain is generated deterministically per pixel, channel, stage,
-seed, and frame time.
-
-Halation runs at the negative stage. The Metal path extracts the highlight-
-weighted negative exposure, performs near/far Gaussian scatter with Metal
-Performance Shaders, adds record-dependent scatter, and evaluates the cached
-post-halation development LUT. The CPU path remains available for reference
-comparison.
-
-The first Metal render on a plug-in instance may include a one-time shader
-compile/upload cost. Pipelines and LUT buffers are then cached per Metal device
-and FilmViz cache revision.
 
 ## OpenFX SDK
 
@@ -117,11 +233,7 @@ git submodule update --init --recursive
 CMake automatically uses `external/openfx/include`.
 `FILMVIZ_OFX_INCLUDE_DIR` remains available as an explicit override.
 
-The OpenFX project is BSD-3-Clause licensed.
-
 ## Build on macOS
-
-Example using the same FilmViz dependency prefix as the main application:
 
 ```bash
 cmake -S . -B build \
@@ -131,14 +243,12 @@ cmake -S . -B build \
 cmake --build build --config Release -j
 ```
 
-A normal all-target build includes the OFX plug-in. The bundle is produced at:
+A normal all-target build includes the OFX plug-in and pre-generated caches.
+The bundle is produced at:
 
 ```text
 build/ofx/FilmViz.ofx.bundle
 ```
-
-On macOS the OFX target links Foundation, Metal, and MetalPerformanceShaders.
-Other platforms build the CPU backend only.
 
 ## Bundle layout
 
@@ -153,13 +263,15 @@ FilmViz.ofx.bundle/
       ...bundled non-system runtime dependencies...
     Resources/
       filmviz/
+        cache/
+          ofx/
+            manifest.txt
+            *.fvcache
 ```
 
 Runtime dependencies are copied into `Contents/Libraries`, rewritten to
-bundle-relative load paths, and signed as part of the macOS packaging step.
-The FilmViz `resources` tree is copied to `Contents/Resources/filmviz`.
-
-For local experiments the resource path can be overridden with:
+bundle-relative load paths, and signed during macOS packaging. For local
+experiments the profile/resource root can be overridden with:
 
 ```bash
 export FILMVIZ_RESOURCES=/absolute/path/to/filmviz/resources
@@ -179,22 +291,8 @@ After building:
 ./build/ofx/install_filmviz_ofx.sh
 ```
 
-The default macOS destination is `/Library/OFX/Plugins`. The installer clears
-quarantine metadata, signs/verifies the installed bundle, and removes Resolve's
-OFX cache so the rebuilt plug-in is discovered on the next launch. Restart
-DaVinci Resolve after installation.
-
-## Cache and rendering behavior
-
-The plug-in keeps an instance-local FilmViz cache. Parameter changes that alter
-the film transform rebuild only the relevant cached products. Grain strength,
-size, chroma, seed, and halation spatial controls do not unnecessarily rebuild
-the base color LUT.
-
-The plug-in currently requests full-frame rendering (`supportsTiles = false`)
-because halation is spatial and needs neighboring image data. A future ROI/tile
-implementation can expand the requested source region by the halation support
-radius without changing the FilmViz model.
+The default macOS destination is `/Library/OFX/Plugins`. Restart DaVinci
+Resolve after installation.
 
 ## Current limitations
 
@@ -202,7 +300,6 @@ radius without changing the FilmViz model.
 - Metal acceleration is macOS-only; CPU remains available on all platforms.
 - Full-frame rendering is currently requested because halation is spatial.
 - No custom-drawn OFX UI; Resolve renders the standard parameter controls.
-- The Metal halation blur uses Metal Performance Shaders Gaussian blur, while
-  the CPU reference uses FilmViz's CPU spatial approximation. Their film-stage
-  model and scatter parameters match, but pixel-level blur results may differ
-  slightly.
+- Metal halation uses Metal Performance Shaders Gaussian blur while the CPU
+  reference uses FilmViz's CPU spatial approximation, so pixel-level blur can
+  differ slightly even though the film-stage model and scatter parameters match.

@@ -126,6 +126,24 @@ Lut3D::generate(
 }
 
 bool
+Lut3D::assign(
+    int size,
+    const std::vector<RGB>& values)
+{
+    if (size < 2
+        || values.size()
+            != static_cast<std::size_t>(
+                size * size * size)) {
+
+        return false;
+    }
+
+    size_ = size;
+    values_ = values;
+    return true;
+}
+
+bool
 Lut3D::valid() const
 {
     return

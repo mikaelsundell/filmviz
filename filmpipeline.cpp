@@ -56,7 +56,9 @@ FilmPipeline::initialize(
                 && value <= 50.0f;
         };
 
-    if (!valid_unit_control(settings_.negative_bleach_bypass)
+    if ((settings_.print_profile != "kodak-2383"
+            && settings_.print_profile != "none")
+        || !valid_unit_control(settings_.negative_bleach_bypass)
         || !valid_unit_control(settings_.print_bleach_bypass)
         || !valid_printer_light(settings_.printer_light_red)
         || !valid_printer_light(settings_.printer_light_green)
@@ -510,6 +512,66 @@ FilmPipeline::process_negative_exposure(
             negative_density);
 
     if (!negative_transmittance.valid()) {
+        return result;
+    }
+
+    if (settings_.print_profile == "none") {
+        // Diagnostic positive view of the developed camera negative.
+        //
+        // Showing the physical negative transmittance directly is not useful
+        // as an image preview: it is an inverted, strongly attenuated spectrum
+        // and can convert to values near or below display black. Instead, map
+        // the developed Status-M density relative to the calibrated zero-stop
+        // reference back into a positive exposure-like signal:
+        //
+        //     signal = middle_gray * 10^(D - D_ref)
+        //
+        // A one-density-unit increase therefore becomes a 10x brighter
+        // diagnostic signal, while the zero-stop reference remains at
+        // middle gray. This bypasses the print stage entirely and preserves
+        // the per-record density differences we want to inspect.
+        const auto density_signal =
+            [this](float density, float reference_density) {
+                const float value =
+                    settings_.middle_gray
+                    * std::pow(
+                        10.0f,
+                        density - reference_density);
+
+                return std::isfinite(value)
+                    ? std::max(0.0f, value)
+                    : 0.0f;
+            };
+
+        result.ap0 = {{
+            density_signal(
+                result.calibrated_negative_density.red,
+                reference_negative_density_.red),
+            density_signal(
+                result.calibrated_negative_density.green,
+                reference_negative_density_.green),
+            density_signal(
+                result.calibrated_negative_density.blue,
+                reference_negative_density_.blue)
+        }};
+
+        result.rec709_gamma24 =
+            ap0_to_rec709_->transform(
+                result.ap0);
+
+        result.valid =
+            finite_rgb(result.ap0)
+            && finite_rgb(result.rec709_gamma24)
+            && std::isfinite(result.negative_status_m_density.red)
+            && std::isfinite(result.negative_status_m_density.green)
+            && std::isfinite(result.negative_status_m_density.blue)
+            && std::isfinite(result.calibrated_negative_density.red)
+            && std::isfinite(result.calibrated_negative_density.green)
+            && std::isfinite(result.calibrated_negative_density.blue)
+            && std::isfinite(result.negative_granularity_sigma.red)
+            && std::isfinite(result.negative_granularity_sigma.green)
+            && std::isfinite(result.negative_granularity_sigma.blue);
+
         return result;
     }
 

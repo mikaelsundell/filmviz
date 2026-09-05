@@ -8,10 +8,50 @@
 # advertises OpenFX Metal rendering and uses Resolve's supplied command queue.
 # ---------------------------------------------------------------------------
 
-add_library(filmviz_ofx MODULE
-    filmvizofx.cpp
+option(FILMVIZ_OFX_PREBAKE_CACHE
+    "Pre-generate common FilmViz OFX transform caches during the build" ON)
+set(FILMVIZ_OFX_PREBAKE_LUT_SIZE "33" CACHE STRING
+    "LUT edge length for bundled FilmViz OFX pre-generated caches")
+
+add_library(filmviz_ofx_processing STATIC
     filmvizofxprocessor.cpp
     filmvizofxprocessor.h
+    filmvizofxcache.cpp
+    filmvizofxcache.h
+    filmvizofxlog.cpp
+    filmvizofxlog.h
+)
+
+target_include_directories(filmviz_ofx_processing
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}
+)
+
+target_link_libraries(filmviz_ofx_processing
+    PUBLIC
+        filmviz_core
+)
+
+target_compile_features(filmviz_ofx_processing PUBLIC cxx_std_17)
+set_target_properties(filmviz_ofx_processing PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+
+add_executable(filmviz_ofx_pregenerate
+    filmviz_ofx_pregenerate.cpp
+)
+
+target_link_libraries(filmviz_ofx_pregenerate
+    PRIVATE
+        filmviz_ofx_processing
+)
+
+target_compile_features(filmviz_ofx_pregenerate PRIVATE cxx_std_17)
+
+add_library(filmviz_ofx MODULE
+    filmvizofx.cpp
 )
 
 if(APPLE)
@@ -42,11 +82,12 @@ target_include_directories(filmviz_ofx
     PRIVATE
         ${FILMVIZ_OFX_INCLUDE_DIR}
         ${CMAKE_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(filmviz_ofx
     PRIVATE
-        filmviz_core
+        filmviz_ofx_processing
 )
 
 target_compile_features(filmviz_ofx PRIVATE cxx_std_17)
@@ -57,6 +98,43 @@ set_target_properties(filmviz_ofx PROPERTIES
     SUFFIX ".ofx"
     BUNDLE FALSE
 )
+
+set(FILMVIZ_OFX_PREBAKED_DIR
+    "${CMAKE_BINARY_DIR}/ofx/prebaked")
+set(FILMVIZ_OFX_PREBAKED_MANIFEST
+    "${FILMVIZ_OFX_PREBAKED_DIR}/manifest.txt")
+file(MAKE_DIRECTORY "${FILMVIZ_OFX_PREBAKED_DIR}")
+
+if(FILMVIZ_OFX_PREBAKE_CACHE AND EXISTS "${CMAKE_SOURCE_DIR}/resources")
+    file(GLOB_RECURSE FILMVIZ_OFX_PREBAKE_RESOURCE_FILES CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/resources/*")
+
+    add_custom_command(
+        OUTPUT "${FILMVIZ_OFX_PREBAKED_MANIFEST}"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory
+            "${FILMVIZ_OFX_PREBAKED_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${FILMVIZ_OFX_PREBAKED_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E env
+            "FILMVIZ_OFX_CACHE_DIR=${FILMVIZ_OFX_PREBAKED_DIR}"
+            "FILMVIZ_OFX_LOG=0"
+            $<TARGET_FILE:filmviz_ofx_pregenerate>
+            --resources "${CMAKE_SOURCE_DIR}/resources"
+            --output "${FILMVIZ_OFX_PREBAKED_DIR}"
+            --lut-size "${FILMVIZ_OFX_PREBAKE_LUT_SIZE}"
+        DEPENDS
+            filmviz_ofx_pregenerate
+            ${FILMVIZ_OFX_PREBAKE_RESOURCE_FILES}
+        COMMENT "Pre-generating common FilmViz OFX transform caches"
+        VERBATIM
+    )
+
+    add_custom_target(filmviz_ofx_prebaked
+        DEPENDS "${FILMVIZ_OFX_PREBAKED_MANIFEST}"
+    )
+
+    add_dependencies(filmviz_ofx filmviz_ofx_prebaked)
+endif()
 
 if(APPLE)
     set(FILMVIZ_OFX_ARCH_DIRECTORY "MacOS")
@@ -110,6 +188,11 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/resources"
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz/cache/ofx"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${FILMVIZ_OFX_PREBAKED_DIR}"
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz/cache/ofx"
     COMMAND sh
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package_bundle.sh"
         "${FILMVIZ_OFX_BUNDLE_DIR}"
