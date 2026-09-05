@@ -36,14 +36,16 @@ public:
     struct Settings
     {
         std::string resources_directory = "resources";
+        std::string negative_profile = "verita-200d";
 
         float middle_gray = 0.18f;
         float negative_zero_stop_log_exposure = -0.515f;
         float exposure_stops = 0.0f;
 
-        // Push/pull is an explicit approximation because no alternate-process
-        // Verita curves are available. Positive values increase negative
-        // contrast around the calibrated middle-gray density.
+        // Push/pull is an explicit approximation because alternate-process
+        // characteristic curves are not part of the active negative profiles.
+        // Positive values increase negative contrast around the calibrated
+        // middle-gray density.
         float push_pull_stops = 0.0f;
 
         // Profile-independent bleach-bypass look controls. Zero is normal

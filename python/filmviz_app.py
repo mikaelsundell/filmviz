@@ -655,7 +655,11 @@ class FilmVizWindow(QMainWindow):
         profile_controls_layout.setContentsMargins(0, 0, 0, 0)
 
         self.profile_family = QComboBox()
-        self.profile_family.addItems(("Negative — Verita 200D", "Print — Kodak 2383"))
+        self.profile_family.addItems((
+            "Negative — Verita 200D",
+            "Negative — Kodak VISION3 50D",
+            "Print — Kodak 2383",
+        ))
         self.profile_curve_type = QComboBox()
 
         profile_controls_layout.addWidget(QLabel("Profile"))
@@ -710,7 +714,7 @@ class FilmVizWindow(QMainWindow):
 
     @Slot()
     def _profile_family_changed(self):
-        current = self.profile_curve_type.currentData()
+        current_label = self.profile_curve_type.currentText()
         self.profile_curve_type.blockSignals(True)
         self.profile_curve_type.clear()
 
@@ -720,6 +724,14 @@ class FilmVizWindow(QMainWindow):
                 ("Sensitometric curves", "kodak_verita_200d_sensitometric_curves.csv"),
                 ("Spectral dye density", "kodak_verita_200d_spectral_dye_density_curves.csv"),
                 ("Diffuse RMS granularity", "kodak_verita_200d_diffuse_rms_granularity_curves.csv"),
+            )
+        elif self.profile_family.currentIndex() == 1:
+            entries = (
+                ("Spectral sensitivity", "kodak_50d_spectral_sensitivity_curves.csv"),
+                ("Sensitometric curves", "kodak_50d_sensitometric_curves.csv"),
+                ("Spectral dye density", "kodak_50d_spectral_dye_density_curves.csv"),
+                ("MTF", "kodak_50d_modulation_transfer_function_curves.csv"),
+                ("Diffuse RMS granularity", "kodak_50d_diffuse_rms_granularity_curves.csv"),
             )
         else:
             entries = (
@@ -733,10 +745,12 @@ class FilmVizWindow(QMainWindow):
         for label, filename in entries:
             self.profile_curve_type.addItem(label, filename)
 
-        if current:
-            index = self.profile_curve_type.findData(current)
+        if current_label:
+            index = self.profile_curve_type.findText(current_label)
             if index >= 0:
                 self.profile_curve_type.setCurrentIndex(index)
+            elif self.profile_curve_type.count() > 0:
+                self.profile_curve_type.setCurrentIndex(0)
 
         self.profile_curve_type.blockSignals(False)
         self._reload_profile_plot()
@@ -751,6 +765,8 @@ class FilmVizWindow(QMainWindow):
         profile_directory = (
             "verita_200d"
             if self.profile_family.currentIndex() == 0
+            else "kodak_50d"
+            if self.profile_family.currentIndex() == 1
             else "kodak_2383"
         )
 
@@ -766,15 +782,15 @@ class FilmVizWindow(QMainWindow):
         stop_axis = None
 
         if filename.endswith("_sensitometric_curves.csv"):
-            if self.profile_family.currentIndex() == 0:
+            if self.profile_family.currentIndex() in (0, 1):
                 x_column = "log_exposure_lux_seconds"
                 y_columns = (
                     "curve_high_density",
                     "curve_mid_density",
                     "curve_low_density",
                 )
-                # The Verita source table carries camera_stops and LogE together:
-                # stop 0 = -0.515 LogE, with -8..+8 stops across the curve.
+                # Both active camera-negative source tables carry camera stops
+                # and LogE together with stop 0 anchored at -0.515 LogE.
                 stop_axis = (-8.0, 8.0, -0.515)
             else:
                 # Kodak 2383 sensitometry already uses log exposure as its

@@ -56,7 +56,8 @@ validate_stock_profiles(
     const std::string& negative,
     const std::string& print)
 {
-    if (negative != "verita-200d") {
+    if (negative != "verita-200d"
+        && negative != "kodak-50d") {
         throw std::invalid_argument(
             "unknown negative profile: " + negative);
     }
@@ -70,6 +71,7 @@ validate_stock_profiles(
 FilmPipeline::Settings
 pipeline_settings(
     const std::string& resources,
+    const std::string& negative,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -82,6 +84,7 @@ pipeline_settings(
 {
     FilmPipeline::Settings settings;
     settings.resources_directory = resources;
+    settings.negative_profile = negative;
     settings.exposure_stops = exposure;
     settings.push_pull_stops = push_pull;
     settings.negative_bleach_bypass = negative_bleach_bypass;
@@ -174,6 +177,7 @@ generate_lut(
     if (!pipeline.initialize(
             pipeline_settings(
                 resources,
+                negative,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -279,7 +283,7 @@ generate_lut(
 
     if (!lut.write_cube(
             output_filename,
-            "FilmViz Verita 200D to Kodak 2383",
+            "FilmViz " + negative + " to " + print,
             comments)) {
 
         throw std::runtime_error(
@@ -328,6 +332,7 @@ process_image(
     if (!pipeline.initialize(
             pipeline_settings(
                 resources,
+                negative,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -428,7 +433,9 @@ PYBIND11_MODULE(filmviz_python, module)
             result["input"] = py::make_tuple(
                 "awg3-logc3-ei800",
                 "ap0-linear");
-            result["negative"] = py::make_tuple("verita-200d");
+            result["negative"] = py::make_tuple(
+                "verita-200d",
+                "kodak-50d");
             result["print"] = py::make_tuple("kodak-2383");
             result["output"] = py::make_tuple(
                 "ap0-linear",

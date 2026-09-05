@@ -163,6 +163,7 @@ print_profiles()
         << "    ap0-linear         ACES2065-1 AP0 linear\n"
         << "  negative:\n"
         << "    verita-200d        Kodak Verita 200D\n"
+        << "    kodak-50d          Kodak VISION3 50D 5203/7203\n"
         << "  print:\n"
         << "    kodak-2383         Kodak Vision Color Print Film 2383\n"
         << "  output:\n"
@@ -187,7 +188,8 @@ validate_profile_options(
         return false;
     }
 
-    if (tool.negative != "verita-200d") {
+    if (tool.negative != "verita-200d"
+        && tool.negative != "kodak-50d") {
         print_error(
             "unknown negative profile: ",
             tool.negative);
@@ -361,7 +363,7 @@ main(
       .help("Input profile: awg3-logc3-ei800 (default), ap0-linear");
 
     ap.arg("--negative %s:PROFILE", &tool.negative)
-      .help("Negative profile: verita-200d (default)");
+      .help("Negative profile: verita-200d (default), kodak-50d");
 
     ap.arg("--print %s:PROFILE", &tool.print)
       .help("Print profile: kodak-2383 (default)");
@@ -405,7 +407,7 @@ main(
       .help("Output image filename (default: filmviz_output.tif)");
 
     ap.arg("--negative-grain %f:STRENGTH", &tool.negative_grain)
-      .help("Measured Verita grain strength; 0 disables, 1 is measured RMS");
+      .help("Measured negative-stock grain strength; 0 disables, 1 is measured RMS");
 
     ap.arg("--print-grain %f:STRENGTH", &tool.print_grain)
       .help("Measured 2383 grain strength; 0 disables, 1 is measured RMS");
@@ -507,7 +509,7 @@ main(
 
     if (std::abs(tool.middle_gray - 0.18f) > 1e-6f) {
         print_warning(
-            "non-reference middle gray; Verita zero-stop calibration was validated at 0.18: ",
+            "non-reference middle gray; negative zero-stop calibration uses 0.18: ",
             tool.middle_gray);
     }
 
@@ -515,6 +517,9 @@ main(
 
     pipeline_settings.resources_directory =
         tool.resources;
+
+    pipeline_settings.negative_profile =
+        tool.negative;
 
     pipeline_settings.middle_gray =
         tool.middle_gray;
@@ -786,7 +791,7 @@ main(
 
     if (!lut.write_cube(
             tool.output_cube,
-            "FilmViz Verita 200D to Kodak 2383",
+            std::string("FilmViz ") + tool.negative + " to " + tool.print,
             comments)) {
 
         print_error(

@@ -69,17 +69,55 @@ FilmPipeline::initialize(
     const std::string rgb2spec_file =
         resource_path("spectral/reconstruction/ACES2065_1.spec");
 
+    std::string negative_name;
+    std::string negative_directory;
+    std::string negative_prefix;
+
+    if (settings_.negative_profile == "verita-200d") {
+        negative_name = "Kodak Verita 200D";
+        negative_directory = "profiles/verita_200d";
+        negative_prefix = "kodak_verita_200d";
+    }
+    else if (settings_.negative_profile == "kodak-50d") {
+        negative_name = "Kodak VISION3 50D 5203/7203";
+        negative_directory = "profiles/kodak_50d";
+        negative_prefix = "kodak_50d";
+    }
+    else {
+        error_ =
+            "unknown negative profile: "
+            + settings_.negative_profile;
+
+        return false;
+    }
+
     const std::string negative_sensitivity_file =
-        resource_path("profiles/verita_200d/kodak_verita_200d_spectral_sensitivity_curves.csv");
+        resource_path(
+            negative_directory
+            + "/"
+            + negative_prefix
+            + "_spectral_sensitivity_curves.csv");
 
     const std::string negative_characteristic_file =
-        resource_path("profiles/verita_200d/kodak_verita_200d_sensitometric_curves.csv");
+        resource_path(
+            negative_directory
+            + "/"
+            + negative_prefix
+            + "_sensitometric_curves.csv");
 
     const std::string negative_dye_file =
-        resource_path("profiles/verita_200d/kodak_verita_200d_spectral_dye_density_curves.csv");
+        resource_path(
+            negative_directory
+            + "/"
+            + negative_prefix
+            + "_spectral_dye_density_curves.csv");
 
     const std::string negative_granularity_file =
-        resource_path("profiles/verita_200d/kodak_verita_200d_diffuse_rms_granularity_curves.csv");
+        resource_path(
+            negative_directory
+            + "/"
+            + negative_prefix
+            + "_diffuse_rms_granularity_curves.csv");
 
     const std::string print_sensitivity_file =
         resource_path("profiles/kodak_2383/kodak_2383_spectral_sensitivity_curves.csv");
@@ -125,7 +163,7 @@ FilmPipeline::initialize(
 
     negative_stock_ =
         std::make_unique<FilmStock>(
-            "Kodak Verita 200D");
+            negative_name);
 
     if (!reconstructor_->valid()
         || !scene_illuminant_->valid()
@@ -134,7 +172,9 @@ FilmPipeline::initialize(
             negative_characteristic_file)) {
 
         error_ =
-            "could not initialize Kodak Verita 200D negative resources";
+            "could not initialize "
+            + negative_name
+            + " negative resources";
 
         return false;
     }
@@ -167,7 +207,9 @@ FilmPipeline::initialize(
             settings_.negative_zero_stop_log_exposure)) {
 
         error_ =
-            "could not initialize Verita spectral dye model";
+            "could not initialize "
+            + negative_name
+            + " spectral dye model";
 
         return false;
     }
@@ -246,7 +288,9 @@ FilmPipeline::initialize(
         || !negative_density_calibration_->valid()) {
 
         error_ =
-            "could not initialize Verita Status-M density calibration";
+            "could not initialize "
+            + negative_name
+            + " Status-M density calibration";
 
         return false;
     }
@@ -403,8 +447,8 @@ FilmPipeline::process_negative_exposure(
                 negative_exposure));
 
     if (std::abs(settings_.push_pull_stops) > 1e-7f) {
-        // No alternate-development Verita measurements are available. Use an
-        // explicit contrast approximation around the calibrated neutral
+        // No alternate-development measurements are available for the active
+        // negative profile. Use an explicit contrast approximation around the
         // density: one push/pull stop changes slope by 2^0.2 (~14.9%).
         const float contrast =
             std::exp2(

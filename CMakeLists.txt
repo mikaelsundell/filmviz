@@ -136,6 +136,7 @@ if(BUILD_TESTING)
         tests/test_halation_model.cpp
         tests/test_input_transform.cpp
         tests/test_lut3d.cpp
+        tests/test_negative_profile.cpp
         tests/test_pipeline.cpp
     )
 

@@ -208,6 +208,51 @@ main()
             "+1 push stop increases negative contrast about middle gray");
     }
 
+
+    FilmPipeline::Settings kodak_50d_settings = settings;
+    kodak_50d_settings.negative_profile = "kodak-50d";
+
+    FilmPipeline kodak_50d_pipeline;
+
+    passed &= test::check(
+        kodak_50d_pipeline.initialize(
+            kodak_50d_settings),
+        std::string("Kodak VISION3 50D pipeline initializes: ")
+            + kodak_50d_pipeline.error());
+
+    if (kodak_50d_pipeline.valid()) {
+        const FilmPipeline::Result kodak_50d_shadow =
+            kodak_50d_pipeline.process(
+                {{0.02f, 0.02f, 0.02f}});
+        const FilmPipeline::Result kodak_50d_middle =
+            kodak_50d_pipeline.process(
+                {{0.18f, 0.18f, 0.18f}});
+        const FilmPipeline::Result kodak_50d_highlight =
+            kodak_50d_pipeline.process(
+                {{0.80f, 0.80f, 0.80f}});
+
+        passed &= test::check(
+            kodak_50d_shadow.valid
+            && kodak_50d_middle.valid
+            && kodak_50d_highlight.valid,
+            "Kodak VISION3 50D processes representative neutral exposures");
+
+        passed &= test::check(
+            finite_density(kodak_50d_middle.negative_status_m_density)
+            && finite_density(kodak_50d_middle.calibrated_negative_density)
+            && finite_density(kodak_50d_middle.negative_granularity_sigma)
+            && finite_rgb(kodak_50d_middle.ap0)
+            && finite_rgb(kodak_50d_middle.rec709_gamma24),
+            "Kodak VISION3 50D production stages return finite values");
+
+        passed &= test::check(
+            ap0_luminance(kodak_50d_shadow.ap0)
+                < ap0_luminance(kodak_50d_middle.ap0)
+            && ap0_luminance(kodak_50d_middle.ap0)
+                < ap0_luminance(kodak_50d_highlight.ap0),
+            "Kodak VISION3 50D neutral exposure remains monotonic through print");
+    }
+
     return
         test::finish(
             passed,
