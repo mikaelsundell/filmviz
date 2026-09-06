@@ -15,6 +15,7 @@
 #include "printviewer.h"
 #include "spectralilluminant.h"
 #include "spectralreconstructor.h"
+#include "sampledspectralreconstructor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -163,11 +164,44 @@ FilmPipeline::initialize(
         std::make_unique<SpectralIlluminant>(
             SpectralIlluminant::Standard::D60);
 
+    sampled_reconstructor_.reset();
+
+    if (settings_.spectral_reconstruction
+        == SpectralReconstruction::FilmVizSampled) {
+
+        SampledSpectralReconstructor::Settings sampled_settings;
+
+        sampled_settings.wavelength_min_nm = 360.0f;
+        sampled_settings.wavelength_max_nm = 830.0f;
+        sampled_settings.wavelength_step_nm = 5.0f;
+        sampled_settings.smoothness =
+            settings_.sampled_reconstruction_smoothness;
+        sampled_settings.max_iterations =
+            settings_.sampled_reconstruction_iterations;
+
+        sampled_reconstructor_ =
+            std::make_unique<SampledSpectralReconstructor>();
+
+        if (!sampled_reconstructor_->initialize(
+                observer_file,
+                *scene_illuminant_,
+                sampled_settings)) {
+
+            error_ =
+                "could not initialize experimental FilmViz sampled reconstructor: "
+                + sampled_reconstructor_->error();
+
+            return false;
+        }
+    }
+
     negative_stock_ =
         std::make_unique<FilmStock>(
             negative_name);
 
-    if (!reconstructor_->valid()
+    if ((settings_.spectral_reconstruction
+            == SpectralReconstruction::Rgb2Spec
+            && !reconstructor_->valid())
         || !scene_illuminant_->valid()
         || !negative_stock_->load(
             negative_sensitivity_file,
@@ -239,17 +273,9 @@ FilmPipeline::initialize(
         settings_.middle_gray
     }};
 
-    const auto reference_spectrum =
-        reconstructor_->reconstruct(
-            reference_ap0,
-            SpectralReconstructor::Method::Optimized);
-
     const SampledCurve reference_factor =
-        reconstructor_->sample(
-            reference_spectrum,
-            settings_.wavelength_min_nm,
-            settings_.wavelength_max_nm,
-            settings_.wavelength_step_nm);
+        reconstruct_scene_factor(
+            reference_ap0);
 
     const SampledCurve reference_illuminated =
         scene_illuminant_->illuminate(
@@ -400,17 +426,9 @@ FilmPipeline::negative_exposure(
         return false;
     }
 
-    const auto spectrum =
-        reconstructor_->reconstruct(
-            ap0_linear,
-            SpectralReconstructor::Method::Optimized);
-
     const SampledCurve factor =
-        reconstructor_->sample(
-            spectrum,
-            settings_.wavelength_min_nm,
-            settings_.wavelength_max_nm,
-            settings_.wavelength_step_nm);
+        reconstruct_scene_factor(
+            ap0_linear);
 
     const SampledCurve illuminated =
         scene_illuminant_->illuminate(
@@ -430,11 +448,27 @@ FilmPipeline::negative_exposure(
         && std::isfinite(exposure.blue);
 }
 
+bool
+FilmPipeline::scene_factor(
+    const std::array<float, 3>& ap0_linear,
+    SampledCurve& factor) const
+{
+    factor =
+        reconstruct_scene_factor(
+            ap0_linear);
+
+    return
+        factor.valid();
+}
+
 FilmPipeline::Result
 FilmPipeline::process_negative_exposure(
     const FilmExposure& negative_exposure) const
 {
     Result result;
+
+    result.negative_exposure =
+        negative_exposure;
 
     if (!valid_
         || !std::isfinite(negative_exposure.red)
@@ -578,6 +612,9 @@ FilmPipeline::process_negative_exposure(
     const FilmExposure print_exposure =
         print_processor_->expose(
             negative_transmittance);
+
+    result.print_exposure =
+        print_exposure;
 
     result.print_density =
         print_processor_->develop(
@@ -821,6 +858,68 @@ FilmPipeline::transmittance_from_density(
     }
 
     return result;
+}
+
+SampledCurve
+FilmPipeline::reconstruct_scene_factor(
+    const std::array<float, 3>& ap0_linear) const
+{
+    if (settings_.spectral_reconstruction
+        == SpectralReconstruction::FilmVizSampled) {
+
+        if (!sampled_reconstructor_
+            || !sampled_reconstructor_->valid()) {
+
+            return SampledCurve();
+        }
+
+        const SampledCurve full =
+            sampled_reconstructor_->reconstruct(
+                ap0_linear);
+
+        SampledCurve result;
+
+        if (!full.valid()) {
+            return result;
+        }
+
+        for (float wavelength =
+                 settings_.wavelength_min_nm;
+             wavelength <=
+                 settings_.wavelength_max_nm
+                 + 0.001f;
+             wavelength +=
+                 settings_.wavelength_step_nm) {
+
+            result.x.push_back(
+                wavelength);
+
+            result.y.push_back(
+                full.sample(
+                    wavelength,
+                    0.0f));
+        }
+
+        return result;
+    }
+
+    if (!reconstructor_
+        || !reconstructor_->valid()) {
+
+        return SampledCurve();
+    }
+
+    const auto spectrum =
+        reconstructor_->reconstruct(
+            ap0_linear,
+            SpectralReconstructor::Method::Optimized);
+
+    return
+        reconstructor_->sample(
+            spectrum,
+            settings_.wavelength_min_nm,
+            settings_.wavelength_max_nm,
+            settings_.wavelength_step_nm);
 }
 
 FilmLogExposure

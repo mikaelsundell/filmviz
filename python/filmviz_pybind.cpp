@@ -79,6 +79,8 @@ pipeline_settings(
     const std::string& resources,
     const std::string& negative,
     const std::string& print,
+    const std::string& spectral_reconstruction,
+    double sampled_smoothness,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -93,6 +95,23 @@ pipeline_settings(
     settings.resources_directory = resources;
     settings.negative_profile = negative;
     settings.print_profile = print;
+
+    if (spectral_reconstruction == "rgb2spec") {
+        settings.spectral_reconstruction =
+            FilmPipeline::SpectralReconstruction::Rgb2Spec;
+    }
+    else if (spectral_reconstruction == "filmviz-sampled") {
+        settings.spectral_reconstruction =
+            FilmPipeline::SpectralReconstruction::FilmVizSampled;
+    }
+    else {
+        throw std::invalid_argument(
+            "unknown spectral reconstruction: "
+            + spectral_reconstruction);
+    }
+
+    settings.sampled_reconstruction_smoothness =
+        sampled_smoothness;
     settings.exposure_stops = exposure;
     settings.push_pull_stops = push_pull;
     settings.negative_bleach_bypass = negative_bleach_bypass;
@@ -156,6 +175,8 @@ generate_lut(
     const std::string& print,
     const std::string& output,
     int lut_size,
+    const std::string& spectral_reconstruction,
+    double sampled_smoothness,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -187,6 +208,8 @@ generate_lut(
                 resources,
                 negative,
                 print,
+                spectral_reconstruction,
+                sampled_smoothness,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -311,6 +334,8 @@ process_image(
     const std::string& output,
     int lut_size,
     bool use_lut_acceleration,
+    const std::string& spectral_reconstruction,
+    double sampled_smoothness,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -344,6 +369,8 @@ process_image(
                 resources,
                 negative,
                 print,
+                spectral_reconstruction,
+                sampled_smoothness,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -533,6 +560,259 @@ read_image_preview(
     return result;
 }
 
+
+py::dict
+probe_image_pixel(
+    const std::string& resources,
+    const std::string& input_filename,
+    const std::string& input,
+    const std::string& negative,
+    const std::string& print,
+    const std::string& spectral_reconstruction,
+    double sampled_smoothness,
+    float exposure,
+    float push_pull,
+    float negative_bleach_bypass,
+    float print_bleach_bypass,
+    float printer_light_red,
+    float printer_light_green,
+    float printer_light_blue,
+    float middle_gray,
+    float printer_temperature,
+    double u,
+    double v)
+{
+    validate_stock_profiles(
+        negative,
+        print);
+
+    OIIO::ImageBuf image(
+        input_filename);
+
+    if (!image.read(
+            0,
+            0,
+            true,
+            OIIO::TypeDesc::FLOAT)) {
+
+        throw std::runtime_error(
+            "could not read probe image: "
+            + image.geterror());
+    }
+
+    const OIIO::ImageSpec& spec =
+        image.spec();
+
+    if (spec.width <= 0
+        || spec.height <= 0
+        || spec.nchannels < 3) {
+
+        throw std::runtime_error(
+            "probe image must contain RGB channels");
+    }
+
+    const double clamped_u =
+        std::clamp(
+            u,
+            0.0,
+            1.0);
+
+    const double clamped_v =
+        std::clamp(
+            v,
+            0.0,
+            1.0);
+
+    const int x =
+        std::clamp(
+            static_cast<int>(
+                std::lround(
+                    clamped_u
+                    * static_cast<double>(
+                        spec.width - 1))),
+            0,
+            spec.width - 1);
+
+    const int y =
+        std::clamp(
+            static_cast<int>(
+                std::lround(
+                    clamped_v
+                    * static_cast<double>(
+                        spec.height - 1))),
+            0,
+            spec.height - 1);
+
+    std::vector<float> pixel(
+        static_cast<std::size_t>(
+            spec.nchannels),
+        0.0f);
+
+    image.getpixel(
+        x + spec.x,
+        y + spec.y,
+        pixel.data(),
+        spec.nchannels);
+
+    const std::array<float, 3> encoded = {{
+        pixel[0],
+        pixel[1],
+        pixel[2]
+    }};
+
+    const InputTransform transform(
+        input_encoding(
+            input));
+
+    const std::array<float, 3> ap0 =
+        transform.to_ap0(
+            encoded);
+
+    FilmPipeline pipeline;
+
+    if (!pipeline.initialize(
+            pipeline_settings(
+                resources,
+                negative,
+                print,
+                spectral_reconstruction,
+                sampled_smoothness,
+                exposure,
+                push_pull,
+                negative_bleach_bypass,
+                print_bleach_bypass,
+                printer_light_red,
+                printer_light_green,
+                printer_light_blue,
+                middle_gray,
+                printer_temperature))) {
+
+        throw std::runtime_error(
+            "could not initialize FilmViz probe pipeline: "
+            + pipeline.error());
+    }
+
+    SampledCurve factor;
+
+    if (!pipeline.scene_factor(
+            ap0,
+            factor)) {
+
+        throw std::runtime_error(
+            "could not reconstruct probe spectrum");
+    }
+
+    const FilmPipeline::Result result =
+        pipeline.process(
+            ap0);
+
+    if (!result.valid) {
+        throw std::runtime_error(
+            "probe pipeline result is invalid");
+    }
+
+    py::dict spectrum;
+
+    const std::array<float, 11> wavelengths = {{
+        400.0f,
+        420.0f,
+        440.0f,
+        460.0f,
+        500.0f,
+        550.0f,
+        600.0f,
+        620.0f,
+        640.0f,
+        660.0f,
+        680.0f
+    }};
+
+    for (float wavelength :
+         wavelengths) {
+
+        spectrum[py::str(
+            std::to_string(
+                static_cast<int>(
+                    wavelength)))] =
+            factor.sample(
+                wavelength,
+                0.0f);
+    }
+
+    py::dict probe;
+
+    probe["x"] =
+        x;
+
+    probe["y"] =
+        y;
+
+    probe["width"] =
+        spec.width;
+
+    probe["height"] =
+        spec.height;
+
+    probe["encoded_rgb"] =
+        py::make_tuple(
+            encoded[0],
+            encoded[1],
+            encoded[2]);
+
+    probe["ap0_input"] =
+        py::make_tuple(
+            ap0[0],
+            ap0[1],
+            ap0[2]);
+
+    probe["spectrum"] =
+        spectrum;
+
+    probe["negative_exposure"] =
+        py::make_tuple(
+            result.negative_exposure.red,
+            result.negative_exposure.green,
+            result.negative_exposure.blue);
+
+    probe["negative_status_m"] =
+        py::make_tuple(
+            result.negative_status_m_density.red,
+            result.negative_status_m_density.green,
+            result.negative_status_m_density.blue);
+
+    probe["negative_calibrated"] =
+        py::make_tuple(
+            result.calibrated_negative_density.red,
+            result.calibrated_negative_density.green,
+            result.calibrated_negative_density.blue);
+
+    probe["print_exposure"] =
+        py::make_tuple(
+            result.print_exposure.red,
+            result.print_exposure.green,
+            result.print_exposure.blue);
+
+    probe["print_density"] =
+        py::make_tuple(
+            result.print_density.red,
+            result.print_density.green,
+            result.print_density.blue);
+
+    probe["output_ap0"] =
+        py::make_tuple(
+            result.ap0[0],
+            result.ap0[1],
+            result.ap0[2]);
+
+    probe["output_rec709_gamma24"] =
+        py::make_tuple(
+            result.rec709_gamma24[0],
+            result.rec709_gamma24[1],
+            result.rec709_gamma24[2]);
+
+    return probe;
+}
+
 } // namespace
 
 PYBIND11_MODULE(filmviz_python, module)
@@ -587,6 +867,8 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("print") = "kodak-2383",
         py::arg("output") = "ap0-linear",
         py::arg("lut_size") = 33,
+        py::arg("spectral_reconstruction") = "rgb2spec",
+        py::arg("sampled_smoothness") = 1e-4,
         py::arg("exposure") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
@@ -612,6 +894,8 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("output") = "rec709-gamma24",
         py::arg("lut_size") = 33,
         py::arg("use_lut_acceleration") = true,
+        py::arg("spectral_reconstruction") = "rgb2spec",
+        py::arg("sampled_smoothness") = 1e-4,
         py::arg("exposure") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
@@ -632,6 +916,29 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("threads") = 0,
         py::arg("progress") = py::none(),
         py::arg("cancel") = py::none());
+    module.def(
+        "probe_image_pixel",
+        &probe_image_pixel,
+        py::arg("resources") = "resources",
+        py::arg("input_filename") = "",
+        py::arg("input") = "awg3-logc3-ei800",
+        py::arg("negative") = "verita-200d",
+        py::arg("print") = "kodak-2383",
+        py::arg("spectral_reconstruction") = "rgb2spec",
+        py::arg("sampled_smoothness") = 1e-4,
+        py::arg("exposure") = 0.0f,
+        py::arg("push_pull") = 0.0f,
+        py::arg("negative_bleach_bypass") = 0.0f,
+        py::arg("print_bleach_bypass") = 0.0f,
+        py::arg("printer_light_red") = 25.0f,
+        py::arg("printer_light_green") = 25.0f,
+        py::arg("printer_light_blue") = 25.0f,
+        py::arg("middle_gray") = 0.18f,
+        py::arg("printer_temperature") = 3200.0f,
+        py::arg("u") = 0.5,
+        py::arg("v") = 0.5,
+        "Probe one source-image pixel through every major FilmViz pipeline stage.");
+
     module.def(
         "read_image_preview",
         &read_image_preview,

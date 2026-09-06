@@ -62,6 +62,7 @@ set(FILMVIZ_CORE_SOURCES
     printfilmprocessor.cpp
     printfilmstock.cpp
     printviewer.cpp
+    sampledspectralreconstructor.cpp
     spectralcolorimetry.cpp
     spectralilluminant.cpp
     spectralreconstructor.cpp
@@ -407,6 +408,7 @@ install(
         printfilmprocessor.h
         printfilmstock.h
         printviewer.h
+        sampledspectralreconstructor.h
         spectralilluminant.h
         spectralreconstructor.h
         statusmdensitometer.h

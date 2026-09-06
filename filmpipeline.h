@@ -20,6 +20,7 @@ class PrintFilmStock;
 class PrintViewer;
 class SpectralIlluminant;
 class SpectralReconstructor;
+class SampledSpectralReconstructor;
 
 // Production end-to-end spectral film pipeline derived from validated production.
 //
@@ -33,11 +34,25 @@ class SpectralReconstructor;
 class FilmPipeline
 {
 public:
+    enum class SpectralReconstruction
+    {
+        Rgb2Spec,
+        FilmVizSampled
+    };
+
     struct Settings
     {
         std::string resources_directory = "resources";
         std::string negative_profile = "verita-200d";
         std::string print_profile = "kodak-2383";
+
+        SpectralReconstruction spectral_reconstruction =
+            SpectralReconstruction::Rgb2Spec;
+
+        // Experimental sampled-spectrum reconstruction control. Ignored by
+        // the rgb2spec path.
+        double sampled_reconstruction_smoothness = 1e-4;
+        int sampled_reconstruction_iterations = 512;
 
         float middle_gray = 0.18f;
         float negative_zero_stop_log_exposure = -0.515f;
@@ -79,6 +94,9 @@ public:
 
     struct Result
     {
+        FilmExposure negative_exposure;
+        FilmExposure print_exposure;
+
         FilmDensity negative_status_m_density;
         FilmDensity calibrated_negative_density;
         FilmDensity print_density;
@@ -120,6 +138,13 @@ public:
         const std::array<float, 3>& ap0_linear,
         FilmExposure& exposure) const;
 
+    // Diagnostic access to the reconstructed scene factor used immediately
+    // before D60 illumination. This follows the currently selected spectral
+    // reconstruction mode and does not alter the production processing path.
+    bool scene_factor(
+        const std::array<float, 3>& ap0_linear,
+        SampledCurve& factor) const;
+
     Result process_negative_exposure(
         const FilmExposure& negative_exposure) const;
 
@@ -138,6 +163,9 @@ private:
     static SampledCurve transmittance_from_density(
         const SampledCurve& density);
 
+    SampledCurve reconstruct_scene_factor(
+        const std::array<float, 3>& ap0_linear) const;
+
     FilmLogExposure relative_negative_log_exposure(
         const FilmExposure& exposure) const;
 
@@ -152,6 +180,7 @@ private:
     bool valid_ = false;
 
     std::unique_ptr<SpectralReconstructor> reconstructor_;
+    std::unique_ptr<SampledSpectralReconstructor> sampled_reconstructor_;
     std::unique_ptr<SpectralIlluminant> scene_illuminant_;
     std::unique_ptr<FilmStock> negative_stock_;
     std::unique_ptr<GranularityModel> granularity_model_;

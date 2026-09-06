@@ -144,6 +144,7 @@ try:
         QMessageBox,
         QProgressBar,
         QPushButton,
+        QPlainTextEdit,
         QSizePolicy,
         QSpinBox,
         QSplitter,
@@ -549,10 +550,13 @@ class CurvePlotWidget(QWidget):
 
 
 class ImagePreviewWidget(QWidget):
+    probeRequested = Signal(float, float)
+
     def __init__(self):
         super().__init__()
         self._image = QImage()
         self._message = "Convert an image to preview the result"
+        self._probe = None
         self.setMinimumSize(520, 320)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -573,7 +577,40 @@ class ImagePreviewWidget(QWidget):
     def set_error(self, message: str):
         self._image = QImage()
         self._message = message
+        self._probe = None
         self.update()
+
+    def _image_rect(self):
+        if self._image.isNull():
+            return QRectF()
+
+        size = self._image.size()
+        scale = min(
+            self.width() / max(1, size.width()),
+            self.height() / max(1, size.height()))
+        width = size.width() * scale
+        height = size.height() * scale
+        return QRectF(
+            (self.width() - width) * 0.5,
+            (self.height() - height) * 0.5,
+            width,
+            height)
+
+    def mousePressEvent(self, event):
+        if self._image.isNull():
+            return
+
+        rect = self._image_rect()
+        point = event.position()
+
+        if not rect.contains(point):
+            return
+
+        u = (point.x() - rect.left()) / max(1.0, rect.width())
+        v = (point.y() - rect.top()) / max(1.0, rect.height())
+        self._probe = (u, v)
+        self.update()
+        self.probeRequested.emit(float(u), float(v))
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -588,51 +625,45 @@ class ImagePreviewWidget(QWidget):
             return
 
         pixmap = QPixmap.fromImage(self._image)
-        scaled = pixmap.scaled(
-            self.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
-        x = (self.width() - scaled.width()) // 2
-        y = (self.height() - scaled.height()) // 2
-        painter.drawPixmap(x, y, scaled)
+        rect = self._image_rect()
+        painter.drawPixmap(
+            rect.toRect(),
+            pixmap)
+
+        if self._probe is not None:
+            u, v = self._probe
+            x = rect.left() + u * rect.width()
+            y = rect.top() + v * rect.height()
+
+            painter.setPen(QPen(QColor(245, 210, 70), 1.0))
+            painter.drawEllipse(QPointF(x, y), 6.0, 6.0)
+            painter.drawLine(QPointF(x - 10, y), QPointF(x + 10, y))
+            painter.drawLine(QPointF(x, y - 10), QPointF(x, y + 10))
 
 
 class VectorScopeWidget(QWidget):
-    # ITU-R BT.709 non-constant-luminance Y'CbCr coefficients.
-    # Cb/Cr are normalized to approximately [-0.5, +0.5].
-    KR = 0.2126
-    KB = 0.0722
-    KG = 1.0 - KR - KB
-
     def __init__(self):
         super().__init__()
         self._samples = []
         self._zoom2 = False
-        self.setMinimumSize(260, 220)
+        self.setMinimumSize(300, 250)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
 
-    @classmethod
-    def _rgb_to_cbcr(cls, r: float, g: float, b: float):
-        y = (
-            cls.KR * r
-            + cls.KG * g
-            + cls.KB * b)
-
-        cb = (
-            (b - y)
-            / (2.0 * (1.0 - cls.KB)))
-
-        cr = (
-            (r - y)
-            / (2.0 * (1.0 - cls.KR)))
-
-        return cb, cr
+    @staticmethod
+    def _ycbcr(r, g, b):
+        # Full-range BT.709 Y'CbCr. The preview pixels are already encoded
+        # Rec.709/Gamma 2.4, so scopes intentionally operate on display-domain
+        # R'G'B' just like a conventional video vectorscope.
+        y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        cb = (b - y) / 1.8556
+        cr = (r - y) / 1.5748
+        return y, cb, cr
 
     def set_rgb(self, width: int, height: int, rgb: bytes):
         pixel_count = width * height
-        stride = max(1, pixel_count // 40000)
+        stride = max(1, pixel_count // 70000)
         samples = []
 
         for pixel in range(0, pixel_count, stride):
@@ -641,13 +672,8 @@ class VectorScopeWidget(QWidget):
             g = rgb[offset + 1] / 255.0
             b = rgb[offset + 2] / 255.0
 
-            cb, cr = self._rgb_to_cbcr(
-                r,
-                g,
-                b)
-
-            samples.append(
-                (cb, cr, r, g, b))
+            _, cb, cr = self._ycbcr(r, g, b)
+            samples.append((cb, cr, r, g, b))
 
         self._samples = samples
         self.update()
@@ -656,191 +682,158 @@ class VectorScopeWidget(QWidget):
         self._zoom2 = bool(enabled)
         self.update()
 
+    def _scope_point(self, center, radius, cb, cr, zoom=1.0):
+        # A full-range BT.709 primary reaches approximately +/-0.5 chroma.
+        # Scale 0.5 to the outer reference circle.
+        scale = 2.0 * zoom
+        return QPointF(
+            center.x() + cb * radius * scale,
+            center.y() - cr * radius * scale)
+
+    def _target(self, rgb):
+        r, g, b = rgb
+        _, cb, cr = self._ycbcr(r, g, b)
+        return cb, cr
+
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(
-            QPainter.RenderHint.Antialiasing,
-            True)
-        painter.fillRect(
-            self.rect(),
-            QColor("#080a0c"))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.fillRect(self.rect(), QColor("#050607"))
 
-        margin = 22.0
-        side = max(
-            1.0,
-            min(
-                self.width(),
-                self.height())
-            - 2.0 * margin)
-
-        left = (
-            self.width() - side) * 0.5
-        top = (
-            self.height() - side) * 0.5
-
-        center = QPointF(
-            left + side * 0.5,
-            top + side * 0.5)
-
+        margin = 24.0
+        side = max(1.0, min(self.width(), self.height()) - 2.0 * margin)
+        left = (self.width() - side) * 0.5
+        top = (self.height() - side) * 0.5
+        center = QPointF(left + side * 0.5, top + side * 0.5)
         radius = side * 0.47
 
-        # Scale normalized BT.709 chroma so a fully saturated primary is close
-        # to the outer graticule, matching a conventional vectorscope layout.
-        chroma_scale = 1.80
+        gold = QColor(145, 116, 10)
+        gold_text = QColor(185, 154, 36)
+        grid = QColor(80, 86, 88, 150)
 
-        grid = QColor(
-            92,
-            96,
-            100,
-            150)
+        # Outer circle / axes.
+        painter.setPen(QPen(gold, 1.15))
+        painter.drawEllipse(center, radius, radius)
 
-        painter.setPen(
-            QPen(
-                grid,
-                1.0))
+        painter.setPen(QPen(grid, 1.0))
+        painter.drawLine(
+            QPointF(center.x() - radius, center.y()),
+            QPointF(center.x() + radius, center.y()))
+        painter.drawLine(
+            QPointF(center.x(), center.y() - radius),
+            QPointF(center.x(), center.y() + radius))
 
-        painter.drawEllipse(
+        # Resolve-like radial tick ring: long every 30 deg, medium every 10,
+        # short every 5.
+        import math
+        for degrees in range(0, 360, 5):
+            angle = math.radians(degrees)
+            if degrees % 30 == 0:
+                length = radius * 0.080
+                width = 1.3
+            elif degrees % 10 == 0:
+                length = radius * 0.050
+                width = 1.0
+            else:
+                length = radius * 0.028
+                width = 0.8
+
+            x0 = center.x() + math.cos(angle) * radius
+            y0 = center.y() + math.sin(angle) * radius
+            x1 = center.x() + math.cos(angle) * (radius - length)
+            y1 = center.y() + math.sin(angle) * (radius - length)
+            painter.setPen(QPen(gold, width))
+            painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+
+        # Skin-tone indicator. Conventional flesh line is approximately
+        # 123 degrees in the Cb/Cr chroma plane (between Y and R).
+        skin_angle = math.radians(123.0)
+        skin_cb = math.cos(skin_angle) * 0.5
+        skin_cr = math.sin(skin_angle) * 0.5
+        skin_end = self._scope_point(
             center,
             radius,
-            radius)
+            skin_cb,
+            skin_cr,
+            1.0)
+        skin_pen = QPen(QColor(125, 125, 125, 170), 1.3)
+        painter.setPen(skin_pen)
+        painter.drawLine(center, skin_end)
 
-        painter.drawLine(
-            QPointF(
-                center.x() - radius,
-                center.y()),
-            QPointF(
-                center.x() + radius,
-                center.y()))
-
-        painter.drawLine(
-            QPointF(
-                center.x(),
-                center.y() - radius),
-            QPointF(
-                center.x(),
-                center.y() + radius))
-
-        def map_vector(cb, cr, scale=1.0):
-            return QPointF(
-                center.x()
-                + cb
-                * radius
-                * chroma_scale
-                * scale,
-                center.y()
-                - cr
-                * radius
-                * chroma_scale
-                * scale)
-
-        # Real BT.709 primary/secondary locations. The target boxes use 75%
-        # bars, which is the conventional vectorscope reference level.
+        # SMPTE/BT.709 75% color-bar target locations. This is the important
+        # part that was lost in the simplified scope: boxes and labels are now
+        # derived from the same Y'CbCr transform as the samples.
         targets = (
-            ("R", 1.0, 0.0, 0.0),
-            ("M", 1.0, 0.0, 1.0),
-            ("B", 0.0, 0.0, 1.0),
-            ("C", 0.0, 1.0, 1.0),
-            ("G", 0.0, 1.0, 0.0),
-            ("Y", 1.0, 1.0, 0.0),
+            ("R", (0.75, 0.00, 0.00)),
+            ("M", (0.75, 0.00, 0.75)),
+            ("B", (0.00, 0.00, 0.75)),
+            ("C", (0.00, 0.75, 0.75)),
+            ("G", (0.00, 0.75, 0.00)),
+            ("Y", (0.75, 0.75, 0.00)),
         )
 
-        target_color = QColor(
-            185,
-            164,
-            72,
-            220)
-
-        painter.setPen(
-            QPen(
-                target_color,
-                1.0))
-
-        for label, r, g, b in targets:
-            cb, cr = self._rgb_to_cbcr(
-                r,
-                g,
-                b)
-
-            target = map_vector(
-                cb,
-                cr,
-                0.75)
-
-            full = map_vector(
+        painter.setPen(QPen(gold_text, 1.2))
+        for label, rgb_value in targets:
+            cb, cr = self._target(rgb_value)
+            point = self._scope_point(
+                center,
+                radius,
                 cb,
                 cr,
                 1.0)
 
-            box_size = max(
-                7.0,
-                side * 0.035)
-
+            box_size = max(10.0, radius * 0.075)
             painter.drawRect(
                 QRectF(
-                    target.x() - box_size * 0.5,
-                    target.y() - box_size * 0.5,
+                    point.x() - box_size * 0.5,
+                    point.y() - box_size * 0.5,
                     box_size,
                     box_size))
 
-            dx = full.x() - center.x()
-            dy = full.y() - center.y()
-            length = max(
-                1e-6,
-                (dx * dx + dy * dy) ** 0.5)
-
-            label_x = (
-                full.x()
-                + dx / length * 8.0)
-
-            label_y = (
-                full.y()
-                + dy / length * 8.0)
-
+            # Put labels radially just outside the target boxes.
+            dx = point.x() - center.x()
+            dy = point.y() - center.y()
+            distance = max(1.0, math.hypot(dx, dy))
+            lx = point.x() + dx / distance * 18.0
+            ly = point.y() + dy / distance * 18.0
             painter.drawText(
-                QRectF(
-                    label_x - 12,
-                    label_y - 10,
-                    24,
-                    20),
+                QRectF(lx - 12, ly - 10, 24, 20),
                 Qt.AlignmentFlag.AlignCenter,
                 label)
+
+        # Bright center reference.
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(230, 230, 230, 220))
+        painter.drawEllipse(center, 2.0, 2.0)
 
         if not self._samples:
             return
 
-        zoom = (
-            2.0
-            if self._zoom2
-            else 1.0)
+        zoom = 2.0 if self._zoom2 else 1.0
 
-        painter.setPen(
-            Qt.PenStyle.NoPen)
-
+        # Use small translucent points with a second faint halo pass. Dense
+        # areas naturally build up into the soft luminous traces seen in
+        # Resolve without smearing the actual chroma positions.
+        painter.setPen(Qt.PenStyle.NoPen)
         for cb, cr, r, g, b in self._samples:
-            point = map_vector(
+            point = self._scope_point(
+                center,
+                radius,
                 cb,
                 cr,
                 zoom)
 
-            if (
-                (point.x() - center.x()) ** 2
-                + (point.y() - center.y()) ** 2
-                > radius ** 2
-            ):
+            if ((point.x() - center.x()) ** 2
+                    + (point.y() - center.y()) ** 2) > radius ** 2:
                 continue
 
-            color = QColor.fromRgbF(
-                r,
-                g,
-                b,
-                0.075)
-
+            color = QColor.fromRgbF(r, g, b, 0.055)
             painter.setBrush(color)
+            painter.drawEllipse(point, 1.5, 1.5)
 
-            painter.drawEllipse(
-                point,
-                1.15,
-                1.15)
+            halo = QColor.fromRgbF(r, g, b, 0.018)
+            painter.setBrush(halo)
+            painter.drawEllipse(point, 2.8, 2.8)
 
 
 class HistogramWidget(QWidget):
@@ -948,17 +941,52 @@ class ParadeWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         painter.fillRect(self.rect(), QColor("#0b0d0f"))
 
-        margin = 12
+        left_margin = 42
+        right_margin = 12
+        top_margin = 12
         label_height = 18
+        bottom_margin = 12 + label_height
         gap = 8
-        plot = self.rect().adjusted(
-            margin,
-            margin,
-            -margin,
-            -(margin + label_height))
 
-        painter.setPen(QPen(QColor(70, 70, 70), 1.0))
+        plot = self.rect().adjusted(
+            left_margin,
+            top_margin,
+            -right_margin,
+            -bottom_margin)
+
+        grid_color = QColor(75, 75, 75)
+        minor_grid_color = QColor(42, 42, 42)
+        label_color = QColor(185, 154, 36)
+
+        painter.setPen(QPen(grid_color, 1.0))
         painter.drawRect(plot)
+
+        for percent in range(0, 101, 10):
+            y = (
+                plot.bottom()
+                - (percent / 100.0)
+                * plot.height())
+
+            painter.setPen(
+                QPen(
+                    grid_color if percent % 20 == 0
+                    else minor_grid_color,
+                    1.0))
+
+            painter.drawLine(
+                QPointF(plot.left(), y),
+                QPointF(plot.right(), y))
+
+            painter.setPen(label_color)
+            painter.drawText(
+                QRectF(
+                    2,
+                    y - 8,
+                    left_margin - 7,
+                    16),
+                Qt.AlignmentFlag.AlignRight
+                | Qt.AlignmentFlag.AlignVCenter,
+                str(percent))
 
         third = (plot.width() - 2 * gap) / 3.0
         channel_rects = [
@@ -1050,10 +1078,7 @@ class WaveformWidget(QWidget):
             QSizePolicy.Policy.Expanding)
 
     def set_rgb(self, width: int, height: int, rgb: bytes):
-        # Preserve source horizontal position and quantize only for the scope
-        # raster. Values are encoded Rec.709/Gamma 2.4 code values, just like
-        # the displayed output rather than linear-light RGB.
-        columns = 512
+        columns = 384
         bins = 256
 
         waveform = [
@@ -1062,24 +1087,13 @@ class WaveformWidget(QWidget):
         ]
 
         pixel_count = width * height
-        stride = max(
-            1,
-            pixel_count // 280000)
+        stride = max(1, pixel_count // 220000)
 
-        for pixel in range(
-                0,
-                pixel_count,
-                stride):
-
+        for pixel in range(0, pixel_count, stride):
             x = pixel % width
-
             column = min(
                 columns - 1,
-                int(
-                    x
-                    * columns
-                    / max(1, width)))
-
+                int(x * columns / max(1, width)))
             offset = pixel * 3
 
             waveform[0][column][rgb[offset]] += 1
@@ -1091,18 +1105,14 @@ class WaveformWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(
-            QPainter.RenderHint.Antialiasing,
-            False)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.fillRect(self.rect(), QColor("#0b0d0f"))
 
-        painter.fillRect(
-            self.rect(),
-            QColor("#060708"))
-
-        left_margin = 34
-        right_margin = 10
-        top_margin = 10
-        bottom_margin = 22
+        left_margin = 42
+        right_margin = 12
+        top_margin = 12
+        label_height = 18
+        bottom_margin = 12 + label_height
 
         plot = self.rect().adjusted(
             left_margin,
@@ -1110,166 +1120,103 @@ class WaveformWidget(QWidget):
             -right_margin,
             -bottom_margin)
 
-        frame_color = QColor(
-            84,
-            88,
-            92,
-            180)
+        grid_color = QColor(75, 75, 75)
+        minor_grid_color = QColor(42, 42, 42)
+        label_color = QColor(185, 154, 36)
 
-        grid_color = QColor(
-            78,
-            67,
-            20,
-            145)
-
-        label_color = QColor(
-            183,
-            158,
-            49)
-
-        painter.setPen(
-            QPen(
-                frame_color,
-                1.0))
-
+        painter.setPen(QPen(grid_color, 1.0))
         painter.drawRect(plot)
 
-        # Resolve-like 0-100 scale.
-        for ire in range(0, 101, 10):
+        # Restore the video-style 0..100 percentage scale. Pixel value 0 is
+        # the bottom of the plot and 255 is the top.
+        for percent in range(0, 101, 10):
             y = (
                 plot.bottom()
-                - (ire / 100.0)
+                - (percent / 100.0)
                 * plot.height())
 
             painter.setPen(
                 QPen(
-                    grid_color,
+                    grid_color if percent % 20 == 0
+                    else minor_grid_color,
                     1.0))
 
             painter.drawLine(
-                QPointF(
-                    plot.left(),
-                    y),
-                QPointF(
-                    plot.right(),
-                    y))
+                QPointF(plot.left(), y),
+                QPointF(plot.right(), y))
 
-            painter.setPen(
-                label_color)
-
+            painter.setPen(label_color)
             painter.drawText(
                 QRectF(
-                    0,
+                    2,
                     y - 8,
-                    left_margin - 5,
+                    left_margin - 7,
                     16),
                 Qt.AlignmentFlag.AlignRight
                 | Qt.AlignmentFlag.AlignVCenter,
-                str(ire))
+                str(percent))
 
         if not self._waveform:
-            painter.setPen(
-                self.palette().color(
-                    self.foregroundRole()))
-
+            painter.setPen(self.palette().color(self.foregroundRole()))
             painter.drawText(
                 plot,
                 Qt.AlignmentFlag.AlignCenter,
                 "RGB waveform")
-
             return
 
         colors = (
-            QColor("#ff5757"),
-            QColor("#54d476"),
-            QColor("#5f8dff"),
+            QColor("#ef5555"),
+            QColor("#55c477"),
+            QColor("#5b8def"),
         )
 
         maxima = [
-            max(
-                max(column)
-                for column in channel)
+            max(max(column) for column in channel)
             for channel in self._waveform
         ]
-
         maximum = max(maxima)
 
         if maximum <= 0:
             return
 
-        # Log-density rendering gives sparse edges and dense traces a similar
-        # appearance to a grading scope without turning every populated cell
-        # into an opaque vertical bar.
-        import math
+        painter.setPen(Qt.PenStyle.NoPen)
 
-        log_maximum = math.log1p(
-            maximum)
-
-        painter.setPen(
-            Qt.PenStyle.NoPen)
-
-        for channel, data in enumerate(
-                self._waveform):
-
-            for x_index, column in enumerate(
-                    data):
-
+        for channel, data in enumerate(self._waveform):
+            for x_index, column in enumerate(data):
                 px = (
                     plot.left()
-                    + x_index
-                    / max(
-                        1,
-                        len(data) - 1)
+                    + x_index / max(1, len(data) - 1)
                     * plot.width())
 
-                for value, count in enumerate(
-                        column):
-
+                for value, count in enumerate(column):
                     if count <= 0:
                         continue
 
-                    density = (
-                        math.log1p(count)
-                        / log_maximum)
-
                     alpha = min(
-                        0.62,
-                        0.025
-                        + 0.595
-                        * density)
+                        0.72,
+                        0.06
+                        + 0.66
+                        * ((count / maximum) ** 0.32))
 
-                    color = QColor(
-                        colors[channel])
-
-                    color.setAlphaF(
-                        alpha)
-
-                    painter.setBrush(
-                        color)
+                    color = QColor(colors[channel])
+                    color.setAlphaF(alpha)
+                    painter.setBrush(color)
 
                     py = (
                         plot.bottom()
-                        - value
-                        / 255.0
+                        - value / 255.0
                         * plot.height())
 
                     painter.drawRect(
-                        QRectF(
-                            px,
-                            py,
-                            1.0,
-                            1.0))
+                        QRectF(px, py, 1.2, 1.2))
 
-        painter.setPen(
-            self.palette().color(
-                self.foregroundRole()))
-
+        painter.setPen(self.palette().color(self.foregroundRole()))
         painter.drawText(
             QRectF(
                 plot.left(),
                 plot.bottom() + 2,
                 plot.width(),
-                18),
+                label_height),
             Qt.AlignmentFlag.AlignCenter,
             "RGB waveform")
 
@@ -1378,7 +1325,17 @@ class FilmVizWindow(QMainWindow):
         diagnostics_layout.setContentsMargins(0, 0, 0, 0)
 
         self.image_preview = ImagePreviewWidget()
+        self.image_preview.probeRequested.connect(
+            self._probe_image_pixel)
         diagnostics_layout.addWidget(self.image_preview, 3)
+
+        self.probe_output = QPlainTextEdit()
+        self.probe_output.setReadOnly(True)
+        self.probe_output.setMaximumHeight(145)
+        self.probe_output.setPlaceholderText(
+            "Click the converted image to inspect the matching source pixel "
+            "through AP0 → spectrum → negative → print → output.")
+        diagnostics_layout.addWidget(self.probe_output, 0)
 
         scopes = QSplitter(Qt.Orientation.Horizontal)
         self.left_scope = ScopePane("Vectorscope")
@@ -1435,6 +1392,29 @@ class FilmVizWindow(QMainWindow):
         self.output_profile.addItems(profiles["output"])
         self.output_profile.setCurrentText("rec709-gamma24")
         common_form.addRow("Output profile", self.output_profile)
+
+        self.spectral_reconstruction = QComboBox()
+        self.spectral_reconstruction.addItem(
+            "rgb2spec (reference/original)",
+            "rgb2spec")
+        self.spectral_reconstruction.addItem(
+            "FilmViz sampled (experimental)",
+            "filmviz-sampled")
+        common_form.addRow(
+            "Spectral reconstruction",
+            self.spectral_reconstruction)
+
+        self.sampled_smoothness = _double(
+            0.0001,
+            0.0,
+            0.01,
+            0.00001,
+            6)
+        self.sampled_smoothness.setToolTip(
+            "Experimental FilmViz sampled-spectrum curvature regularization.")
+        common_form.addRow(
+            "Sampled smoothness",
+            self.sampled_smoothness)
 
         self.exposure = _double(0.0, -10.0, 10.0, 0.25)
         self.push_pull = _double(0.0, -5.0, 5.0, 0.25)
@@ -1648,6 +1628,75 @@ class FilmVizWindow(QMainWindow):
         self.right_scope.set_rgb(width, height, rgb)
 
 
+    @Slot(float, float)
+    def _probe_image_pixel(self, u: float, v: float):
+        try:
+            arguments = self._common()
+            probe = filmviz.probe_image_pixel(
+                resources=arguments["resources"],
+                input_filename=self.input_image.value(),
+                input=arguments["input"],
+                negative=arguments["negative"],
+                print=arguments["print"],
+                spectral_reconstruction=
+                    arguments["spectral_reconstruction"],
+                sampled_smoothness=
+                    arguments["sampled_smoothness"],
+                exposure=arguments["exposure"],
+                push_pull=arguments["push_pull"],
+                negative_bleach_bypass=
+                    arguments["negative_bleach_bypass"],
+                print_bleach_bypass=
+                    arguments["print_bleach_bypass"],
+                printer_light_red=
+                    arguments["printer_light_red"],
+                printer_light_green=
+                    arguments["printer_light_green"],
+                printer_light_blue=
+                    arguments["printer_light_blue"],
+                middle_gray=arguments["middle_gray"],
+                printer_temperature=
+                    arguments["printer_temperature"],
+                u=u,
+                v=v,
+            )
+        except Exception as error:
+            self.probe_output.setPlainText(
+                f"Probe failed:\n{error}")
+            return
+
+        def triplet(name):
+            values = probe[name]
+            return (
+                f"({float(values[0]):.6g}, "
+                f"{float(values[1]):.6g}, "
+                f"{float(values[2]):.6g})"
+            )
+
+        spectrum = probe["spectrum"]
+        spectral_text = " ".join(
+            f"{w}:{float(spectrum[w]):.4g}"
+            for w in (
+                "400", "420", "440", "460", "500", "550",
+                "600", "620", "640", "660", "680"
+            )
+        )
+
+        self.probe_output.setPlainText(
+            f"pixel ({probe['x']}, {probe['y']}) / "
+            f"{probe['width']}×{probe['height']}\n"
+            f"encoded RGB       {triplet('encoded_rgb')}\n"
+            f"input AP0         {triplet('ap0_input')}\n"
+            f"spectrum          {spectral_text}\n"
+            f"negative H R/G/B  {triplet('negative_exposure')}\n"
+            f"Status-M D R/G/B  {triplet('negative_status_m')}\n"
+            f"calibrated D      {triplet('negative_calibrated')}\n"
+            f"print H R/G/B     {triplet('print_exposure')}\n"
+            f"print D R/G/B     {triplet('print_density')}\n"
+            f"output AP0        {triplet('output_ap0')}\n"
+            f"output Rec709     {triplet('output_rec709_gamma24')}"
+        )
+
     @Slot()
     def _profile_family_changed(self):
         current_label = self.profile_curve_type.currentText()
@@ -1717,7 +1766,30 @@ class FilmVizWindow(QMainWindow):
         y_columns = None
         stop_axis = None
 
-        if filename.endswith("_sensitometric_curves.csv"):
+        if filename.endswith("_spectral_dye_density_curves.csv"):
+            x_column = "wavelength_nm"
+
+            if self.profile_family.currentIndex() in (0, 1):
+                # Camera-negative dye CSVs also contain scalar metadata such
+                # as source_spacing_nm and working_spacing_nm. Those are file
+                # metadata, not wavelength-varying curves; plotting them
+                # produces the bogus horizontal lines at 10 and 5.
+                y_columns = (
+                    "minimum_density",
+                    "midscale_neutral_density",
+                    "cyan_peak_normalized",
+                    "magenta_peak_normalized",
+                    "yellow_peak_normalized",
+                )
+            else:
+                y_columns = (
+                    "visual_neutral_density",
+                    "cyan_density",
+                    "magenta_density",
+                    "yellow_density",
+                )
+
+        elif filename.endswith("_sensitometric_curves.csv"):
             if self.profile_family.currentIndex() in (0, 1):
                 x_column = "log_exposure_lux_seconds"
                 y_columns = (
@@ -1768,6 +1840,8 @@ class FilmVizWindow(QMainWindow):
             output=self.output_profile.currentText(),
             lut_size=self.lut_size.value(),
             use_lut_acceleration=self.use_lut_acceleration.isChecked(),
+            spectral_reconstruction=self.spectral_reconstruction.currentData(),
+            sampled_smoothness=self.sampled_smoothness.value(),
             exposure=self.exposure.value(),
             push_pull=self.push_pull.value(),
             negative_bleach_bypass=self.negative_bleach_bypass.value(),
