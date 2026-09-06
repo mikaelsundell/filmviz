@@ -16,8 +16,11 @@ constexpr char kMagic[8] = {'F','V','O','F','X','C','H','E'};
 // Increment whenever a core pipeline change alters cached transform values,
 // even if the binary payload layout itself is unchanged. Version 4 adopts the
 // exposure-separated rgb2spec reconstruction used by FilmPipeline. Version 5
-// adds negative/print flashing and linked master printer timing.
-constexpr std::uint32_t kVersion = 5u;
+// adds negative/print flashing and linked master printer timing. Version 6
+// added the initial negative-density colour-response transform. Version 7
+// adopted its calmer chroma-compression and density-depth response. Version 8
+// makes the accepted response the zero-centred standard trim.
+constexpr std::uint32_t kVersion = 8u;
 constexpr std::uint32_t kHasNegativeExposure = 1u << 0u;
 
 void
@@ -91,6 +94,7 @@ FilmVizOfxTransformKey::operator==(
         && output_profile == other.output_profile
         && lut_size == other.lut_size
         && push_pull_stops == other.push_pull_stops
+        && color_density == other.color_density
         && negative_flash_percent == other.negative_flash_percent
         && print_flash_percent == other.print_flash_percent
         && middle_gray == other.middle_gray
@@ -115,6 +119,7 @@ filmviz_ofx_transform_hash(
     hash_value(hash, key.output_profile);
     hash_value(hash, key.lut_size);
     hash_value(hash, key.push_pull_stops);
+    hash_value(hash, key.color_density);
     hash_value(hash, key.negative_flash_percent);
     hash_value(hash, key.print_flash_percent);
     hash_value(hash, key.middle_gray);

@@ -90,6 +90,7 @@ run_pipeline_set(
         record_exposure(stamp, prefix + ".negative_exposure", result.negative_exposure);
         record_density(stamp, prefix + ".negative_status_m", result.negative_status_m_density);
         record_density(stamp, prefix + ".calibrated_negative", result.calibrated_negative_density);
+        record_density(stamp, prefix + ".color_response_negative", result.color_response_negative_density);
         record_exposure(stamp, prefix + ".print_exposure", result.print_exposure);
         record_density(stamp, prefix + ".print_density", result.print_density);
         record_triplet(stamp, prefix + ".output_ap0", result.ap0);
@@ -262,12 +263,23 @@ main(
         return test::finish(false, "checked-in regression set: " + error);
     }
 
+    FilmPipeline::Settings calibrated_bypass = baseline;
+    calibrated_bypass.color_density = -4.0f;
+    if (!run_pipeline_set(
+            "calibrated_bypass",
+            calibrated_bypass,
+            actual,
+            error)) {
+        return test::finish(false, "checked-in regression set: " + error);
+    }
+
     FilmPipeline::Settings shaped = baseline;
     shaped.negative_profile = "kodak-50d";
     shaped.negative_flash_percent = 2.0f;
     shaped.print_flash_percent = 1.0f;
     shaped.printer_light_master = 0.5f;
     shaped.push_pull_stops = 0.35f;
+    shaped.color_density = 1.0f;
     if (!run_pipeline_set("shaped", shaped, actual, error)) {
         return test::finish(false, "checked-in regression set: " + error);
     }

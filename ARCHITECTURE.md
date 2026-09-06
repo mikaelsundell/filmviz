@@ -97,6 +97,23 @@ is a lower physical boundary. Interior targets normally close to numerical
 precision. Unreachable extreme chromatic LUT corners retain the nearest finite
 least-squares spectral state rather than failing LUT generation.
 
+### `FilmColorResponse`
+
+Applies an optional neutral-axis colour-shaping transform after Status-M
+calibration and before negative spectral-density synthesis. It normalizes the
+three calibrated dye coordinates by the stock's D-min-to-midscale increments,
+preserves exact neutrals, progressively compresses channel differences and
+reduces their common negative-density coordinate in proportion to chroma. The
+latter sends more exposure to the print stage so saturated colours become
+deeper instead of merely moving toward grey. This keeps the operation in the
+negative/print density model rather than adding an RGB saturation adjustment
+after the film pipeline.
+
+This is an explicitly empirical look control, not a reconstruction of measured
+interimage chemistry. The public trim is centred at zero on the accepted
+standard response, corresponding to the earlier experimental amount 1.5.
+Trim -4 is a strict calibrated bypass and +4 applies twice the standard amount.
+
 ### `PrintFilmProcessor`
 
 Exposes Kodak Vision 2383/3383 through the negative transmittance and evaluates
@@ -224,6 +241,13 @@ same using the neutral reference printer exposure before print development.
 The linked master printer timing adds the same printer-light point offset to all
 three records; one point remains 0.025 LogE. These are explicit look controls
 and default to zero, leaving the calibrated production baseline unchanged.
+
+Color Density shapes calibrated negative spectral-dye coordinates around their
+stock-relative neutral axis. Increasing it progressively calms chroma and adds
+chroma-weighted density depth through the print stage. It is separate from
+exposure, characteristic-curve contrast, printer timing and display saturation.
+Zero is the accepted standard response, -4 restores the calibrated bypass and
++4 applies twice the standard amount.
 
 ## Display output
 

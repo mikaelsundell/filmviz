@@ -123,6 +123,31 @@ magenta suppression based only on the visual expectation that film shoulders
 are usually warm. Any future hue-model change must be supported by stock data
 or a clearly separated creative-look layer.
 
+## Empirical colour-density response
+
+Reference comparisons show a useful distinction between moderate colour and
+extreme chroma: skin and ordinary object colours can benefit from slightly
+greater density separation, while highly saturated blue/cyan trajectories need
+a calmer outer response. The available measurements do not identify this as a
+specific interimage-effect mechanism and do not provide coefficients for such
+chemistry.
+
+FilmViz therefore exposes the experiment as `FilmColorResponse`, an optional
+creative layer after Status-M calibration and before negative spectral-density
+synthesis. It preserves exact stock neutrals and progressively compresses
+dye-coordinate differences as chroma grows. A chroma-weighted reduction of the
+common negative-density coordinate increases print exposure, adding viewed
+density so strong colours become deeper rather than simply greyer. The
+operation is hue-direction preserving in normalized dye-coordinate space; it
+is not a display-space saturation or hue correction.
+
+Reference review selected the earlier amount 1.5 as the standard creative
+response. The public control is therefore a signed -4..+4 trim: zero maps to
+that standard, -4 maps to the strict calibrated bypass, and +4 maps to twice
+the standard response. The regression set records both the standard baseline
+and explicit calibrated-bypass paths. This remains an empirical rendering
+decision rather than new measured stock calibration.
+
 ## Scene-exposure spectral reconstruction
 
 Bright saturated AP0 reds exposed a bounded-reflectance failure in the direct

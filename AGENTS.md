@@ -66,12 +66,16 @@ in image output and never baked into a `.cube`; push/pull is the documented
 `2^(0.2 * stops)` approximation until alternate-development curves exist.
 Grain chroma is a luminance-preserving rendering control, with `1` retaining
 the measured per-channel result and `0` producing neutral grain.
+Color Density is an empirical negative dye-coordinate look control, not a
+measured interimage-effect model. Its signed trim is centred at zero on the
+accepted standard response; -4 retains the strict calibrated bypass.
 
 ## Code ownership
 
 - `main.cpp`: CLI only. Do not put spectral algorithms here.
 - `filmpipeline.*`: orchestration/loading and end-to-end `process(AP0)`.
 - `filmdensitycalibration.*`: nonlinear measurement-coordinate solve.
+- `filmcolorresponse.*`: optional neutral-preserving density colour shaping.
 - `statusmdensitometer.*`: ISO Status-M measurement only.
 - `filmdyemodel.*`: spectral-density basis synthesis only.
 - `filmformat.*`: physical active-image-width presets only.

@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell.
 
 #include "filmpipeline.h"
+#include "filmcolorresponse.h"
 #include "filmformat.h"
 #include "imageprocessor.h"
 #include "inputtransform.h"
@@ -45,6 +46,7 @@ struct FilmVizTool
     float negative_flash = 0.0f;
     float print_flash = 0.0f;
     float push_pull_stops = 0.0f;
+    float color_density = 0.0f;
     float negative_bleach_bypass = 0.0f;
     float print_bleach_bypass = 0.0f;
     float printer_light_red = 25.0f;
@@ -311,6 +313,14 @@ validate_profile_options(
         return false;
     }
 
+    if (tool.color_density < FilmColorResponse::minimum_trim
+        || tool.color_density > FilmColorResponse::maximum_trim) {
+        print_error(
+            "color density must be in [-4,4]: ",
+            tool.color_density);
+        return false;
+    }
+
     if (tool.negative_flash < 0.0f
         || tool.negative_flash > 25.0f
         || tool.print_flash < 0.0f
@@ -481,6 +491,9 @@ main(
     ap.arg("--push-pull %f:STOPS", &tool.push_pull_stops)
       .help("Approximate negative-development push (+) or pull (-) (default: 0)");
 
+    ap.arg("--color-density %f:AMOUNT", &tool.color_density)
+      .help("Film colour-density trim; -4 bypass, 0 standard, +4 strongest");
+
     ap.arg("--negative-bleach-bypass %f:AMOUNT", &tool.negative_bleach_bypass)
       .help("Negative bleach bypass; 0 normal, 1 full modeled bypass (default: 0)");
 
@@ -617,6 +630,7 @@ main(
     print_info("LUT size: ", tool.lut_size);
     print_info("exposure stops: ", tool.exposure_stops);
     print_info("push/pull stops: ", tool.push_pull_stops);
+    print_info("color density trim: ", tool.color_density);
     print_info(
         "threads: ",
         FilmVizThreading::effective_thread_count(
@@ -662,6 +676,9 @@ main(
 
     pipeline_settings.push_pull_stops =
         tool.push_pull_stops;
+
+    pipeline_settings.color_density =
+        tool.color_density;
 
     pipeline_settings.negative_bleach_bypass =
         tool.negative_bleach_bypass;

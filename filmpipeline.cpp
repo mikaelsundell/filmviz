@@ -7,6 +7,7 @@
 #include "colorimetry.h"
 #include "colortransform.h"
 #include "filmdensitycalibration.h"
+#include "filmcolorresponse.h"
 #include "filmdyemodel.h"
 #include "filmprocessor.h"
 #include "filmstock.h"
@@ -75,6 +76,9 @@ FilmPipeline::initialize(
         || settings_.print_flash_percent < 0.0f
         || settings_.print_flash_percent > 25.0f
         || !std::isfinite(settings_.printer_light_master)
+        || !std::isfinite(settings_.color_density)
+        || settings_.color_density < FilmColorResponse::minimum_trim
+        || settings_.color_density > FilmColorResponse::maximum_trim
         || !valid_printer_light(
             settings_.printer_light_red
             + settings_.printer_light_master)
@@ -322,6 +326,23 @@ FilmPipeline::initialize(
         return false;
     }
 
+    if (!negative_density_calibration_->calibrate(
+            reference_negative_density_,
+            reference_calibrated_negative_density_)) {
+        error_ = "could not calibrate negative colour-response reference";
+        return false;
+    }
+
+    color_response_ =
+        std::make_unique<FilmColorResponse>(
+            negative_dye_model_->diagnostics().minimum_record_density,
+            reference_calibrated_negative_density_);
+
+    if (!color_response_->valid()) {
+        error_ = "could not initialize negative colour-response model";
+        return false;
+    }
+
     const SampledCurve printer_illuminant =
         PrintFilmProcessor::make_blackbody_illuminant(
             settings_.printer_temperature_kelvin,
@@ -542,9 +563,18 @@ FilmPipeline::process_negative_exposure(
         return result;
     }
 
+    FilmColorResponse::Settings color_settings;
+    color_settings.amount =
+        FilmColorResponse::amount_from_trim(
+            settings_.color_density);
+    result.color_response_negative_density =
+        color_response_->apply(
+            result.calibrated_negative_density,
+            color_settings);
+
     SampledCurve negative_density =
         negative_dye_model_->synthesize_density(
-            result.calibrated_negative_density);
+            result.color_response_negative_density);
 
     const BleachBypass::Result negative_bypass =
         BleachBypass::apply_negative(
@@ -600,14 +630,14 @@ FilmPipeline::process_negative_exposure(
 
         result.ap0 = {{
             density_signal(
-                result.calibrated_negative_density.red,
-                reference_negative_density_.red),
+                result.color_response_negative_density.red,
+                reference_calibrated_negative_density_.red),
             density_signal(
-                result.calibrated_negative_density.green,
-                reference_negative_density_.green),
+                result.color_response_negative_density.green,
+                reference_calibrated_negative_density_.green),
             density_signal(
-                result.calibrated_negative_density.blue,
-                reference_negative_density_.blue)
+                result.color_response_negative_density.blue,
+                reference_calibrated_negative_density_.blue)
         }};
 
         result.rec709_gamma24 =
@@ -623,6 +653,9 @@ FilmPipeline::process_negative_exposure(
             && std::isfinite(result.calibrated_negative_density.red)
             && std::isfinite(result.calibrated_negative_density.green)
             && std::isfinite(result.calibrated_negative_density.blue)
+            && std::isfinite(result.color_response_negative_density.red)
+            && std::isfinite(result.color_response_negative_density.green)
+            && std::isfinite(result.color_response_negative_density.blue)
             && std::isfinite(result.negative_granularity_sigma.red)
             && std::isfinite(result.negative_granularity_sigma.green)
             && std::isfinite(result.negative_granularity_sigma.blue);
@@ -710,6 +743,9 @@ FilmPipeline::process_negative_exposure(
         && std::isfinite(result.calibrated_negative_density.red)
         && std::isfinite(result.calibrated_negative_density.green)
         && std::isfinite(result.calibrated_negative_density.blue)
+        && std::isfinite(result.color_response_negative_density.red)
+        && std::isfinite(result.color_response_negative_density.green)
+        && std::isfinite(result.color_response_negative_density.blue)
         && std::isfinite(result.print_density.red)
         && std::isfinite(result.print_density.green)
         && std::isfinite(result.print_density.blue)

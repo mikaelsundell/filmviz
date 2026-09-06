@@ -7,6 +7,7 @@
 #include "ofxCore.h"
 #include "filmvizofxprocessor.h"
 #include "filmvizofxlog.h"
+#include "filmcolorresponse.h"
 #include "filmformat.h"
 #include "negativeprofile.h"
 #include "printprofile.h"
@@ -45,7 +46,6 @@ constexpr const char* kPluginIdentifier = "com.github.mikaelsundell.filmviz";
 constexpr const char* kPluginLabel = "FilmViz";
 constexpr const char* kPluginGrouping = "FilmViz";
 
-constexpr const char* kParamEnable = "enable";
 constexpr const char* kParamBackend = "backend";
 constexpr const char* kParamInputProfile = "inputProfile";
 constexpr const char* kParamNegativeProfile = "negativeProfile";
@@ -55,6 +55,7 @@ constexpr const char* kParamExposure = "exposure";
 constexpr const char* kParamNegativeFlash = "negativeFlash";
 constexpr const char* kParamPrintFlash = "printFlash";
 constexpr const char* kParamPushPull = "pushPull";
+constexpr const char* kParamColorDensity = "colorDensity";
 constexpr const char* kParamNegativeBleachBypass = "negativeBleachBypass";
 constexpr const char* kParamPrintBleachBypass = "printBleachBypass";
 constexpr const char* kParamPrinterLightRed = "printerLightRed";
@@ -77,6 +78,14 @@ constexpr const char* kParamHalationStrength = "halationStrength";
 constexpr const char* kParamHalationRadius = "halationRadius";
 constexpr const char* kParamHalationThreshold = "halationThreshold";
 constexpr const char* kParamWorkerThreads = "workerThreads";
+
+constexpr const char* kGroupSetup = "groupSetup";
+constexpr const char* kGroupNegative = "groupNegative";
+constexpr const char* kGroupPrint = "groupPrint";
+constexpr const char* kGroupSpatial = "groupSpatial";
+constexpr const char* kGroupGrain = "groupGrain";
+constexpr const char* kGroupHalation = "groupHalation";
+constexpr const char* kGroupAdvanced = "groupAdvanced";
 
 constexpr int kInteractiveLutSize = 9;
 
@@ -102,6 +111,8 @@ interactive_transform_settings(
     // size are restored for the non-interactive render.
     preview.push_pull_stops =
         quantize_interactive(preview.push_pull_stops, 0.10f);
+    preview.color_density =
+        quantize_interactive(preview.color_density, 0.05f);
     preview.negative_flash_percent =
         quantize_interactive(preview.negative_flash_percent, 0.10f);
     preview.print_flash_percent =
@@ -136,7 +147,6 @@ struct InstanceData
     OfxImageClipHandle source_clip = nullptr;
     OfxImageClipHandle output_clip = nullptr;
 
-    OfxParamHandle enable = nullptr;
     OfxParamHandle backend = nullptr;
     OfxParamHandle input = nullptr;
     OfxParamHandle negative = nullptr;
@@ -146,6 +156,7 @@ struct InstanceData
     OfxParamHandle negative_flash = nullptr;
     OfxParamHandle print_flash = nullptr;
     OfxParamHandle push_pull = nullptr;
+    OfxParamHandle color_density = nullptr;
     OfxParamHandle negative_bypass = nullptr;
     OfxParamHandle print_bypass = nullptr;
     OfxParamHandle printer_r = nullptr;
@@ -279,10 +290,8 @@ read_settings(
     InstanceData& instance,
     double time,
     FilmVizOfxRenderSettings& settings,
-    bool& enabled,
     int& backend)
 {
-    int enable = 1;
     int backend_value = 0;
     int input = 0;
     int negative = 0;
@@ -299,6 +308,7 @@ read_settings(
     double negative_flash = 0.0;
     double print_flash = 0.0;
     double push_pull = 0.0;
+    double color_density = 0.0;
     double negative_bypass = 0.0;
     double print_bypass = 0.0;
     double printer_r = 25.0;
@@ -320,7 +330,6 @@ read_settings(
     double halation_threshold = 0.7;
 
     const OfxStatus status[] = {
-        gParameterSuite->paramGetValueAtTime(instance.enable, time, &enable),
         gParameterSuite->paramGetValueAtTime(instance.backend, time, &backend_value),
         gParameterSuite->paramGetValueAtTime(instance.input, time, &input),
         gParameterSuite->paramGetValueAtTime(instance.negative, time, &negative),
@@ -330,6 +339,7 @@ read_settings(
         gParameterSuite->paramGetValueAtTime(instance.negative_flash, time, &negative_flash),
         gParameterSuite->paramGetValueAtTime(instance.print_flash, time, &print_flash),
         gParameterSuite->paramGetValueAtTime(instance.push_pull, time, &push_pull),
+        gParameterSuite->paramGetValueAtTime(instance.color_density, time, &color_density),
         gParameterSuite->paramGetValueAtTime(instance.negative_bypass, time, &negative_bypass),
         gParameterSuite->paramGetValueAtTime(instance.print_bypass, time, &print_bypass),
         gParameterSuite->paramGetValueAtTime(instance.printer_r, time, &printer_r),
@@ -360,7 +370,6 @@ read_settings(
         }
     }
 
-    enabled = enable != 0;
 #if FILMVIZ_HAS_METAL
     backend = backend_value;
 #else
@@ -394,6 +403,7 @@ read_settings(
     settings.negative_flash_percent = static_cast<float>(negative_flash);
     settings.print_flash_percent = static_cast<float>(print_flash);
     settings.push_pull_stops = static_cast<float>(push_pull);
+    settings.color_density = static_cast<float>(color_density);
     settings.negative_bleach_bypass = static_cast<float>(negative_bypass);
     settings.print_bleach_bypass = static_cast<float>(print_bypass);
     settings.printer_light_red = static_cast<float>(printer_r);
@@ -467,8 +477,7 @@ create_instance(
     }
 
     const bool ok =
-        fetch_param(parameter_set, kParamEnable, instance->enable)
-        && fetch_param(parameter_set, kParamBackend, instance->backend)
+        fetch_param(parameter_set, kParamBackend, instance->backend)
         && fetch_param(parameter_set, kParamInputProfile, instance->input)
         && fetch_param(parameter_set, kParamNegativeProfile, instance->negative)
         && fetch_param(parameter_set, kParamPrintProfile, instance->print)
@@ -477,6 +486,7 @@ create_instance(
         && fetch_param(parameter_set, kParamNegativeFlash, instance->negative_flash)
         && fetch_param(parameter_set, kParamPrintFlash, instance->print_flash)
         && fetch_param(parameter_set, kParamPushPull, instance->push_pull)
+        && fetch_param(parameter_set, kParamColorDensity, instance->color_density)
         && fetch_param(parameter_set, kParamNegativeBleachBypass, instance->negative_bypass)
         && fetch_param(parameter_set, kParamPrintBleachBypass, instance->print_bypass)
         && fetch_param(parameter_set, kParamPrinterLightRed, instance->printer_r)
@@ -740,11 +750,54 @@ define_clip(
 }
 
 bool
+define_group_parameter(
+    OfxParamSetHandle parameter_set,
+    const char* name,
+    const char* label,
+    bool open)
+{
+    OfxPropertySetHandle properties = nullptr;
+
+    if (gParameterSuite->paramDefine(
+            parameter_set,
+            kOfxParamTypeGroup,
+            name,
+            &properties) != kOfxStatOK
+        || !properties) {
+
+        return false;
+    }
+
+    gPropertySuite->propSetString(properties, kOfxPropLabel, 0, label);
+    gPropertySuite->propSetInt(
+        properties,
+        kOfxParamPropGroupOpen,
+        0,
+        open ? 1 : 0);
+    return true;
+}
+
+bool
+set_parameter_parent(
+    OfxPropertySetHandle properties,
+    const char* parent)
+{
+    return
+        !parent
+        || gPropertySuite->propSetString(
+               properties,
+               kOfxParamPropParent,
+               0,
+               parent) == kOfxStatOK;
+}
+
+bool
 define_boolean_parameter(
     OfxParamSetHandle parameter_set,
     const char* name,
     const char* label,
-    int default_value)
+    int default_value,
+    const char* parent = nullptr)
 {
     OfxPropertySetHandle properties = nullptr;
 
@@ -770,7 +823,7 @@ define_boolean_parameter(
         0,
         default_value);
 
-    return true;
+    return set_parameter_parent(properties, parent);
 }
 
 bool
@@ -780,7 +833,8 @@ define_choice_parameter(
     const char* label,
     const char* const* options,
     int option_count,
-    int default_value)
+    int default_value,
+    const char* parent = nullptr)
 {
     OfxPropertySetHandle properties = nullptr;
 
@@ -814,7 +868,7 @@ define_choice_parameter(
             options[i]);
     }
 
-    return true;
+    return set_parameter_parent(properties, parent);
 }
 
 bool
@@ -824,7 +878,8 @@ define_integer_parameter(
     const char* label,
     int default_value,
     int minimum,
-    int maximum)
+    int maximum,
+    const char* parent = nullptr)
 {
     OfxPropertySetHandle properties = nullptr;
 
@@ -845,7 +900,7 @@ define_integer_parameter(
     gPropertySuite->propSetInt(properties, kOfxParamPropDisplayMin, 0, minimum);
     gPropertySuite->propSetInt(properties, kOfxParamPropDisplayMax, 0, maximum);
 
-    return true;
+    return set_parameter_parent(properties, parent);
 }
 
 bool
@@ -855,7 +910,8 @@ define_double_parameter(
     const char* label,
     double default_value,
     double minimum,
-    double maximum)
+    double maximum,
+    const char* parent = nullptr)
 {
     OfxPropertySetHandle properties = nullptr;
 
@@ -911,7 +967,7 @@ define_double_parameter(
         0,
         0.01);
 
-    return true;
+    return set_parameter_parent(properties, parent);
 }
 
 OfxStatus
@@ -1008,38 +1064,45 @@ describe_in_context(
         "Rec.709 / Gamma 2.4"
     };
 
-    if (!define_boolean_parameter(parameter_set, kParamEnable, "Enable", 1)
-        || !define_choice_parameter(parameter_set, kParamBackend, "Processing", backends, backend_count, 0)
-        || !define_choice_parameter(parameter_set, kParamInputProfile, "Input", input_profiles, 2, 0)
-        || !define_choice_parameter(parameter_set, kParamNegativeProfile, "Negative", negative_options.data(), static_cast<int>(negative_options.size()), 0)
-        || !define_choice_parameter(parameter_set, kParamPrintProfile, "Print", print_options.data(), static_cast<int>(print_options.size()), 0)
-        || !define_choice_parameter(parameter_set, kParamOutputProfile, "Output", output_profiles, 2, 1)
-        || !define_double_parameter(parameter_set, kParamExposure, "Exposure", 0.0, -8.0, 8.0)
-        || !define_double_parameter(parameter_set, kParamNegativeFlash, "Negative Flash (%)", 0.0, 0.0, 25.0)
-        || !define_double_parameter(parameter_set, kParamPrintFlash, "Print Flash (%)", 0.0, 0.0, 25.0)
-        || !define_double_parameter(parameter_set, kParamPushPull, "Push / Pull", 0.0, -3.0, 3.0)
-        || !define_double_parameter(parameter_set, kParamNegativeBleachBypass, "Negative Bleach Bypass", 0.0, 0.0, 1.0)
-        || !define_double_parameter(parameter_set, kParamPrintBleachBypass, "Print Bleach Bypass", 0.0, 0.0, 1.0)
-        || !define_double_parameter(parameter_set, kParamPrinterLightRed, "Printer Light Red", 25.0, 0.0, 50.0)
-        || !define_double_parameter(parameter_set, kParamPrinterLightGreen, "Printer Light Green", 25.0, 0.0, 50.0)
-        || !define_double_parameter(parameter_set, kParamPrinterLightBlue, "Printer Light Blue", 25.0, 0.0, 50.0)
-        || !define_double_parameter(parameter_set, kParamPrinterLightMaster, "Printer Light Master", 0.0, -25.0, 25.0)
-        || !define_double_parameter(parameter_set, kParamMiddleGray, "Middle Gray", 0.18, 0.01, 1.0)
-        || !define_choice_parameter(parameter_set, kParamFilmFormat, "Film Format", format_options.data(), static_cast<int>(format_options.size()), format_default)
-        || !define_double_parameter(parameter_set, kParamImageWidthMm, "Custom Image Width (mm)", 24.89, 1.0, 100.0)
-        || !define_double_parameter(parameter_set, kParamNegativeMtf, "Negative MTF", 0.0, 0.0, 2.0)
-        || !define_double_parameter(parameter_set, kParamPrintMtf, "Print MTF", 0.0, 0.0, 2.0)
-        || !define_boolean_parameter(parameter_set, kParamEnableGrain, "Enable Grain", 0)
-        || !define_double_parameter(parameter_set, kParamNegativeGrain, "Negative Grain", 0.0, 0.0, 2.0)
-        || !define_double_parameter(parameter_set, kParamPrintGrain, "Print Grain", 0.0, 0.0, 2.0)
-        || !define_double_parameter(parameter_set, kParamGrainSize, "Grain Scale", 1.0, 1.0, 5.0)
-        || !define_double_parameter(parameter_set, kParamGrainChroma, "Grain Chroma", 1.0, 0.0, 2.0)
-        || !define_integer_parameter(parameter_set, kParamGrainSeed, "Grain Seed", 1, 0, 1000000)
-        || !define_boolean_parameter(parameter_set, kParamEnableHalation, "Enable Halation", 0)
-        || !define_double_parameter(parameter_set, kParamHalationStrength, "Halation Strength", 0.0, 0.0, 1.0)
-        || !define_double_parameter(parameter_set, kParamHalationRadius, "Halation Radius", 12.0, 0.0, 200.0)
-        || !define_double_parameter(parameter_set, kParamHalationThreshold, "Halation Threshold", 0.7, 0.0, 4.0)
-        || !define_integer_parameter(parameter_set, kParamWorkerThreads, "Worker Threads", 0, 0, 64)) {
+    if (!define_group_parameter(parameter_set, kGroupSetup, "Setup", true)
+        || !define_group_parameter(parameter_set, kGroupNegative, "Negative", true)
+        || !define_group_parameter(parameter_set, kGroupPrint, "Print", true)
+        || !define_group_parameter(parameter_set, kGroupSpatial, "Spatial Response", false)
+        || !define_group_parameter(parameter_set, kGroupGrain, "Grain", false)
+        || !define_group_parameter(parameter_set, kGroupHalation, "Halation", false)
+        || !define_group_parameter(parameter_set, kGroupAdvanced, "Advanced", false)
+        || !define_choice_parameter(parameter_set, kParamBackend, "Processing", backends, backend_count, 0, kGroupSetup)
+        || !define_choice_parameter(parameter_set, kParamInputProfile, "Input", input_profiles, 2, 0, kGroupSetup)
+        || !define_choice_parameter(parameter_set, kParamNegativeProfile, "Stock", negative_options.data(), static_cast<int>(negative_options.size()), 0, kGroupNegative)
+        || !define_double_parameter(parameter_set, kParamExposure, "Exposure", 0.0, -8.0, 8.0, kGroupNegative)
+        || !define_double_parameter(parameter_set, kParamNegativeFlash, "Flash (%)", 0.0, 0.0, 25.0, kGroupNegative)
+        || !define_double_parameter(parameter_set, kParamPushPull, "Push / Pull", 0.0, -3.0, 3.0, kGroupNegative)
+        || !define_double_parameter(parameter_set, kParamColorDensity, "Color Density", 0.0, FilmColorResponse::minimum_trim, FilmColorResponse::maximum_trim, kGroupNegative)
+        || !define_double_parameter(parameter_set, kParamNegativeBleachBypass, "Bleach Bypass", 0.0, 0.0, 1.0, kGroupNegative)
+        || !define_choice_parameter(parameter_set, kParamPrintProfile, "Stock", print_options.data(), static_cast<int>(print_options.size()), 0, kGroupPrint)
+        || !define_double_parameter(parameter_set, kParamPrintFlash, "Flash (%)", 0.0, 0.0, 25.0, kGroupPrint)
+        || !define_double_parameter(parameter_set, kParamPrintBleachBypass, "Bleach Bypass", 0.0, 0.0, 1.0, kGroupPrint)
+        || !define_double_parameter(parameter_set, kParamPrinterLightRed, "Printer Light Red", 25.0, 0.0, 50.0, kGroupPrint)
+        || !define_double_parameter(parameter_set, kParamPrinterLightGreen, "Printer Light Green", 25.0, 0.0, 50.0, kGroupPrint)
+        || !define_double_parameter(parameter_set, kParamPrinterLightBlue, "Printer Light Blue", 25.0, 0.0, 50.0, kGroupPrint)
+        || !define_double_parameter(parameter_set, kParamPrinterLightMaster, "Printer Light Master", 0.0, -25.0, 25.0, kGroupPrint)
+        || !define_choice_parameter(parameter_set, kParamOutputProfile, "Output", output_profiles, 2, 1, kGroupSetup)
+        || !define_choice_parameter(parameter_set, kParamFilmFormat, "Film Format", format_options.data(), static_cast<int>(format_options.size()), format_default, kGroupSpatial)
+        || !define_double_parameter(parameter_set, kParamImageWidthMm, "Custom Image Width (mm)", 24.89, 1.0, 100.0, kGroupSpatial)
+        || !define_double_parameter(parameter_set, kParamNegativeMtf, "Negative MTF", 0.0, 0.0, 2.0, kGroupSpatial)
+        || !define_double_parameter(parameter_set, kParamPrintMtf, "Print MTF", 0.0, 0.0, 2.0, kGroupSpatial)
+        || !define_boolean_parameter(parameter_set, kParamEnableGrain, "Enable", 0, kGroupGrain)
+        || !define_double_parameter(parameter_set, kParamNegativeGrain, "Negative", 0.0, 0.0, 2.0, kGroupGrain)
+        || !define_double_parameter(parameter_set, kParamPrintGrain, "Print", 0.0, 0.0, 2.0, kGroupGrain)
+        || !define_double_parameter(parameter_set, kParamGrainSize, "Scale", 1.0, 1.0, 5.0, kGroupGrain)
+        || !define_double_parameter(parameter_set, kParamGrainChroma, "Chroma", 1.0, 0.0, 2.0, kGroupGrain)
+        || !define_integer_parameter(parameter_set, kParamGrainSeed, "Seed", 1, 0, 1000000, kGroupGrain)
+        || !define_boolean_parameter(parameter_set, kParamEnableHalation, "Enable", 0, kGroupHalation)
+        || !define_double_parameter(parameter_set, kParamHalationStrength, "Strength", 0.0, 0.0, 1.0, kGroupHalation)
+        || !define_double_parameter(parameter_set, kParamHalationRadius, "Radius", 12.0, 0.0, 200.0, kGroupHalation)
+        || !define_double_parameter(parameter_set, kParamHalationThreshold, "Threshold", 0.7, 0.0, 4.0, kGroupHalation)
+        || !define_double_parameter(parameter_set, kParamMiddleGray, "Middle Gray", 0.18, 0.01, 1.0, kGroupAdvanced)
+        || !define_integer_parameter(parameter_set, kParamWorkerThreads, "Worker Threads", 0, 0, 64, kGroupAdvanced)) {
 
         return kOfxStatFailed;
     }
@@ -1255,14 +1318,12 @@ render(
         output_row_bytes;
 
     FilmVizOfxRenderSettings settings;
-    bool enabled = true;
     int backend = 0;
 
     if (!read_settings(
             *instance,
             time,
             settings,
-            enabled,
             backend)) {
 
         release_images();
@@ -1300,7 +1361,6 @@ render(
         << "node=" << instance
         << " time=" << time
         << " backend_request=" << backend
-        << " enabled=" << (enabled ? 1 : 0)
         << " negative=" << settings.negative_profile
         << " print=" << settings.print_profile
         << " exposure=" << settings.exposure_stops
@@ -1366,66 +1426,56 @@ render(
         std::string error;
         bool rendered = false;
 
-        if (!enabled) {
+        if (!instance->processor.configure(
+                settings,
+                instance->resources_directory,
+                error)) {
+
+            release_images();
+            return kOfxStatFailed;
+        }
+
+        // Processing choices:
+        //   Auto  -> Metal when Resolve supplied Metal buffers.
+        //   Metal -> Metal when available, otherwise CPU fallback below.
+        //   CPU   -> explicitly stage through shared buffers so the CPU
+        //            reference path can still be compared in a Metal render.
+        if (backend == 2 || requires_cpu_spatial) {
             rendered =
-                instance->metal_processor.copy(
+                instance->metal_processor.render_cpu_bridge(
+                    instance->processor,
                     metal_command_queue,
                     metal_source,
                     metal_output,
+                    render_window[0],
+                    render_window[1],
+                    render_window[2],
+                    render_window[3],
+                    time,
+                    [&]() {
+                        return
+                            gEffectSuite->abort(
+                                effect) != 0;
+                    },
                     error);
         }
         else {
-            if (!instance->processor.configure(
+            rendered =
+                instance->metal_processor.configure(
+                    instance->processor,
+                    metal_command_queue,
+                    error)
+                && instance->metal_processor.render(
                     settings,
-                    instance->resources_directory,
-                    error)) {
-
-                release_images();
-                return kOfxStatFailed;
-            }
-
-            // Processing choices:
-            //   Auto  -> Metal when Resolve supplied Metal buffers.
-            //   Metal -> Metal when available, otherwise CPU fallback below.
-            //   CPU   -> explicitly stage through shared buffers so the CPU
-            //            reference path can still be compared in a Metal render.
-            if (backend == 2 || requires_cpu_spatial) {
-                rendered =
-                    instance->metal_processor.render_cpu_bridge(
-                        instance->processor,
-                        metal_command_queue,
-                        metal_source,
-                        metal_output,
-                        render_window[0],
-                        render_window[1],
-                        render_window[2],
-                        render_window[3],
-                        time,
-                        [&]() {
-                            return
-                                gEffectSuite->abort(
-                                    effect) != 0;
-                        },
-                        error);
-            }
-            else {
-                rendered =
-                    instance->metal_processor.configure(
-                        instance->processor,
-                        metal_command_queue,
-                        error)
-                    && instance->metal_processor.render(
-                        settings,
-                        metal_command_queue,
-                        metal_source,
-                        metal_output,
-                        render_window[0],
-                        render_window[1],
-                        render_window[2],
-                        render_window[3],
-                        time,
-                        error);
-            }
+                    metal_command_queue,
+                    metal_source,
+                    metal_output,
+                    render_window[0],
+                    render_window[1],
+                    render_window[2],
+                    render_window[3],
+                    time,
+                    error);
         }
 
         release_images();
@@ -1467,78 +1517,6 @@ render(
     output_frame.data =
         static_cast<float*>(
             output_data);
-
-    if (!enabled) {
-        const int x1 =
-            std::max(
-                render_window[0],
-                std::max(
-                    source_frame.x1,
-                    output_frame.x1));
-
-        const int y1 =
-            std::max(
-                render_window[1],
-                std::max(
-                    source_frame.y1,
-                    output_frame.y1));
-
-        const int x2 =
-            std::min(
-                render_window[2],
-                std::min(
-                    source_frame.x2,
-                    output_frame.x2));
-
-        const int y2 =
-            std::min(
-                render_window[3],
-                std::min(
-                    source_frame.y2,
-                    output_frame.y2));
-
-        for (int y = y1; y < y2; ++y) {
-            const char* src_row =
-                reinterpret_cast<const char*>(
-                    source_frame.data)
-                + static_cast<std::ptrdiff_t>(
-                    y - source_frame.y1)
-                    * source_frame.row_bytes;
-
-            char* dst_row =
-                reinterpret_cast<char*>(
-                    output_frame.data)
-                + static_cast<std::ptrdiff_t>(
-                    y - output_frame.y1)
-                    * output_frame.row_bytes;
-
-            const float* src =
-                reinterpret_cast<const float*>(
-                    src_row)
-                + static_cast<std::ptrdiff_t>(
-                    x1 - source_frame.x1) * 4;
-
-            float* dst =
-                reinterpret_cast<float*>(
-                    dst_row)
-                + static_cast<std::ptrdiff_t>(
-                    x1 - output_frame.x1) * 4;
-
-            for (int x = x1; x < x2; ++x) {
-                dst[0] = src[0];
-                dst[1] = src[1];
-                dst[2] = src[2];
-                dst[3] = src[3];
-
-                src += 4;
-                dst += 4;
-            }
-        }
-
-        release_images();
-        render_scope.finish("backend=cpu_bypass result=ok");
-        return kOfxStatOK;
-    }
 
     std::string error;
 

@@ -720,6 +720,7 @@ class ImagePreviewWidget(QWidget):
         self._fit_to_view = True
         self._zoom = 1.0
         self._pan = QPointF(0.0, 0.0)
+        self._image_identity = None
 
         self.setMinimumSize(520, 320)
         self.setSizePolicy(
@@ -728,7 +729,25 @@ class ImagePreviewWidget(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
 
-    def set_rgb(self, width: int, height: int, rgb: bytes):
+    def set_rgb(
+        self,
+        width: int,
+        height: int,
+        rgb: bytes,
+        image_identity=None,
+    ):
+        preserve_view = (
+            image_identity is not None
+            and image_identity == self._image_identity
+            and not self._image.isNull()
+            and self._image.width() == width
+            and self._image.height() == height
+        )
+
+        fit_to_view = self._fit_to_view
+        zoom = self._zoom
+        pan = QPointF(self._pan)
+
         image = QImage(
             rgb,
             width,
@@ -737,10 +756,17 @@ class ImagePreviewWidget(QWidget):
             QImage.Format.Format_RGB888)
         image.setColorSpace(self._color_space)
         self._image = image.copy()
+        self._image_identity = image_identity
         self._message = ""
         self._probe = None
-        self.fit_to_view()
-        self.update()
+
+        if preserve_view:
+            self._fit_to_view = fit_to_view
+            self._zoom = zoom
+            self._pan = pan
+            self.update()
+        else:
+            self.fit_to_view()
 
     def set_color_space(self, color_space):
         self._color_space = color_space
@@ -752,6 +778,7 @@ class ImagePreviewWidget(QWidget):
         self._image = QImage()
         self._message = message
         self._probe = None
+        self._image_identity = None
         self._fit_to_view = True
         self._zoom = 1.0
         self._pan = QPointF(0.0, 0.0)
@@ -2253,6 +2280,7 @@ class FilmVizWindow(QMainWindow):
         self.negative_flash = _double(0.0, 0.0, 25.0, 0.1, 2)
         self.print_flash = _double(0.0, 0.0, 25.0, 0.1, 2)
         self.push_pull = _double(0.0, -5.0, 5.0, 0.25)
+        self.color_density = _double(0.0, -4.0, 4.0, 0.1, 2)
         self.negative_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
         self.print_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
         self.printer_light_red = _double(25.0, 0.0, 50.0, 0.1, 1)
@@ -2279,6 +2307,7 @@ class FilmVizWindow(QMainWindow):
         self.negative_flash_control = SliderSpinRow(self.negative_flash)
         self.print_flash_control = SliderSpinRow(self.print_flash)
         self.push_pull_control = SliderSpinRow(self.push_pull)
+        self.color_density_control = SliderSpinRow(self.color_density)
         self.negative_bleach_bypass_control = SliderSpinRow(
             self.negative_bleach_bypass)
         self.print_bleach_bypass_control = SliderSpinRow(
@@ -2297,6 +2326,7 @@ class FilmVizWindow(QMainWindow):
             self.negative_flash,
             self.print_flash,
             self.push_pull,
+            self.color_density,
             self.negative_bleach_bypass,
             self.print_bleach_bypass,
             self.printer_light_red,
@@ -2323,6 +2353,7 @@ class FilmVizWindow(QMainWindow):
             ("Negative flash (%)", self.negative_flash_control),
             ("Print flash (%)", self.print_flash_control),
             ("Push/pull stops", self.push_pull_control),
+            ("Color density trim", self.color_density_control),
             ("Negative bypass", self.negative_bleach_bypass_control),
             ("Print bypass", self.print_bleach_bypass_control),
             ("Printer R light", self.printer_light_red_control),
@@ -2430,8 +2461,8 @@ class FilmVizWindow(QMainWindow):
             minimum_width=0)
         image_form.addRow("Input image", self.input_image)
         image_form.addRow("Output image", self.output_image)
-        self.negative_grain = _double(0.0, 0.0, 10.0)
-        self.print_grain = _double(0.0, 0.0, 10.0)
+        self.negative_grain = _double(0.0, 0.0, 2.0)
+        self.print_grain = _double(0.0, 0.0, 2.0)
         self.grain_size = _double(1.0, 1.0, 32.0, 0.25)
         self.grain_chroma = _double(1.0, 0.0, 4.0, 0.1)
         self.grain_seed = QSpinBox()
@@ -2673,6 +2704,7 @@ class FilmVizWindow(QMainWindow):
         self.negative_flash.setValue(0.0)
         self.print_flash.setValue(0.0)
         self.push_pull.setValue(0.0)
+        self.color_density.setValue(0.0)
         self.negative_bleach_bypass.setValue(0.0)
         self.print_bleach_bypass.setValue(0.0)
         self.printer_light_red.setValue(25.0)
@@ -2762,7 +2794,8 @@ class FilmVizWindow(QMainWindow):
             self.image_preview.set_rgb(
                 preview_width,
                 preview_height,
-                preview_rgb)
+                preview_rgb,
+                image_identity=str(Path(filename).expanduser().resolve()))
             self._scope_width = 0
             self._scope_height = 0
             self._scope_rgb = None
@@ -2777,7 +2810,8 @@ class FilmVizWindow(QMainWindow):
         self.image_preview.set_rgb(
             preview_width,
             preview_height,
-            preview_rgb)
+            preview_rgb,
+            image_identity=str(Path(filename).expanduser().resolve()))
 
         self._scope_width = scope_width
         self._scope_height = scope_height
@@ -2819,6 +2853,7 @@ class FilmVizWindow(QMainWindow):
                 negative_flash=arguments["negative_flash"],
                 print_flash=arguments["print_flash"],
                 push_pull=arguments["push_pull"],
+                color_density=arguments["color_density"],
                 negative_bleach_bypass=
                     arguments["negative_bleach_bypass"],
                 print_bleach_bypass=
@@ -2868,6 +2903,7 @@ class FilmVizWindow(QMainWindow):
             f"negative H R/G/B  {triplet('negative_exposure')}\n"
             f"Status-M D R/G/B  {triplet('negative_status_m')}\n"
             f"calibrated D      {triplet('negative_calibrated')}\n"
+            f"color response D  {triplet('negative_color_response')}\n"
             f"print H R/G/B     {triplet('print_exposure')}\n"
             f"print D R/G/B     {triplet('print_density')}\n"
             f"output AP0        {triplet('output_ap0')}\n"
@@ -3028,6 +3064,7 @@ class FilmVizWindow(QMainWindow):
             negative_flash=self.negative_flash.value(),
             print_flash=self.print_flash.value(),
             push_pull=self.push_pull.value(),
+            color_density=self.color_density.value(),
             negative_bleach_bypass=self.negative_bleach_bypass.value(),
             print_bleach_bypass=self.print_bleach_bypass.value(),
             printer_light_red=self.printer_light_red.value(),

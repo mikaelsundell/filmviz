@@ -47,6 +47,7 @@ struct FilmVizOfxRenderSettings
     float negative_flash_percent = 0.0f;
     float print_flash_percent = 0.0f;
     float push_pull_stops = 0.0f;
+    float color_density = 0.0f;
     float middle_gray = 0.18f;
     float printer_temperature = 3200.0f;
 

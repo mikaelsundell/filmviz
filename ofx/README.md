@@ -181,25 +181,28 @@ export FILMVIZ_OFX_LOG_PATH=/path/to/filmviz_ofx.log
 
 ## Controls
 
-Pipeline:
+Resolve presents the controls in collapsible groups:
 
-- Enable
+Setup:
+
 - Processing backend
-- Input profile: ARRI AWG3 / LogC3 EI800, ACES2065-1 AP0 linear
-- Negative: Kodak Verita 200D 5206/7206, Kodak Vision3 50D 5203/7203
-- Print: Kodak Vision 2383/3383
-- Output profile: ACES2065-1 AP0 linear, Rec.709 Gamma 2.4
-- Exposure stops
-- Negative flash
-- Print flash
-- Push/pull stops
-- Negative bleach bypass
-- Print bleach bypass
+- Input and output profiles
+
+Negative:
+
+- Stock: Kodak Verita 200D 5206/7206 or Kodak Vision3 50D 5203/7203
+- Exposure, flash and push/pull
+- Color Density
+- Bleach bypass
+
+Print:
+
+- Stock: Kodak Vision 2383/3383
+- Flash and bleach bypass
 - Printer R/G/B lights, neutral at 25/25/25
 - Printer master timing
-- Middle gray
 
-Spatial response:
+Spatial Response:
 
 - Film format: Regular 8, Super 8, 16mm, Super 16, 35mm, Super 35, 65mm, Custom
 - Custom image width in millimetres
@@ -222,14 +225,21 @@ Halation:
 - Radius
 - Threshold
 
-Performance:
+Advanced:
 
+- Middle gray
 - Worker threads
 
 MTF, grain and halation are disabled by default. Enabling MTF uses the measured
 cycles/mm response and the selected active-image width. Because the current
 Metal kernel is pointwise, measured MTF automatically uses the CPU spatial
 bridge while retaining the cached colour transform.
+Color Density operates in calibrated negative dye-coordinate space before
+spectral density synthesis. Increasing it progressively calms chroma and adds
+chroma-weighted depth through print exposure. Zero is the accepted standard
+response, -4 is calibrated bypass, and +4 is twice the standard response. It
+changes the spectral transform and therefore selects or generates a distinct
+cached LUT.
 The OFX production transform is fixed at 33^3 and the calibrated Kodak Vision
 2383/3383
 printer illuminant approximation is fixed at 3200 K. These are profile and
@@ -292,6 +302,9 @@ FilmViz.ofx.bundle/
       ...bundled non-system runtime dependencies...
     Resources/
       filmviz/
+        profiles/
+        colorimetry/
+        spectral/
         cache/
           ofx/
             manifest.txt
@@ -300,7 +313,9 @@ FilmViz.ofx.bundle/
 
 Runtime dependencies are copied into `Contents/Libraries`, rewritten to
 bundle-relative load paths, stripped of absolute build-machine `LC_RPATH`
-entries, and signed during macOS packaging. For local experiments the
+entries, and signed during macOS packaging. Only production runtime resources
+are bundled; reference images, charts, documents and supplementary APD material
+remain outside the plug-in. For local experiments the
 profile/resource root can be overridden with:
 
 ```bash

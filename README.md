@@ -115,6 +115,7 @@ Convert the bundled ARRI AWG3/LogC3 reference image to a 16-bit Rec.709/Gamma
     --negative-flash 0 \
     --print-flash 0 \
     --push-pull 0 \
+    --color-density 0 \
     --printer-light-master 0 \
     --negative-grain 1 \
     --print-grain 1 \
@@ -145,6 +146,12 @@ approximation: FilmViz has no alternate-development Verita measurements.
 respective characteristic curves. They are percentages of each stage's
 calibrated neutral reference exposure. `--printer-light-master` is a linked
 offset added to the R/G/B printer-light values; one point is 0.025 LogE.
+
+`--color-density` is an optional neutral-preserving negative-density response.
+It progressively compresses chroma and adds chroma-weighted density depth
+through the print stage. It is not an RGB saturation control or a claimed
+interimage-chemistry model. `0` is the accepted standard look, `-4` restores
+the calibrated bypass, and `+4` applies twice the standard response.
 
 `--negative-mtf 1` and `--print-mtf 1` apply the measured stock responses as a
 cascaded small-signal system MTF. The selected `--film-format` maps the measured
@@ -292,6 +299,7 @@ field controls the same global C++ thread setting as `filmviz --threads`. See
 - `main.cpp` — supported `filmviz` command-line entry point
 - `filmpipeline.*` — production end-to-end spectral pipeline
 - `filmdensitycalibration.*` — nonlinear Status-M -> spectral coordinate solve
+- `filmcolorresponse.*` — optional neutral-axis negative-density colour shaping
 - `statusmdensitometer.*` — ISO Status-M measurement implementation
 - `inputtransform.*` — camera/input encoding to AP0
 - `negativeprofile.*` — canonical negative-profile names and resource metadata

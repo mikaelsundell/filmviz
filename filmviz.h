@@ -8,6 +8,7 @@
 
 #include "bleachbypass.h"
 #include "filmdensitycalibration.h"
+#include "filmcolorresponse.h"
 #include "filmformat.h"
 #include "filmpipeline.h"
 #include "halationmodel.h"

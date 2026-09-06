@@ -85,6 +85,7 @@ pipeline_settings(
     float negative_flash,
     float print_flash,
     float push_pull,
+    float color_density,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
@@ -102,6 +103,7 @@ pipeline_settings(
     settings.negative_flash_percent = negative_flash;
     settings.print_flash_percent = print_flash;
     settings.push_pull_stops = push_pull;
+    settings.color_density = color_density;
     settings.negative_bleach_bypass = negative_bleach_bypass;
     settings.print_bleach_bypass = print_bleach_bypass;
     settings.printer_light_red = printer_light_red;
@@ -168,6 +170,7 @@ generate_lut(
     float negative_flash,
     float print_flash,
     float push_pull,
+    float color_density,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
@@ -202,6 +205,7 @@ generate_lut(
                 negative_flash,
                 print_flash,
                 push_pull,
+                color_density,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
@@ -295,6 +299,7 @@ generate_lut(
         "Negative flash percent: " + std::to_string(negative_flash),
         "Print flash percent: " + std::to_string(print_flash),
         "Push/pull stops: " + std::to_string(push_pull) + " / approximate contrast",
+        "Color density trim: " + std::to_string(color_density),
         "Negative bleach bypass: " + std::to_string(negative_bleach_bypass),
         "Print bleach bypass: " + std::to_string(print_bleach_bypass),
         "Printer lights R/G/B: "
@@ -332,6 +337,7 @@ process_image(
     float negative_flash,
     float print_flash,
     float push_pull,
+    float color_density,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
@@ -372,6 +378,7 @@ process_image(
                 negative_flash,
                 print_flash,
                 push_pull,
+                color_density,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
@@ -576,6 +583,7 @@ probe_image_pixel(
     float negative_flash,
     float print_flash,
     float push_pull,
+    float color_density,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
@@ -684,6 +692,7 @@ probe_image_pixel(
                 negative_flash,
                 print_flash,
                 push_pull,
+                color_density,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
@@ -791,6 +800,12 @@ probe_image_pixel(
             result.calibrated_negative_density.red,
             result.calibrated_negative_density.green,
             result.calibrated_negative_density.blue);
+
+    probe["negative_color_response"] =
+        py::make_tuple(
+            result.color_response_negative_density.red,
+            result.color_response_negative_density.green,
+            result.color_response_negative_density.blue);
 
     probe["print_exposure"] =
         py::make_tuple(
@@ -925,6 +940,7 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("negative_flash") = 0.0f,
         py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
+        py::arg("color_density") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,
@@ -955,6 +971,7 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("negative_flash") = 0.0f,
         py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
+        py::arg("color_density") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,
@@ -994,6 +1011,7 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("negative_flash") = 0.0f,
         py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
+        py::arg("color_density") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,

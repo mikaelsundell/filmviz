@@ -105,7 +105,9 @@ file(MAKE_DIRECTORY "${FILMVIZ_OFX_PREBAKED_DIR}")
 
 if(FILMVIZ_OFX_PREBAKE_CACHE AND EXISTS "${CMAKE_SOURCE_DIR}/resources")
     file(GLOB_RECURSE FILMVIZ_OFX_PREBAKE_RESOURCE_FILES CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/resources/*")
+        "${CMAKE_SOURCE_DIR}/resources/profiles/*"
+        "${CMAKE_SOURCE_DIR}/resources/colorimetry/*"
+        "${CMAKE_SOURCE_DIR}/resources/spectral/*")
 
     add_custom_command(
         OUTPUT "${FILMVIZ_OFX_PREBAKED_MANIFEST}"
@@ -186,6 +188,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources"
     COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Libraries"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:filmviz_ofx>"
@@ -197,8 +201,14 @@ add_custom_command(
         "$<TARGET_FILE:filmviz_core>"
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Libraries/$<TARGET_FILE_NAME:filmviz_core>"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/resources"
-        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz"
+        "${CMAKE_SOURCE_DIR}/resources/profiles"
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz/profiles"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/resources/colorimetry"
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz/colorimetry"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/resources/spectral"
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz/spectral"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz/cache/ofx"
     COMMAND ${CMAKE_COMMAND} -E copy_directory

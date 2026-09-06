@@ -48,6 +48,7 @@ set(FILMVIZ_CORE_SOURCES
     colortransform.cpp
     diagramwriter.cpp
     filmdensitycalibration.cpp
+    filmcolorresponse.cpp
     filmdyemodel.cpp
     filmformat.cpp
     filmpipeline.cpp
@@ -143,6 +144,7 @@ if(BUILD_TESTING)
         tests/test_apd_spectral_selectivity.cpp
         tests/test_apd_verita_model.cpp
         tests/test_bleach_bypass.cpp
+        tests/test_film_color_response.cpp
         tests/test_density_calibration.cpp
         tests/test_exposure_boundary.cpp
         tests/test_granularity.cpp
@@ -204,6 +206,7 @@ if(BUILD_TESTING)
     set_tests_properties(
         test_apd_resource
         test_bleach_bypass
+        test_film_color_response
         test_granularity
         test_halation_model
         test_input_transform
@@ -409,6 +412,7 @@ install(
         filmviz.h
         filmdata.h
         filmdensitycalibration.h
+        filmcolorresponse.h
         filmdyemodel.h
         filmformat.h
         filmpipeline.h

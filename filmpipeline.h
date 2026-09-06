@@ -13,6 +13,7 @@
 
 class ColorTransform;
 class FilmDensityCalibration;
+class FilmColorResponse;
 class FilmDyeModel;
 class FilmProcessor;
 class FilmStock;
@@ -56,6 +57,11 @@ public:
         // Positive values increase negative contrast around the calibrated
         // middle-gray density.
         float push_pull_stops = 0.0f;
+
+        // Signed empirical density-domain colour trim. Zero selects the
+        // accepted standard response, -4 is calibrated bypass, and positive
+        // values progressively calm and deepen chromatic regions.
+        float color_density = 0.0f;
 
         // Profile-independent bleach-bypass look controls. Zero is normal
         // processing; one is the full modeled process look. The current
@@ -101,6 +107,7 @@ public:
 
         FilmDensity negative_status_m_density;
         FilmDensity calibrated_negative_density;
+        FilmDensity color_response_negative_density;
         FilmDensity print_density;
         FilmDensity negative_granularity_sigma;
         FilmDensity print_granularity_sigma;
@@ -187,6 +194,7 @@ private:
     std::unique_ptr<FilmProcessor> negative_processor_;
     std::unique_ptr<FilmDyeModel> negative_dye_model_;
     std::unique_ptr<FilmDensityCalibration> negative_density_calibration_;
+    std::unique_ptr<FilmColorResponse> color_response_;
     std::unique_ptr<PrintFilmStock> print_stock_;
     std::unique_ptr<PrintFilmProcessor> print_processor_;
     std::unique_ptr<PrintViewer> viewer_;
@@ -194,6 +202,7 @@ private:
 
     FilmExposure reference_negative_exposure_;
     FilmDensity reference_negative_density_;
+    FilmDensity reference_calibrated_negative_density_;
     SampledCurve reference_negative_transmittance_;
 
 };

@@ -5,6 +5,7 @@
 
 #include "filmvizofxcache.h"
 #include "filmvizofxlog.h"
+#include "filmcolorresponse.h"
 #include "filmpipeline.h"
 #include "granularitymodel.h"
 #include "halationmodel.h"
@@ -272,6 +273,7 @@ transform_key(
     key.output_profile = settings.output_profile;
     key.lut_size = settings.lut_size;
     key.push_pull_stops = settings.push_pull_stops;
+    key.color_density = settings.color_density;
     key.negative_flash_percent = settings.negative_flash_percent;
     key.print_flash_percent = settings.print_flash_percent;
     key.middle_gray = settings.middle_gray;
@@ -300,6 +302,7 @@ settings_summary(
         << " negative_flash=" << settings.negative_flash_percent
         << " print_flash=" << settings.print_flash_percent
         << " push_pull=" << settings.push_pull_stops
+        << " color_density=" << settings.color_density
         << " lights="
         << settings.printer_light_red << ','
         << settings.printer_light_green << ','
@@ -412,6 +415,7 @@ FilmVizOfxRenderSettings::operator==(
         && negative_flash_percent == other.negative_flash_percent
         && print_flash_percent == other.print_flash_percent
         && push_pull_stops == other.push_pull_stops
+        && color_density == other.color_density
         && middle_gray == other.middle_gray
         && printer_temperature == other.printer_temperature
         && negative_bleach_bypass == other.negative_bleach_bypass
@@ -467,6 +471,9 @@ FilmVizOfxProcessor::configure(
         || settings.lut_size > 129
         || !finite_setting(settings.exposure_stops)
         || !finite_setting(settings.push_pull_stops)
+        || !finite_setting(settings.color_density)
+        || settings.color_density < FilmColorResponse::minimum_trim
+        || settings.color_density > FilmColorResponse::maximum_trim
         || !finite_setting(settings.negative_flash_percent)
         || settings.negative_flash_percent < 0.0f
         || settings.negative_flash_percent > 25.0f
@@ -752,6 +759,7 @@ FilmVizOfxProcessor::configure(
             // exposure offset.
             pipeline_settings.exposure_stops = 0.0f;
             pipeline_settings.push_pull_stops = settings.push_pull_stops;
+            pipeline_settings.color_density = settings.color_density;
             pipeline_settings.middle_gray = settings.middle_gray;
             pipeline_settings.printer_temperature_kelvin = settings.printer_temperature;
             pipeline_settings.negative_bleach_bypass = settings.negative_bleach_bypass;
