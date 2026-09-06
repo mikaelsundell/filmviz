@@ -42,12 +42,15 @@ Running `python3 python/filmviz_app.py` directly remains supported when that
 Python environment can already import both PySide6 and `filmviz_python`.
 
 The image interface exposes negative and print flash, linked master printer
-timing, Color Density, density-dependent negative/print grain, and measured
-negative/print MTF. Color Density is a neutral-preserving transform in
+timing, Color Density, Warm-Tone Separation, density-dependent negative/print
+grain, and measured negative/print MTF. Color Density is a neutral-preserving transform in
 calibrated negative dye-coordinate space that progressively calms chroma and
 adds chroma-weighted depth through print exposure. Zero is the accepted
 standard response, -4 restores calibrated bypass, and +4 applies twice the
-standard response. Film-format presets supply the physical active-image width
+standard response. Warm-Tone Separation retains more of the warm mid-density
+branch inside that response: zero is uniform compression, one is standard and
+two is maximum protection. It also gently guides near-warm trajectories toward
+yellow/orange rather than magenta. Film-format presets supply the physical active-image width
 used to convert the MTF curves from cycles/mm to pixels; Custom enables direct
 width entry. These controls call the shared C++ models rather than duplicating
 film logic in Python.

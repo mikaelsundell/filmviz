@@ -2281,6 +2281,10 @@ class FilmVizWindow(QMainWindow):
         self.print_flash = _double(0.0, 0.0, 25.0, 0.1, 2)
         self.push_pull = _double(0.0, -5.0, 5.0, 0.25)
         self.color_density = _double(0.0, -4.0, 4.0, 0.1, 2)
+        self.warm_tone_separation = _double(1.0, 0.0, 2.0, 0.05, 2)
+        self.warm_tone_separation.setToolTip(
+            "Preserves warm mid-density separation inside Color Density. "
+            "Zero uses uniform compression; one is standard.")
         self.negative_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
         self.print_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
         self.printer_light_red = _double(25.0, 0.0, 50.0, 0.1, 1)
@@ -2308,6 +2312,8 @@ class FilmVizWindow(QMainWindow):
         self.print_flash_control = SliderSpinRow(self.print_flash)
         self.push_pull_control = SliderSpinRow(self.push_pull)
         self.color_density_control = SliderSpinRow(self.color_density)
+        self.warm_tone_separation_control = SliderSpinRow(
+            self.warm_tone_separation)
         self.negative_bleach_bypass_control = SliderSpinRow(
             self.negative_bleach_bypass)
         self.print_bleach_bypass_control = SliderSpinRow(
@@ -2327,6 +2333,7 @@ class FilmVizWindow(QMainWindow):
             self.print_flash,
             self.push_pull,
             self.color_density,
+            self.warm_tone_separation,
             self.negative_bleach_bypass,
             self.print_bleach_bypass,
             self.printer_light_red,
@@ -2354,6 +2361,7 @@ class FilmVizWindow(QMainWindow):
             ("Print flash (%)", self.print_flash_control),
             ("Push/pull stops", self.push_pull_control),
             ("Color density trim", self.color_density_control),
+            ("Warm-tone separation", self.warm_tone_separation_control),
             ("Negative bypass", self.negative_bleach_bypass_control),
             ("Print bypass", self.print_bleach_bypass_control),
             ("Printer R light", self.printer_light_red_control),
@@ -2476,8 +2484,8 @@ class FilmVizWindow(QMainWindow):
         self.film_format.setCurrentIndex(
             self.film_format.findData("super-35"))
         self.image_width_mm = _double(24.89, 1.0, 100.0, 0.01, 2)
-        self.negative_mtf = _double(0.0, 0.0, 200.0, 5.0, 1)
-        self.print_mtf = _double(0.0, 0.0, 200.0, 5.0, 1)
+        self.negative_mtf = _double(0.0, 0.0, 100.0, 0.1, 1)
+        self.print_mtf = _double(0.0, 0.0, 100.0, 0.1, 1)
         self.negative_mtf.setSuffix(" %")
         self.print_mtf.setSuffix(" %")
         self.film_format.currentIndexChanged.connect(
@@ -2705,6 +2713,7 @@ class FilmVizWindow(QMainWindow):
         self.print_flash.setValue(0.0)
         self.push_pull.setValue(0.0)
         self.color_density.setValue(0.0)
+        self.warm_tone_separation.setValue(1.0)
         self.negative_bleach_bypass.setValue(0.0)
         self.print_bleach_bypass.setValue(0.0)
         self.printer_light_red.setValue(25.0)
@@ -2854,6 +2863,8 @@ class FilmVizWindow(QMainWindow):
                 print_flash=arguments["print_flash"],
                 push_pull=arguments["push_pull"],
                 color_density=arguments["color_density"],
+                warm_tone_separation=
+                    arguments["warm_tone_separation"],
                 negative_bleach_bypass=
                     arguments["negative_bleach_bypass"],
                 print_bleach_bypass=
@@ -3065,6 +3076,7 @@ class FilmVizWindow(QMainWindow):
             print_flash=self.print_flash.value(),
             push_pull=self.push_pull.value(),
             color_density=self.color_density.value(),
+            warm_tone_separation=self.warm_tone_separation.value(),
             negative_bleach_bypass=self.negative_bleach_bypass.value(),
             print_bleach_bypass=self.print_bleach_bypass.value(),
             printer_light_red=self.printer_light_red.value(),

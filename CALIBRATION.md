@@ -138,15 +138,27 @@ synthesis. It preserves exact stock neutrals and progressively compresses
 dye-coordinate differences as chroma grows. A chroma-weighted reduction of the
 common negative-density coordinate increases print exposure, adding viewed
 density so strong colours become deeper rather than simply greyer. The
-operation is hue-direction preserving in normalized dye-coordinate space; it
-is not a display-space saturation or hue correction.
+general compression is radial in normalized dye-coordinate space; only the
+narrowly gated warm guidance described below changes direction. Neither stage
+is a display-space saturation or general hue correction.
 
 Reference review selected the earlier amount 1.5 as the standard creative
 response. The public control is therefore a signed -4..+4 trim: zero maps to
 that standard, -4 maps to the strict calibrated bypass, and +4 maps to twice
-the standard response. The regression set records both the standard baseline
-and explicit calibrated-bypass paths. This remains an empirical rendering
-decision rather than new measured stock calibration.
+the standard response. Warm-Tone Separation then reduces that compression in a
+broad red-plus-green/low-blue dye-coordinate lobe through ordinary midscale
+densities. Its protection fades around neutral, toward highlights and shadows,
+and at extreme chroma so saturated reds remain controlled. Zero restores the
+uniform response, one is the accepted standard and two is maximum protection;
+the common density-depth term remains active at every setting. A small
+directional blend within the same smooth lobe guides near-warm trajectories
+toward the yellow/orange dye-coordinate axis. It is deliberately too narrow
+and too density-limited to convert true magenta objects into skin-like hues.
+
+The regression set records the standard baseline, explicit calibrated bypass,
+uniform warm compression and a stronger shaped setting. These remain empirical
+rendering decisions rather than new measured stock calibration or a claim that
+the warm lobe reconstructs interimage chemistry.
 
 ## Scene-exposure spectral reconstruction
 

@@ -116,6 +116,7 @@ Convert the bundled ARRI AWG3/LogC3 reference image to a 16-bit Rec.709/Gamma
     --print-flash 0 \
     --push-pull 0 \
     --color-density 0 \
+    --warm-tone-separation 1 \
     --printer-light-master 0 \
     --negative-grain 1 \
     --print-grain 1 \
@@ -152,6 +153,16 @@ It progressively compresses chroma and adds chroma-weighted density depth
 through the print stage. It is not an RGB saturation control or a claimed
 interimage-chemistry model. `0` is the accepted standard look, `-4` restores
 the calibrated bypass, and `+4` applies twice the standard response.
+
+`--warm-tone-separation` retains more red-plus-green/low-blue dye separation
+through ordinary warm mid-density colours while leaving Color Density's common
+density depth active. `0` restores uniform hue compression, `1` is the standard
+response and `2` gives maximum warm protection. The protection fades near
+neutral, in highlights and shadows, and at extreme chroma so saturated reds
+still follow the outer roll-off. Within the protected region it also guides
+near-warm trajectories gently toward yellow/orange rather than magenta. This is
+an empirical warm-colour model, not a skin detector or measured interimage
+chemistry.
 
 `--negative-mtf 1` and `--print-mtf 1` apply the measured stock responses as a
 cascaded small-signal system MTF. The selected `--film-format` maps the measured

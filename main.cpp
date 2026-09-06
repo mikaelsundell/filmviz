@@ -47,6 +47,8 @@ struct FilmVizTool
     float print_flash = 0.0f;
     float push_pull_stops = 0.0f;
     float color_density = 0.0f;
+    float warm_tone_separation =
+        FilmColorResponse::standard_warm_tone_separation;
     float negative_bleach_bypass = 0.0f;
     float print_bleach_bypass = 0.0f;
     float printer_light_red = 25.0f;
@@ -321,6 +323,16 @@ validate_profile_options(
         return false;
     }
 
+    if (tool.warm_tone_separation
+            < FilmColorResponse::minimum_warm_tone_separation
+        || tool.warm_tone_separation
+            > FilmColorResponse::maximum_warm_tone_separation) {
+        print_error(
+            "warm-tone separation must be in [0,2]: ",
+            tool.warm_tone_separation);
+        return false;
+    }
+
     if (tool.negative_flash < 0.0f
         || tool.negative_flash > 25.0f
         || tool.print_flash < 0.0f
@@ -494,6 +506,9 @@ main(
     ap.arg("--color-density %f:AMOUNT", &tool.color_density)
       .help("Film colour-density trim; -4 bypass, 0 standard, +4 strongest");
 
+    ap.arg("--warm-tone-separation %f:AMOUNT", &tool.warm_tone_separation)
+      .help("Warm mid-density separation; 0 uniform, 1 standard, 2 strongest");
+
     ap.arg("--negative-bleach-bypass %f:AMOUNT", &tool.negative_bleach_bypass)
       .help("Negative bleach bypass; 0 normal, 1 full modeled bypass (default: 0)");
 
@@ -631,6 +646,7 @@ main(
     print_info("exposure stops: ", tool.exposure_stops);
     print_info("push/pull stops: ", tool.push_pull_stops);
     print_info("color density trim: ", tool.color_density);
+    print_info("warm-tone separation: ", tool.warm_tone_separation);
     print_info(
         "threads: ",
         FilmVizThreading::effective_thread_count(
@@ -679,6 +695,9 @@ main(
 
     pipeline_settings.color_density =
         tool.color_density;
+
+    pipeline_settings.warm_tone_separation =
+        tool.warm_tone_separation;
 
     pipeline_settings.negative_bleach_bypass =
         tool.negative_bleach_bypass;

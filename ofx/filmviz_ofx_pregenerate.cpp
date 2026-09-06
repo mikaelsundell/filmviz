@@ -107,6 +107,9 @@ main(
                     settings.lut_size = options.lut_size;
                     settings.exposure_stops = 0.0f;
                     settings.push_pull_stops = 0.0f;
+                    settings.color_density = 0.0f;
+                    settings.warm_tone_separation =
+                        FilmColorResponse::standard_warm_tone_separation;
                     settings.middle_gray = 0.18f;
                     settings.printer_temperature = 3200.0f;
                     settings.negative_bleach_bypass = 0.0f;
@@ -155,6 +158,7 @@ main(
                         << " print=" << print.identifier
                         << " output=" << output
                         << " lut=" << options.lut_size
+                        << " warm=" << settings.warm_tone_separation
                         << "\n";
 
                     ++generated;

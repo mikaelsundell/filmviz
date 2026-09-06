@@ -86,6 +86,7 @@ pipeline_settings(
     float print_flash,
     float push_pull,
     float color_density,
+    float warm_tone_separation,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
@@ -104,6 +105,7 @@ pipeline_settings(
     settings.print_flash_percent = print_flash;
     settings.push_pull_stops = push_pull;
     settings.color_density = color_density;
+    settings.warm_tone_separation = warm_tone_separation;
     settings.negative_bleach_bypass = negative_bleach_bypass;
     settings.print_bleach_bypass = print_bleach_bypass;
     settings.printer_light_red = printer_light_red;
@@ -171,6 +173,7 @@ generate_lut(
     float print_flash,
     float push_pull,
     float color_density,
+    float warm_tone_separation,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
@@ -206,6 +209,7 @@ generate_lut(
                 print_flash,
                 push_pull,
                 color_density,
+                warm_tone_separation,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
@@ -300,6 +304,7 @@ generate_lut(
         "Print flash percent: " + std::to_string(print_flash),
         "Push/pull stops: " + std::to_string(push_pull) + " / approximate contrast",
         "Color density trim: " + std::to_string(color_density),
+        "Warm-tone separation: " + std::to_string(warm_tone_separation),
         "Negative bleach bypass: " + std::to_string(negative_bleach_bypass),
         "Print bleach bypass: " + std::to_string(print_bleach_bypass),
         "Printer lights R/G/B: "
@@ -338,6 +343,7 @@ process_image(
     float print_flash,
     float push_pull,
     float color_density,
+    float warm_tone_separation,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
@@ -379,6 +385,7 @@ process_image(
                 print_flash,
                 push_pull,
                 color_density,
+                warm_tone_separation,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
@@ -584,6 +591,7 @@ probe_image_pixel(
     float print_flash,
     float push_pull,
     float color_density,
+    float warm_tone_separation,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
@@ -693,6 +701,7 @@ probe_image_pixel(
                 print_flash,
                 push_pull,
                 color_density,
+                warm_tone_separation,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
@@ -941,6 +950,8 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("color_density") = 0.0f,
+        py::arg("warm_tone_separation") =
+            FilmColorResponse::standard_warm_tone_separation,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,
@@ -972,6 +983,8 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("color_density") = 0.0f,
+        py::arg("warm_tone_separation") =
+            FilmColorResponse::standard_warm_tone_separation,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,
@@ -1012,6 +1025,8 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("color_density") = 0.0f,
+        py::arg("warm_tone_separation") =
+            FilmColorResponse::standard_warm_tone_separation,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,

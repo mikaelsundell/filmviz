@@ -113,6 +113,15 @@ This is an explicitly empirical look control, not a reconstruction of measured
 interimage chemistry. The public trim is centred at zero on the accepted
 standard response, corresponding to the earlier experimental amount 1.5.
 Trim -4 is a strict calibrated bypass and +4 applies twice the standard amount.
+Within that response, Warm-Tone Separation smoothly reduces chroma compression
+along the red-plus-green/low-blue dye-coordinate direction through ordinary
+midscale densities. The protection fades near neutral, outside the mid-density
+range and at extreme chroma, retaining the outer red roll-off. Zero selects
+uniform compression, one is the accepted standard and two is maximum warm
+protection. A small direction-preserving radial stage is followed by gentle
+guidance of near-warm trajectories toward the yellow/orange axis, preventing
+the protected branch from curling toward magenta. This is empirical and does
+not classify people or claim a measured interimage mechanism.
 
 ### `PrintFilmProcessor`
 
@@ -248,6 +257,11 @@ chroma-weighted density depth through the print stage. It is separate from
 exposure, characteristic-curve contrast, printer timing and display saturation.
 Zero is the accepted standard response, -4 restores the calibrated bypass and
 +4 applies twice the standard amount.
+Warm-Tone Separation controls the directional protection inside Color Density:
+zero is uniform compression, one is standard and two maximally protects the
+warm mid-density branch. It does not alter the common density-depth term.
+Inside that branch it gently guides near-warm hue trajectories toward the
+yellow/orange dye-coordinate axis.
 
 ## Display output
 

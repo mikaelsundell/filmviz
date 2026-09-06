@@ -79,6 +79,11 @@ FilmPipeline::initialize(
         || !std::isfinite(settings_.color_density)
         || settings_.color_density < FilmColorResponse::minimum_trim
         || settings_.color_density > FilmColorResponse::maximum_trim
+        || !std::isfinite(settings_.warm_tone_separation)
+        || settings_.warm_tone_separation
+            < FilmColorResponse::minimum_warm_tone_separation
+        || settings_.warm_tone_separation
+            > FilmColorResponse::maximum_warm_tone_separation
         || !valid_printer_light(
             settings_.printer_light_red
             + settings_.printer_light_master)
@@ -89,7 +94,8 @@ FilmPipeline::initialize(
             settings_.printer_light_blue
             + settings_.printer_light_master)) {
 
-        error_ = "invalid flash, bleach-bypass or printer-light settings";
+        error_ =
+            "invalid flash, colour-response, bleach-bypass or printer-light settings";
         return false;
     }
 
@@ -567,6 +573,8 @@ FilmPipeline::process_negative_exposure(
     color_settings.amount =
         FilmColorResponse::amount_from_trim(
             settings_.color_density);
+    color_settings.warm_tone_separation =
+        settings_.warm_tone_separation;
     result.color_response_negative_density =
         color_response_->apply(
             result.calibrated_negative_density,

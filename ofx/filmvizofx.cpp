@@ -56,6 +56,7 @@ constexpr const char* kParamNegativeFlash = "negativeFlash";
 constexpr const char* kParamPrintFlash = "printFlash";
 constexpr const char* kParamPushPull = "pushPull";
 constexpr const char* kParamColorDensity = "colorDensity";
+constexpr const char* kParamWarmToneSeparation = "warmToneSeparation";
 constexpr const char* kParamNegativeBleachBypass = "negativeBleachBypass";
 constexpr const char* kParamPrintBleachBypass = "printBleachBypass";
 constexpr const char* kParamPrinterLightRed = "printerLightRed";
@@ -113,6 +114,8 @@ interactive_transform_settings(
         quantize_interactive(preview.push_pull_stops, 0.10f);
     preview.color_density =
         quantize_interactive(preview.color_density, 0.05f);
+    preview.warm_tone_separation =
+        quantize_interactive(preview.warm_tone_separation, 0.05f);
     preview.negative_flash_percent =
         quantize_interactive(preview.negative_flash_percent, 0.10f);
     preview.print_flash_percent =
@@ -157,6 +160,7 @@ struct InstanceData
     OfxParamHandle print_flash = nullptr;
     OfxParamHandle push_pull = nullptr;
     OfxParamHandle color_density = nullptr;
+    OfxParamHandle warm_tone_separation = nullptr;
     OfxParamHandle negative_bypass = nullptr;
     OfxParamHandle print_bypass = nullptr;
     OfxParamHandle printer_r = nullptr;
@@ -309,6 +313,8 @@ read_settings(
     double print_flash = 0.0;
     double push_pull = 0.0;
     double color_density = 0.0;
+    double warm_tone_separation =
+        FilmColorResponse::standard_warm_tone_separation;
     double negative_bypass = 0.0;
     double print_bypass = 0.0;
     double printer_r = 25.0;
@@ -340,6 +346,7 @@ read_settings(
         gParameterSuite->paramGetValueAtTime(instance.print_flash, time, &print_flash),
         gParameterSuite->paramGetValueAtTime(instance.push_pull, time, &push_pull),
         gParameterSuite->paramGetValueAtTime(instance.color_density, time, &color_density),
+        gParameterSuite->paramGetValueAtTime(instance.warm_tone_separation, time, &warm_tone_separation),
         gParameterSuite->paramGetValueAtTime(instance.negative_bypass, time, &negative_bypass),
         gParameterSuite->paramGetValueAtTime(instance.print_bypass, time, &print_bypass),
         gParameterSuite->paramGetValueAtTime(instance.printer_r, time, &printer_r),
@@ -404,6 +411,8 @@ read_settings(
     settings.print_flash_percent = static_cast<float>(print_flash);
     settings.push_pull_stops = static_cast<float>(push_pull);
     settings.color_density = static_cast<float>(color_density);
+    settings.warm_tone_separation =
+        static_cast<float>(warm_tone_separation);
     settings.negative_bleach_bypass = static_cast<float>(negative_bypass);
     settings.print_bleach_bypass = static_cast<float>(print_bypass);
     settings.printer_light_red = static_cast<float>(printer_r);
@@ -487,6 +496,7 @@ create_instance(
         && fetch_param(parameter_set, kParamPrintFlash, instance->print_flash)
         && fetch_param(parameter_set, kParamPushPull, instance->push_pull)
         && fetch_param(parameter_set, kParamColorDensity, instance->color_density)
+        && fetch_param(parameter_set, kParamWarmToneSeparation, instance->warm_tone_separation)
         && fetch_param(parameter_set, kParamNegativeBleachBypass, instance->negative_bypass)
         && fetch_param(parameter_set, kParamPrintBleachBypass, instance->print_bypass)
         && fetch_param(parameter_set, kParamPrinterLightRed, instance->printer_r)
@@ -1078,6 +1088,7 @@ describe_in_context(
         || !define_double_parameter(parameter_set, kParamNegativeFlash, "Flash (%)", 0.0, 0.0, 25.0, kGroupNegative)
         || !define_double_parameter(parameter_set, kParamPushPull, "Push / Pull", 0.0, -3.0, 3.0, kGroupNegative)
         || !define_double_parameter(parameter_set, kParamColorDensity, "Color Density", 0.0, FilmColorResponse::minimum_trim, FilmColorResponse::maximum_trim, kGroupNegative)
+        || !define_double_parameter(parameter_set, kParamWarmToneSeparation, "Warm Separation", FilmColorResponse::standard_warm_tone_separation, FilmColorResponse::minimum_warm_tone_separation, FilmColorResponse::maximum_warm_tone_separation, kGroupNegative)
         || !define_double_parameter(parameter_set, kParamNegativeBleachBypass, "Bleach Bypass", 0.0, 0.0, 1.0, kGroupNegative)
         || !define_choice_parameter(parameter_set, kParamPrintProfile, "Stock", print_options.data(), static_cast<int>(print_options.size()), 0, kGroupPrint)
         || !define_double_parameter(parameter_set, kParamPrintFlash, "Flash (%)", 0.0, 0.0, 25.0, kGroupPrint)
@@ -1641,7 +1652,7 @@ OfxPlugin gPlugin = {
     1,
     kPluginIdentifier,
     1,
-    0,
+    1,
     set_host,
     plugin_main
 };

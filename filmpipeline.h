@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "filmcolorresponse.h"
 #include "filmdata.h"
 #include "negativeprofile.h"
 #include "printprofile.h"
@@ -13,7 +14,6 @@
 
 class ColorTransform;
 class FilmDensityCalibration;
-class FilmColorResponse;
 class FilmDyeModel;
 class FilmProcessor;
 class FilmStock;
@@ -62,6 +62,12 @@ public:
         // accepted standard response, -4 is calibrated bypass, and positive
         // values progressively calm and deepen chromatic regions.
         float color_density = 0.0f;
+
+        // Empirical warm-record separation within FilmColorResponse. One is
+        // the standard protection, zero restores uniform hue compression and
+        // two maximally preserves the warm mid-density branch.
+        float warm_tone_separation =
+            FilmColorResponse::standard_warm_tone_separation;
 
         // Profile-independent bleach-bypass look controls. Zero is normal
         // processing; one is the full modeled process look. The current

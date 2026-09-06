@@ -69,6 +69,9 @@ the measured per-channel result and `0` producing neutral grain.
 Color Density is an empirical negative dye-coordinate look control, not a
 measured interimage-effect model. Its signed trim is centred at zero on the
 accepted standard response; -4 retains the strict calibrated bypass.
+Warm-Tone Separation is part of the same empirical layer: 0 uses uniform
+compression, 1 is the standard warm mid-density protection and 2 is maximum.
+It is not a skin detector or measured interimage-effect model.
 
 ## Code ownership
 
