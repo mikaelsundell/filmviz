@@ -137,6 +137,22 @@ Loads the digitized diffuse-RMS granularity curves for Kodak Verita 200D
 to an RGB density standard deviation. Random sampling is deterministic for a
 seed and pixel coordinate.
 
+### `FilmFormatCatalog`
+
+Owns the shared active-image widths for Regular 8, Super 8, 16mm, Super 16,
+35mm, Super 35 and 65mm. CLI, Python and OpenFX consume these identifiers and
+labels from one source. `custom` carries an explicitly supplied physical width.
+
+### `SpatialResponseModel`
+
+Loads the measured negative and print modulation-transfer curves and converts
+their cycles/mm axes to pixel frequency using the active image width. The two
+stage responses are cascaded into one channel-dependent, DC-preserving FIR.
+Amounts of zero bypass a stage; one uses its measured curve. This is a
+small-signal system-response approximation applied to the rendered image, not
+a claim that the nonlinear negative and print stages are spatially simulated
+at microscopic resolution.
+
 ### `ImageProcessor`
 
 Reads and writes images, builds the spectral LUT used for the image conversion,
@@ -155,6 +171,11 @@ The optional grain-chroma rendering control decomposes the combined density
 noise into a Rec.709-weighted neutral component and channel-difference
 components. Scaling the differences leaves weighted luminance noise unchanged:
 zero produces neutral grain and one preserves the measured per-channel result.
+
+After colour and density-dependent grain rendering, the optional system MTF
+filters the composite result, approximating the spatial response of the
+negative/print path delivered by a scan. It is intentionally absent from
+deterministic `.cube` output.
 
 Image conversion distributes independent output rows over the same global
 worker setting. Image I/O remains serialized, and seeded grain remains
@@ -196,6 +217,13 @@ Exposure compensation shifts negative log exposure by stops. Push/pull scales
 negative Status-M density around the calibrated middle-gray density by
 `2^(0.2 * stops)`. This is explicitly an approximation until measured
 alternate-development characteristic curves are available.
+
+Negative flash adds a uniform exposure equal to a percentage of the calibrated
+middle-gray record exposure before negative development. Print flash does the
+same using the neutral reference printer exposure before print development.
+The linked master printer timing adds the same printer-light point offset to all
+three records; one point remains 0.025 LogE. These are explicit look controls
+and default to zero, leaving the calibrated production baseline unchanged.
 
 ## Display output
 

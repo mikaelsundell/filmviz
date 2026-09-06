@@ -5,7 +5,7 @@ and print-film processing. It is a research and education project, not a
 production-certified film-stock or colour-management product. The simulator
 uses measured stock data to make each stage inspectable: spectral exposure,
 densitometric development, dye-density synthesis, print exposure, viewing,
-LUT generation and image-grain rendering.
+LUT generation and measured image-space grain/MTF rendering.
 
 FilmViz grew from a few late-night experiments into a useful working tool.
 Codex was used throughout as an AI development collaborator for implementation,
@@ -112,12 +112,18 @@ Convert the bundled ARRI AWG3/LogC3 reference image to a 16-bit Rec.709/Gamma
     --lutsize 33 \
     --threads 0 \
     --exposure 0 \
+    --negative-flash 0 \
+    --print-flash 0 \
     --push-pull 0 \
+    --printer-light-master 0 \
     --negative-grain 1 \
     --print-grain 1 \
     --grain-size 1.5 \
     --grain-chroma 1 \
-    --grain-seed 42
+    --grain-seed 42 \
+    --film-format super-35 \
+    --negative-mtf 1 \
+    --print-mtf 1
 ```
 
 Image grain is opt-in. Strength `1` uses the digitized diffuse-RMS density
@@ -134,6 +140,17 @@ between them reduce colour speckling without weakening luminance grain.
 `--exposure` is a camera exposure adjustment in stops. `--push-pull` changes
 negative contrast around calibrated middle gray. Push/pull is explicitly an
 approximation: FilmViz has no alternate-development Verita measurements.
+
+`--negative-flash` and `--print-flash` add uniform record exposure before the
+respective characteristic curves. They are percentages of each stage's
+calibrated neutral reference exposure. `--printer-light-master` is a linked
+offset added to the R/G/B printer-light values; one point is 0.025 LogE.
+
+`--negative-mtf 1` and `--print-mtf 1` apply the measured stock responses as a
+cascaded small-signal system MTF. The selected `--film-format` maps the measured
+cycles/mm axis to image pixels using Regular 8, Super 8, 16mm, Super 16, 35mm,
+Super 35 or 65mm active-image widths. Use `custom` with `--image-width-mm` for
+another aperture or crop. MTF is image-only and cannot be stored in a `.cube`.
 
 `--threads 0` uses the machine's hardware concurrency. A positive value sets a
 process-wide worker limit shared by LUT sampling and image-row conversion.
@@ -281,7 +298,9 @@ field controls the same global C++ thread setting as `filmviz --threads`. See
 - `printprofile.*` — canonical print-profile names and resource metadata
 - `lut3d.*` — LUT generation, interpolation, validation and `.cube` output
 - `granularitymodel.*` — measured negative/print diffuse-RMS lookup and seeded noise
-- `imageprocessor.*` — image I/O, LUT application and two-stage grain rendering
+- `filmformat.*` — shared physical active-image format metadata
+- `spatialresponsemodel.*` — measured cycles/mm MTF to image-space response
+- `imageprocessor.*` — image I/O, LUT application, grain and spatial response
 - `threading.*` — process-wide worker configuration
 - `python/` — pybind11 module and PySide6 image/LUT application
 - `ofx/` — OpenFX front end, shared transform cache and Metal renderer
@@ -290,6 +309,7 @@ field controls the same global C++ thread setting as `filmviz --threads`. See
 - `printfilmprocessor.*` — print exposure/development
 - `printviewer.*` — spectral print viewing -> XYZ -> D60/AP0
 - `tests/` — deterministic CTest regression suite
+- `regression_set/` — committed numerical and visual production stamp
 - `examples/` — current production API and calibration examples
 - `resources/` — organized runtime data and references
 - `working/` — non-runtime source artwork and digitization material

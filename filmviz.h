@@ -8,11 +8,13 @@
 
 #include "bleachbypass.h"
 #include "filmdensitycalibration.h"
+#include "filmformat.h"
 #include "filmpipeline.h"
 #include "halationmodel.h"
 #include "inputtransform.h"
 #include "lut3d.h"
 #include "negativeprofile.h"
 #include "printprofile.h"
+#include "spatialresponsemodel.h"
 #include "statusmdensitometer.h"
 #include "threading.h"

@@ -44,11 +44,11 @@ encoded input
 Multiplying `FilmExposure` by `2^stops` is mathematically the same operation as
 the LogE exposure offset used by `FilmPipeline::relative_negative_log_exposure`.
 Changing Exposure therefore preserves the FilmViz model while avoiding LUT
-regeneration and Metal re-upload. Grain and halation spatial controls are also
-live parameters and do not invalidate the shared transform.
+regeneration and Metal re-upload. Measured MTF, grain and halation spatial
+controls are also live parameters and do not invalidate the shared transform.
 
-Transform-changing controls such as negative stock, push/pull, bleach bypass,
-printer lights, middle gray, and input/output profile select or build a
+Transform-changing controls such as negative stock, flash, push/pull, bleach
+bypass, printer lights, middle gray, and input/output profile select or build a
 different shared transform cache.
 
 During an interactive parameter drag, Resolve's interactive/draft render hint
@@ -56,7 +56,7 @@ selects a quantized 9^3 preview transform when the requested full-quality
 transform is not already resident. This substantially reduces spectral cache
 generation time while preserving the same physical pipeline. When interaction
 ends, FilmViz generates or loads the exact parameter value at the fixed
-production LUT size. Runtime-only Exposure, grain, and halation changes
+production LUT size. Runtime-only Exposure, MTF, grain, and halation changes
 continue to reuse the resident full-quality transform without entering preview
 mode.
 
@@ -190,18 +190,28 @@ Pipeline:
 - Print: Kodak Vision 2383/3383
 - Output profile: ACES2065-1 AP0 linear, Rec.709 Gamma 2.4
 - Exposure stops
+- Negative flash
+- Print flash
 - Push/pull stops
 - Negative bleach bypass
 - Print bleach bypass
 - Printer R/G/B lights, neutral at 25/25/25
+- Printer master timing
 - Middle gray
+
+Spatial response:
+
+- Film format: Regular 8, Super 8, 16mm, Super 16, 35mm, Super 35, 65mm, Custom
+- Custom image width in millimetres
+- Measured negative MTF amount
+- Measured print MTF amount
 
 Grain:
 
 - Enable grain
 - Negative grain
 - Print grain
-- Grain size
+- Grain scale
 - Grain chroma
 - Grain seed
 
@@ -216,7 +226,10 @@ Performance:
 
 - Worker threads
 
-Grain and halation are disabled by default.
+MTF, grain and halation are disabled by default. Enabling MTF uses the measured
+cycles/mm response and the selected active-image width. Because the current
+Metal kernel is pointwise, measured MTF automatically uses the CPU spatial
+bridge while retaining the cached colour transform.
 The OFX production transform is fixed at 33^3 and the calibrated Kodak Vision
 2383/3383
 printer illuminant approximation is fixed at 3200 K. These are profile and
@@ -315,7 +328,7 @@ Resolve after installation.
 
 - Float RGBA input/output only.
 - Metal acceleration is macOS-only; CPU remains available on all platforms.
-- Full-frame rendering is currently requested because halation is spatial.
+- Full-frame rendering is requested because halation and MTF are spatial.
 - No custom-drawn OFX UI; Resolve renders the standard parameter controls.
 - Metal halation uses Metal Performance Shaders Gaussian blur while the CPU
   reference uses FilmViz's CPU spatial approximation, so pixel-level blur can

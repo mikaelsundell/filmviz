@@ -4,6 +4,7 @@
 #pragma once
 
 #include "filmdata.h"
+#include "filmformat.h"
 #include "negativeprofile.h"
 #include "printprofile.h"
 
@@ -43,6 +44,8 @@ struct FilmVizOfxRenderSettings
     int threads = 0;
 
     float exposure_stops = 0.0f;
+    float negative_flash_percent = 0.0f;
+    float print_flash_percent = 0.0f;
     float push_pull_stops = 0.0f;
     float middle_gray = 0.18f;
     float printer_temperature = 3200.0f;
@@ -53,6 +56,14 @@ struct FilmVizOfxRenderSettings
     float printer_light_red = 25.0f;
     float printer_light_green = 25.0f;
     float printer_light_blue = 25.0f;
+    float printer_light_master = 0.0f;
+
+    std::string film_format =
+        FilmFormatCatalog::default_format().identifier;
+    float image_width_mm =
+        FilmFormatCatalog::default_format().image_width_mm;
+    float negative_mtf_amount = 0.0f;
+    float print_mtf_amount = 0.0f;
 
     bool grain_enabled = false;
     float negative_grain = 0.0f;

@@ -124,7 +124,7 @@ try:
     except ImportError:
         np = None
 
-    from PySide6.QtCore import QObject, QPointF, QRectF, QThread, QTimer, QUrl, Qt, Signal, Slot
+    from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QThread, QTimer, QUrl, Qt, Signal, Slot
     from PySide6.QtGui import (
         QColor,
         QColorSpace,
@@ -153,10 +153,13 @@ try:
         QProgressBar,
         QPushButton,
         QPlainTextEdit,
+        QScrollArea,
         QSizePolicy,
+        QSlider,
         QSpinBox,
         QSplitter,
         QStackedWidget,
+        QStyle,
         QTabWidget,
         QVBoxLayout,
         QWidget,
@@ -296,16 +299,23 @@ class PathRow(QWidget):
         super().__init__()
         self.mode = mode
         self.edit = QLineEdit(initial)
-        self.edit.setMinimumWidth(minimum_width)
+        if minimum_width > 0:
+            self.edit.setMinimumWidth(min(120, minimum_width))
         self.edit.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        button = QPushButton("Browse…")
-        button.setFixedWidth(104)
+
+        button = QPushButton()
+        button.setIcon(
+            self.style().standardIcon(
+                QStyle.StandardPixmap.SP_DialogOpenButton))
+        button.setToolTip("Browse")
+        button.setFixedSize(30, 24)
         button.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         button.clicked.connect(self._browse)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
         layout.addWidget(self.edit, 1)
         layout.addWidget(button, 0)
 
@@ -342,6 +352,69 @@ def _double(value, minimum, maximum, step=0.1, decimals=3):
     widget.setDecimals(decimals)
     widget.setValue(value)
     return widget
+
+
+def _reset_button():
+    button = QPushButton("Reset")
+    button.setFixedWidth(64)
+    button.setToolTip("Reset this group to its defaults")
+    return button
+
+
+class SliderSpinRow(QWidget):
+    def __init__(self, spinbox, slider_width: int = 150):
+        super().__init__()
+
+        self.spinbox = spinbox
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setMinimumWidth(slider_width)
+        self.slider.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed)
+
+        if isinstance(spinbox, QDoubleSpinBox):
+            step = max(1e-9, float(spinbox.singleStep()))
+            self._scale = 1.0 / step
+            minimum = int(round(spinbox.minimum() * self._scale))
+            maximum = int(round(spinbox.maximum() * self._scale))
+            value = int(round(spinbox.value() * self._scale))
+        else:
+            self._scale = 1.0
+            minimum = int(spinbox.minimum())
+            maximum = int(spinbox.maximum())
+            value = int(spinbox.value())
+
+        self.slider.setRange(minimum, maximum)
+        self.slider.setValue(value)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        layout.addWidget(self.slider, 1)
+        layout.addWidget(spinbox, 0)
+
+        self.slider.valueChanged.connect(
+            self._slider_changed)
+        spinbox.valueChanged.connect(
+            self._spinbox_changed)
+
+    def _slider_changed(self, value: int):
+        target = value / self._scale
+        if isinstance(self.spinbox, QSpinBox):
+            target = int(round(target))
+
+        if self.spinbox.value() != target:
+            self.spinbox.blockSignals(True)
+            self.spinbox.setValue(target)
+            self.spinbox.blockSignals(False)
+            self.spinbox.valueChanged.emit(self.spinbox.value())
+
+    def _spinbox_changed(self, value):
+        slider_value = int(round(float(value) * self._scale))
+        if self.slider.value() != slider_value:
+            self.slider.blockSignals(True)
+            self.slider.setValue(slider_value)
+            self.slider.blockSignals(False)
 
 
 def _read_curve_csv(
@@ -643,10 +716,17 @@ class ImagePreviewWidget(QWidget):
         self._message = "Convert an image to preview the result"
         self._probe = None
         self._color_space = APP_COLOR_SPACE
+
+        self._fit_to_view = True
+        self._zoom = 1.0
+        self._pan = QPointF(0.0, 0.0)
+
         self.setMinimumSize(520, 320)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
 
     def set_rgb(self, width: int, height: int, rgb: bytes):
         image = QImage(
@@ -659,6 +739,7 @@ class ImagePreviewWidget(QWidget):
         self._image = image.copy()
         self._message = ""
         self._probe = None
+        self.fit_to_view()
         self.update()
 
     def set_color_space(self, color_space):
@@ -671,6 +752,104 @@ class ImagePreviewWidget(QWidget):
         self._image = QImage()
         self._message = message
         self._probe = None
+        self._fit_to_view = True
+        self._zoom = 1.0
+        self._pan = QPointF(0.0, 0.0)
+        self.update()
+
+    def fit_to_view(self):
+        self._fit_to_view = True
+        self._zoom = 1.0
+        self._pan = QPointF(0.0, 0.0)
+        self.update()
+
+    def _fit_scale(self):
+        if self._image.isNull():
+            return 1.0
+
+        return min(
+            self.width() / max(1, self._image.width()),
+            self.height() / max(1, self._image.height()))
+
+    def _effective_scale(self):
+        fit_scale = self._fit_scale()
+        if self._fit_to_view:
+            return fit_scale
+        return fit_scale * self._zoom
+
+    def _image_rect(self):
+        if self._image.isNull():
+            return QRectF()
+
+        scale = self._effective_scale()
+        width = self._image.width() * scale
+        height = self._image.height() * scale
+
+        center = QPointF(
+            self.width() * 0.5,
+            self.height() * 0.5) + self._pan
+
+        return QRectF(
+            center.x() - width * 0.5,
+            center.y() - height * 0.5,
+            width,
+            height)
+
+    def _image_uv_from_widget(self, point):
+        rect = self._image_rect()
+        if rect.isEmpty() or not rect.contains(point):
+            return None
+
+        u = (point.x() - rect.left()) / max(1e-12, rect.width())
+        v = (point.y() - rect.top()) / max(1e-12, rect.height())
+
+        return (
+            min(1.0, max(0.0, float(u))),
+            min(1.0, max(0.0, float(v))),
+        )
+
+    def _zoom_at(self, widget_position, factor: float):
+        if self._image.isNull():
+            return
+
+        factor = max(0.1, min(10.0, float(factor)))
+        old_rect = self._image_rect()
+
+        if old_rect.isEmpty():
+            return
+
+        # Preserve the image point under the gesture/cursor while zooming.
+        image_x = (
+            (widget_position.x() - old_rect.left())
+            / max(1e-12, old_rect.width()))
+        image_y = (
+            (widget_position.y() - old_rect.top())
+            / max(1e-12, old_rect.height()))
+
+        if self._fit_to_view:
+            self._fit_to_view = False
+            self._zoom = 1.0
+
+        self._zoom = max(
+            0.05,
+            min(32.0, self._zoom * factor))
+
+        new_scale = self._effective_scale()
+        new_width = self._image.width() * new_scale
+        new_height = self._image.height() * new_scale
+
+        desired_left = widget_position.x() - image_x * new_width
+        desired_top = widget_position.y() - image_y * new_height
+
+        new_center = QPointF(
+            desired_left + new_width * 0.5,
+            desired_top + new_height * 0.5)
+
+        widget_center = QPointF(
+            self.width() * 0.5,
+            self.height() * 0.5)
+
+        self._pan = new_center - widget_center
         self.update()
 
     def rgb_at(self, u: float, v: float):
@@ -686,37 +865,130 @@ class ImagePreviewWidget(QWidget):
         color = self._image.pixelColor(x, y)
         return (color.redF(), color.greenF(), color.blueF())
 
-    def _image_rect(self):
-        if self._image.isNull():
-            return QRectF()
-
-        size = self._image.size()
-        scale = min(
-            self.width() / max(1, size.width()),
-            self.height() / max(1, size.height()))
-        width = size.width() * scale
-        height = size.height() * scale
-        return QRectF(
-            (self.width() - width) * 0.5,
-            (self.height() - height) * 0.5,
-            width,
-            height)
-
     def mousePressEvent(self, event):
         if self._image.isNull():
             return
 
-        rect = self._image_rect()
-        point = event.position()
-
-        if not rect.contains(point):
+        # Pixel probing is intentionally restricted to a real left mouse
+        # button click. Ignore mouse events synthesized by macOS from the
+        # trackpad so taps and navigation gestures do not create probe data.
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
             return
 
-        u = (point.x() - rect.left()) / max(1.0, rect.width())
-        v = (point.y() - rect.top()) / max(1.0, rect.height())
+        if event.source() != Qt.MouseEventSource.MouseEventNotSynthesized:
+            event.ignore()
+            return
+
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+
+        uv = self._image_uv_from_widget(event.position())
+        if uv is None:
+            event.ignore()
+            return
+
+        u, v = uv
         self._probe = (u, v)
         self.update()
         self.probeRequested.emit(float(u), float(v))
+        event.accept()
+
+    def wheelEvent(self, event):
+        if self._image.isNull():
+            event.ignore()
+            return
+
+        pixel_delta = event.pixelDelta()
+        angle_delta = event.angleDelta()
+        modifiers = event.modifiers()
+
+        # On macOS, two-finger trackpad scrolling normally arrives here.
+        # Prefer pixelDelta when available because it gives smooth panning.
+        if not pixel_delta.isNull():
+            self._fit_to_view = False
+            self._pan += QPointF(
+                pixel_delta.x(),
+                pixel_delta.y())
+            self.update()
+            event.accept()
+            return
+
+        # Some Qt/macOS combinations only expose angleDelta for trackpad
+        # scrolling. Treat it as pan unless the user explicitly holds
+        # Ctrl/Command, in which case it becomes wheel zoom.
+        zoom_modifier = (
+            modifiers & Qt.KeyboardModifier.ControlModifier
+            or modifiers & Qt.KeyboardModifier.MetaModifier
+        )
+
+        if not angle_delta.isNull():
+            if zoom_modifier:
+                factor = 1.15 ** (angle_delta.y() / 120.0)
+                self._zoom_at(event.position(), factor)
+            else:
+                self._fit_to_view = False
+                self._pan += QPointF(
+                    angle_delta.x() / 2.0,
+                    angle_delta.y() / 2.0)
+                self.update()
+
+            event.accept()
+            return
+
+        event.ignore()
+
+
+    def event(self, event):
+        if event.type() == QEvent.Type.NativeGesture:
+            gesture = event.gestureType()
+
+            if gesture == Qt.NativeGestureType.ZoomNativeGesture:
+                # macOS pinch values are incremental. Positive values zoom in,
+                # negative values zoom out. Keep the point under the gesture
+                # stable while changing scale.
+                factor = max(0.25, 1.0 + float(event.value()))
+                try:
+                    position = event.position()
+                except AttributeError:
+                    position = QPointF(
+                        self.width() * 0.5,
+                        self.height() * 0.5)
+
+                self._zoom_at(position, factor)
+                event.accept()
+                return True
+
+            if gesture == Qt.NativeGestureType.PanNativeGesture:
+                try:
+                    delta = event.delta()
+                except AttributeError:
+                    delta = QPointF(0.0, 0.0)
+
+                self._fit_to_view = False
+                self._pan += QPointF(
+                    delta.x(),
+                    delta.y())
+                self.update()
+                event.accept()
+                return True
+
+        return super().event(event)
+
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_F:
+            self.fit_to_view()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event):
+        # Fit mode should continuously follow the available widget size.
+        if self._fit_to_view:
+            self.update()
+
+        super().resizeEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -732,6 +1004,11 @@ class ImagePreviewWidget(QWidget):
 
         pixmap = QPixmap.fromImage(self._image)
         rect = self._image_rect()
+
+        painter.setRenderHint(
+            QPainter.RenderHint.SmoothPixmapTransform,
+            self._effective_scale() < 1.0)
+
         painter.drawPixmap(
             rect.toRect(),
             pixmap)
@@ -1404,7 +1681,9 @@ class WaveformWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._waveform = None
+        self._luma_waveform = None
         self._probe = None
+        self._mode = "rgb"
         self.setMinimumSize(240, 200)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -1426,7 +1705,7 @@ class WaveformWidget(QWidget):
                 columns - 1,
                 (x * columns // max(1, width)).astype(np.int64))
 
-            bin_indices = np.clip(
+            rgb_bins = np.clip(
                 (sampled * (bins - 1)).astype(np.int64),
                 0,
                 bins - 1)
@@ -1438,16 +1717,38 @@ class WaveformWidget(QWidget):
             for channel in range(3):
                 np.add.at(
                     waveform[channel],
-                    (column_indices, bin_indices[:, channel]),
+                    (column_indices, rgb_bins[:, channel]),
                     1)
 
+            luma = (
+                0.2126 * sampled[:, 0]
+                + 0.7152 * sampled[:, 1]
+                + 0.0722 * sampled[:, 2])
+            luma_bins = np.clip(
+                (luma * (bins - 1)).astype(np.int64),
+                0,
+                bins - 1)
+
+            luma_waveform = np.zeros(
+                (columns, bins),
+                dtype=np.int32)
+            np.add.at(
+                luma_waveform,
+                (column_indices, luma_bins),
+                1)
+
             self._waveform = waveform
+            self._luma_waveform = luma_waveform
             self.update()
             return
 
         waveform = [
             [[0] * bins for _ in range(columns)]
             for _ in range(3)
+        ]
+        luma_waveform = [
+            [0] * bins
+            for _ in range(columns)
         ]
 
         for pixel in range(0, pixel_count, stride):
@@ -1457,14 +1758,28 @@ class WaveformWidget(QWidget):
                 int(x * columns / max(1, width)))
             offset = pixel * 3
 
-            for channel in range(3):
-                value = float(rgb[offset + channel])
+            r = float(rgb[offset])
+            g = float(rgb[offset + 1])
+            b = float(rgb[offset + 2])
+
+            for channel, value in enumerate((r, g, b)):
                 bin_index = min(
                     bins - 1,
                     max(0, int(value * (bins - 1))))
                 waveform[channel][column][bin_index] += 1
 
+            y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            y_bin = min(
+                bins - 1,
+                max(0, int(y * (bins - 1))))
+            luma_waveform[column][y_bin] += 1
+
         self._waveform = waveform
+        self._luma_waveform = luma_waveform
+        self.update()
+
+    def set_mode(self, mode: str):
+        self._mode = mode if mode in ("rgb", "y") else "rgb"
         self.update()
 
     def set_probe(self, u: float, v: float, rgb):
@@ -1536,28 +1851,23 @@ class WaveformWidget(QWidget):
                 "RGB waveform")
             return
 
-        colors = (
-            QColor("#ef5555"),
-            QColor("#55c477"),
-            QColor("#5b8def"),
-        )
-
-        maxima = [
-            max(int(max(column)) for column in channel)
-            for channel in self._waveform
-        ]
-        maximum = max(maxima)
-
-        if maximum <= 0:
-            return
-
         painter.setPen(Qt.PenStyle.NoPen)
 
-        for channel, data in enumerate(self._waveform):
-            for x_index, column in enumerate(data):
+        if self._mode == "y":
+            if self._luma_waveform is None:
+                return
+
+            maximum = max(
+                int(max(column))
+                for column in self._luma_waveform)
+
+            if maximum <= 0:
+                return
+
+            for x_index, column in enumerate(self._luma_waveform):
                 px = (
                     plot.left()
-                    + x_index / max(1, len(data) - 1)
+                    + x_index / max(1, len(self._luma_waveform) - 1)
                     * plot.width())
 
                 for value, count in enumerate(column):
@@ -1565,12 +1875,12 @@ class WaveformWidget(QWidget):
                         continue
 
                     alpha = min(
-                        0.72,
-                        0.06
-                        + 0.66
+                        0.78,
+                        0.08
+                        + 0.70
                         * ((count / maximum) ** 0.32))
 
-                    color = QColor(colors[channel])
+                    color = QColor(220, 220, 220)
                     color.setAlphaF(alpha)
                     painter.setBrush(color)
 
@@ -1582,14 +1892,75 @@ class WaveformWidget(QWidget):
                     painter.drawRect(
                         QRectF(px, py, 1.2, 1.2))
 
-        if self._probe is not None:
-            u, rgb = self._probe
-            px = plot.left() + u * plot.width()
-            painter.setBrush(QColor(245, 210, 70))
-            painter.setPen(QPen(QColor(245, 210, 70), 1.8))
-            for value in rgb:
-                py = plot.bottom() - value * plot.height()
+            if self._probe is not None:
+                u, rgb = self._probe
+                y = (
+                    0.2126 * rgb[0]
+                    + 0.7152 * rgb[1]
+                    + 0.0722 * rgb[2])
+                px = plot.left() + u * plot.width()
+                py = plot.bottom() - y * plot.height()
+                painter.setBrush(QColor(245, 210, 70))
+                painter.setPen(QPen(QColor(245, 210, 70), 1.8))
                 painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
+
+            title = "Y waveform"
+
+        else:
+            colors = (
+                QColor("#ef5555"),
+                QColor("#55c477"),
+                QColor("#5b8def"),
+            )
+
+            maxima = [
+                max(int(max(column)) for column in channel)
+                for channel in self._waveform
+            ]
+            maximum = max(maxima)
+
+            if maximum <= 0:
+                return
+
+            for channel, data in enumerate(self._waveform):
+                for x_index, column in enumerate(data):
+                    px = (
+                        plot.left()
+                        + x_index / max(1, len(data) - 1)
+                        * plot.width())
+
+                    for value, count in enumerate(column):
+                        if count <= 0:
+                            continue
+
+                        alpha = min(
+                            0.72,
+                            0.06
+                            + 0.66
+                            * ((count / maximum) ** 0.32))
+
+                        color = QColor(colors[channel])
+                        color.setAlphaF(alpha)
+                        painter.setBrush(color)
+
+                        py = (
+                            plot.bottom()
+                            - value / max(1, len(column) - 1)
+                            * plot.height())
+
+                        painter.drawRect(
+                            QRectF(px, py, 1.2, 1.2))
+
+            if self._probe is not None:
+                u, rgb = self._probe
+                px = plot.left() + u * plot.width()
+                painter.setBrush(QColor(245, 210, 70))
+                painter.setPen(QPen(QColor(245, 210, 70), 1.8))
+                for value in rgb:
+                    py = plot.bottom() - value * plot.height()
+                    painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
+
+            title = "RGB waveform"
 
         painter.setPen(self.palette().color(self.foregroundRole()))
         painter.drawText(
@@ -1599,7 +1970,7 @@ class WaveformWidget(QWidget):
                 plot.width(),
                 label_height),
             Qt.AlignmentFlag.AlignCenter,
-            "RGB waveform")
+            title)
 
 
 class ScopePane(QWidget):
@@ -1621,6 +1992,7 @@ class ScopePane(QWidget):
             "RGB Histogram",
             "RGB Parade",
             "RGB Waveform",
+            "Y Waveform",
         ))
         self.selector.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -1665,7 +2037,14 @@ class ScopePane(QWidget):
             self.selector.currentIndex())
 
     def _mode_changed(self, index: int):
-        self.stack.setCurrentIndex(index)
+        if index == 4:
+            self.stack.setCurrentIndex(3)
+            self.waveform.set_mode("y")
+        else:
+            self.stack.setCurrentIndex(index)
+            if index == 3:
+                self.waveform.set_mode("rgb")
+
         self.zoom2.setVisible(index == 0)
 
     def set_rgb(self, width: int, height: int, rgb):
@@ -1693,7 +2072,7 @@ class FilmVizWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("FilmViz — Experimental Spectral Film Processor")
         self.resize(1500, 860)
-        self.setMinimumSize(1320, 720)
+        self.setMinimumSize(1180, 700)
         self._thread = None
         self._worker = None
         self._pending_output_image = None
@@ -1732,18 +2111,21 @@ class FilmVizWindow(QMainWindow):
         display_toolbar_layout.addWidget(display_label)
         diagnostics_layout.addWidget(display_toolbar, 0)
 
+        diagnostics_splitter = QSplitter(Qt.Orientation.Vertical)
+        diagnostics_splitter.setChildrenCollapsible(False)
+
         self.image_preview = ImagePreviewWidget()
         self.image_preview.probeRequested.connect(
             self._probe_image_pixel)
-        diagnostics_layout.addWidget(self.image_preview, 3)
+        diagnostics_splitter.addWidget(self.image_preview)
 
         self.probe_output = QPlainTextEdit()
         self.probe_output.setReadOnly(True)
-        self.probe_output.setMaximumHeight(145)
+        self.probe_output.setMinimumHeight(70)
         self.probe_output.setPlaceholderText(
             "Click the converted image to inspect the matching source pixel "
             "through AP0 → spectrum → negative → print → output.")
-        diagnostics_layout.addWidget(self.probe_output, 0)
+        diagnostics_splitter.addWidget(self.probe_output)
 
         scopes = QSplitter(Qt.Orientation.Horizontal)
         self.left_scope = ScopePane("Vectorscope")
@@ -1753,22 +2135,40 @@ class FilmVizWindow(QMainWindow):
         scopes.setStretchFactor(0, 1)
         scopes.setStretchFactor(1, 1)
         scopes.setChildrenCollapsible(False)
-        diagnostics_layout.addWidget(scopes, 2)
+        diagnostics_splitter.addWidget(scopes)
+
+        diagnostics_splitter.setStretchFactor(0, 4)
+        diagnostics_splitter.setStretchFactor(1, 1)
+        diagnostics_splitter.setStretchFactor(2, 3)
+        diagnostics_splitter.setSizes([470, 110, 290])
+        diagnostics_layout.addWidget(diagnostics_splitter, 1)
 
         panel = QWidget()
-        panel.setMinimumWidth(540)
+        panel.setMinimumWidth(390)
         panel.setSizePolicy(
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Expanding)
         root_layout = QVBoxLayout(panel)
         root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(6)
+
+        compact_font = panel.font()
+        compact_font.setPointSize(max(9, compact_font.pointSize() - 2))
+        panel.setFont(compact_font)
+        panel.setStyleSheet(
+            "QGroupBox { margin-top: 6px; }"
+            "QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+        )
 
         workspace.addWidget(diagnostics)
         workspace.addWidget(panel)
         workspace.setChildrenCollapsible(False)
         workspace.setStretchFactor(0, 5)
         workspace.setStretchFactor(1, 1)
-        workspace.setSizes([1120, 540])
+        workspace.setSizes([1180, 420])
 
         profiles = filmviz.profiles()
         self.negative_profiles = [
@@ -1787,14 +2187,42 @@ class FilmVizWindow(QMainWindow):
             profile["identifier"]: profile
             for profile in self.print_profiles
         }
-        common = QGroupBox("Pipeline")
-        common_form = QFormLayout(common)
+        self.film_formats = [
+            dict(format_entry)
+            for format_entry in profiles["film_formats"]
+        ]
+        self.film_formats_by_id = {
+            format_entry["identifier"]: format_entry
+            for format_entry in self.film_formats
+        }
+        common = QWidget()
+        common.setMinimumWidth(360)
+        common.setMaximumWidth(430)
+        common.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum)
+
+        common_layout = QVBoxLayout(common)
+        common_layout.setContentsMargins(0, 0, 0, 0)
+        common_layout.setSpacing(6)
+
+        pipeline_header = QWidget()
+        pipeline_header_layout = QHBoxLayout(pipeline_header)
+        pipeline_header_layout.setContentsMargins(0, 0, 0, 0)
+        pipeline_header_layout.addStretch(1)
+        self.pipeline_reset_button = _reset_button()
+        pipeline_header_layout.addWidget(self.pipeline_reset_button)
+
+        common_form_widget = QWidget()
+        common_form = QFormLayout(common_form_widget)
+        common_layout.addWidget(pipeline_header)
+        common_layout.addWidget(common_form_widget)
         common_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.resources = PathRow(
             "directory",
             str(PROJECT_ROOT / "resources"),
-            minimum_width=260)
+            minimum_width=0)
         common_form.addRow("Resource directory", self.resources)
 
         self.input_profile = QComboBox()
@@ -1822,18 +2250,15 @@ class FilmVizWindow(QMainWindow):
         common_form.addRow("Output profile", self.output_profile)
 
         self.exposure = _double(0.0, -10.0, 10.0, 0.25)
+        self.negative_flash = _double(0.0, 0.0, 25.0, 0.1, 2)
+        self.print_flash = _double(0.0, 0.0, 25.0, 0.1, 2)
         self.push_pull = _double(0.0, -5.0, 5.0, 0.25)
         self.negative_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
         self.print_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
-        self.printer_light_red = QSpinBox()
-        self.printer_light_red.setRange(0, 50)
-        self.printer_light_red.setValue(25)
-        self.printer_light_green = QSpinBox()
-        self.printer_light_green.setRange(0, 50)
-        self.printer_light_green.setValue(25)
-        self.printer_light_blue = QSpinBox()
-        self.printer_light_blue.setRange(0, 50)
-        self.printer_light_blue.setValue(25)
+        self.printer_light_red = _double(25.0, 0.0, 50.0, 0.1, 1)
+        self.printer_light_green = _double(25.0, 0.0, 50.0, 0.1, 1)
+        self.printer_light_blue = _double(25.0, 0.0, 50.0, 0.1, 1)
+        self.printer_light_master = _double(0.0, -10.0, 10.0, 0.05, 2)
         self.middle_gray = _double(0.18, 0.001, 2.0, 0.01, 4)
         self.printer_temperature = _double(3200.0, 1000.0, 10000.0, 50.0, 0)
         self.lut_size = QSpinBox()
@@ -1850,64 +2275,159 @@ class FilmVizWindow(QMainWindow):
         self.threads.setSpecialValueText("Auto")
         self.threads.setValue(0)
 
+        self.exposure_control = SliderSpinRow(self.exposure)
+        self.negative_flash_control = SliderSpinRow(self.negative_flash)
+        self.print_flash_control = SliderSpinRow(self.print_flash)
+        self.push_pull_control = SliderSpinRow(self.push_pull)
+        self.negative_bleach_bypass_control = SliderSpinRow(
+            self.negative_bleach_bypass)
+        self.print_bleach_bypass_control = SliderSpinRow(
+            self.print_bleach_bypass)
+        self.printer_light_red_control = SliderSpinRow(
+            self.printer_light_red)
+        self.printer_light_green_control = SliderSpinRow(
+            self.printer_light_green)
+        self.printer_light_blue_control = SliderSpinRow(
+            self.printer_light_blue)
+        self.printer_light_master_control = SliderSpinRow(
+            self.printer_light_master)
+
         for widget in (
             self.exposure,
+            self.negative_flash,
+            self.print_flash,
             self.push_pull,
             self.negative_bleach_bypass,
             self.print_bleach_bypass,
             self.printer_light_red,
             self.printer_light_green,
             self.printer_light_blue,
+            self.printer_light_master,
             self.middle_gray,
             self.printer_temperature,
             self.lut_size,
             self.threads,
         ):
-            widget.setMinimumWidth(88)
+            widget.setMinimumWidth(72)
 
         controls = QWidget()
-        controls.setMinimumWidth(500)
+        controls.setMinimumWidth(330)
+        controls.setMaximumWidth(400)
         controls_layout = QGridLayout(controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setHorizontalSpacing(8)
+        controls_layout.setVerticalSpacing(4)
+
         for row, (label, widget) in enumerate((
-            ("Exposure stops", self.exposure),
-            ("Push/pull stops", self.push_pull),
-            ("Negative bypass", self.negative_bleach_bypass),
-            ("Print bypass", self.print_bleach_bypass),
-            ("Printer R light", self.printer_light_red),
-            ("Printer G light", self.printer_light_green),
-            ("Printer B light", self.printer_light_blue),
+            ("Exposure stops", self.exposure_control),
+            ("Negative flash (%)", self.negative_flash_control),
+            ("Print flash (%)", self.print_flash_control),
+            ("Push/pull stops", self.push_pull_control),
+            ("Negative bypass", self.negative_bleach_bypass_control),
+            ("Print bypass", self.print_bleach_bypass_control),
+            ("Printer R light", self.printer_light_red_control),
+            ("Printer G light", self.printer_light_green_control),
+            ("Printer B light", self.printer_light_blue_control),
+            ("Printer master", self.printer_light_master_control),
             ("Printer K", self.printer_temperature),
             ("Middle gray", self.middle_gray),
             ("LUT size", self.lut_size),
             ("Use LUT acceleration", self.use_lut_acceleration),
             ("Worker threads", self.threads),
         )):
-            column = row % 2
-            grid_row = row // 2
-            controls_layout.addWidget(QLabel(label), grid_row, column * 2)
-            controls_layout.addWidget(widget, grid_row, column * 2 + 1)
+            label_widget = QLabel(label)
+            label_widget.setAlignment(
+                Qt.AlignmentFlag.AlignRight
+                | Qt.AlignmentFlag.AlignVCenter)
+            controls_layout.addWidget(label_widget, row, 0)
+            controls_layout.addWidget(widget, row, 1)
+
+        controls_layout.setColumnStretch(0, 0)
+        controls_layout.setColumnStretch(1, 1)
         common_form.addRow(controls)
         self.print_profile.currentIndexChanged.connect(
             self._print_profile_changed)
-        root_layout.addWidget(common)
+
+        controls_splitter = QSplitter(Qt.Orientation.Vertical)
+        controls_splitter.setChildrenCollapsible(False)
+
+        pipeline_tabs = QTabWidget()
+        pipeline_tabs.setMinimumWidth(360)
+        pipeline_tabs.setMaximumWidth(430)
+        pipeline_tabs.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding)
+
+        pipeline_page = QWidget()
+        pipeline_page_layout = QVBoxLayout(pipeline_page)
+        pipeline_page_layout.setContentsMargins(0, 0, 0, 0)
+
+        pipeline_scroll = QScrollArea()
+        pipeline_scroll.setWidgetResizable(True)
+        pipeline_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        pipeline_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        pipeline_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        pipeline_scroll_host = QWidget()
+        pipeline_scroll_host_layout = QHBoxLayout(pipeline_scroll_host)
+        pipeline_scroll_host_layout.setContentsMargins(0, 0, 0, 0)
+        pipeline_scroll_host_layout.addWidget(
+            common,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        pipeline_scroll_host_layout.addStretch(1)
+
+        pipeline_scroll.setWidget(pipeline_scroll_host)
+        pipeline_page_layout.addWidget(pipeline_scroll)
+        pipeline_tabs.addTab(pipeline_page, "Pipeline")
+        controls_splitter.addWidget(pipeline_tabs)
 
         self.tabs = QTabWidget()
-        root_layout.addWidget(self.tabs)
+        self.tabs.setMinimumWidth(360)
+        self.tabs.setMaximumWidth(430)
+        self.tabs.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding)
+        controls_splitter.addWidget(self.tabs)
+
+        controls_splitter.setStretchFactor(0, 1)
+        controls_splitter.setStretchFactor(1, 2)
+        controls_splitter.setSizes([330, 470])
+        root_layout.addWidget(controls_splitter, 1)
 
         image_tab = QWidget()
-        image_form = QFormLayout(image_tab)
+        image_tab.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum)
+
+        image_tab_layout = QVBoxLayout(image_tab)
+        image_tab_layout.setContentsMargins(0, 0, 0, 0)
+        image_tab_layout.setSpacing(6)
+
+        image_header = QWidget()
+        image_header_layout = QHBoxLayout(image_header)
+        image_header_layout.setContentsMargins(0, 0, 0, 0)
+        image_header_layout.addStretch(1)
+        self.image_reset_button = _reset_button()
+        image_header_layout.addWidget(self.image_reset_button)
+
+        image_form_widget = QWidget()
+        image_form = QFormLayout(image_form_widget)
+        image_tab_layout.addWidget(image_header)
+        image_tab_layout.addWidget(image_form_widget)
         image_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         default_image = PROJECT_ROOT / "resources" / "references" / "images" / "ARRI_Helen_John_ALEXA_Mini_LF_AWG3_LogC3.tif"
         self.input_image = PathRow(
             "input",
             str(default_image),
-            minimum_width=260)
+            minimum_width=0)
         self.output_image = PathRow(
             "output",
             str(PROJECT_ROOT / "build" / "filmviz_output.tif"),
-            minimum_width=260)
+            minimum_width=0)
         image_form.addRow("Input image", self.input_image)
         image_form.addRow("Output image", self.output_image)
         self.negative_grain = _double(0.0, 0.0, 10.0)
@@ -1917,51 +2437,131 @@ class FilmVizWindow(QMainWindow):
         self.grain_seed = QSpinBox()
         self.grain_seed.setRange(0, 2_147_483_647)
         self.grain_seed.setValue(1)
+        self.film_format = QComboBox()
+        for format_entry in self.film_formats:
+            self.film_format.addItem(
+                format_entry["display_name"],
+                format_entry["identifier"])
+        self.film_format.setCurrentIndex(
+            self.film_format.findData("super-35"))
+        self.image_width_mm = _double(24.89, 1.0, 100.0, 0.01, 2)
+        self.negative_mtf = _double(0.0, 0.0, 200.0, 5.0, 1)
+        self.print_mtf = _double(0.0, 0.0, 200.0, 5.0, 1)
+        self.negative_mtf.setSuffix(" %")
+        self.print_mtf.setSuffix(" %")
+        self.film_format.currentIndexChanged.connect(
+            self._film_format_changed)
         self.halation_strength = _double(0.0, 0.0, 1.0, 0.05)
         self.halation_radius = _double(12.0, 0.0, 200.0, 1.0, 1)
         self.halation_threshold = _double(0.7, 0.0, 4.0, 0.05, 3)
-        image_form.addRow("Negative grain", self.negative_grain)
-        image_form.addRow("Print grain", self.print_grain)
-        image_form.addRow("Grain size (px)", self.grain_size)
-        image_form.addRow("Grain chroma", self.grain_chroma)
+
+        self.negative_grain_control = SliderSpinRow(
+            self.negative_grain)
+        self.print_grain_control = SliderSpinRow(
+            self.print_grain)
+        self.grain_size_control = SliderSpinRow(
+            self.grain_size)
+        self.grain_chroma_control = SliderSpinRow(
+            self.grain_chroma)
+        self.negative_mtf_control = SliderSpinRow(
+            self.negative_mtf)
+        self.print_mtf_control = SliderSpinRow(
+            self.print_mtf)
+        self.halation_strength_control = SliderSpinRow(
+            self.halation_strength)
+        self.halation_radius_control = SliderSpinRow(
+            self.halation_radius)
+        self.halation_threshold_control = SliderSpinRow(
+            self.halation_threshold)
+        image_form.addRow("Negative grain", self.negative_grain_control)
+        image_form.addRow("Print grain", self.print_grain_control)
+        image_form.addRow("Grain scale (px)", self.grain_size_control)
+        image_form.addRow("Grain chroma", self.grain_chroma_control)
         image_form.addRow("Grain seed", self.grain_seed)
-        image_form.addRow("Halation", self.halation_strength)
-        image_form.addRow("Halation radius (px)", self.halation_radius)
-        image_form.addRow("Halation threshold", self.halation_threshold)
+        image_form.addRow("Film format", self.film_format)
+        image_form.addRow("Active image width (mm)", self.image_width_mm)
+        image_form.addRow("Negative MTF", self.negative_mtf_control)
+        image_form.addRow("Print MTF", self.print_mtf_control)
+        image_form.addRow("Halation", self.halation_strength_control)
+        image_form.addRow("Halation radius (px)", self.halation_radius_control)
+        image_form.addRow("Halation threshold", self.halation_threshold_control)
         self.convert_button = QPushButton("Convert image")
         self.convert_button.clicked.connect(self.convert_image)
         self.open_output_button = QPushButton("Open output")
         self.open_output_button.clicked.connect(self.open_output_image)
         self.open_output_button.setVisible(False)
         self.open_output_button.setEnabled(False)
-        image_actions = QWidget()
-        image_actions_layout = QHBoxLayout(image_actions)
-        image_actions_layout.setContentsMargins(0, 0, 0, 0)
-        image_actions_layout.addWidget(self.convert_button, 1)
-        image_actions_layout.addWidget(self.open_output_button)
-        image_form.addRow(image_actions)
-        self.tabs.addTab(image_tab, "Convert Image")
+        image_scroll = QScrollArea()
+        image_scroll.setWidgetResizable(True)
+        image_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        image_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        image_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        image_scroll.setWidget(image_tab)
+
+        self.tabs.addTab(image_scroll, "Convert Image")
+        self._film_format_changed()
 
         lut_tab = QWidget()
-        lut_form = QFormLayout(lut_tab)
+        lut_tab.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum)
+
+        lut_tab_layout = QVBoxLayout(lut_tab)
+        lut_tab_layout.setContentsMargins(0, 0, 0, 0)
+        lut_tab_layout.setSpacing(6)
+
+        lut_header = QWidget()
+        lut_header_layout = QHBoxLayout(lut_header)
+        lut_header_layout.setContentsMargins(0, 0, 0, 0)
+        lut_header_layout.addStretch(1)
+        self.lut_reset_button = _reset_button()
+        lut_header_layout.addWidget(self.lut_reset_button)
+
+        lut_form_widget = QWidget()
+        lut_form = QFormLayout(lut_form_widget)
+        lut_tab_layout.addWidget(lut_header)
+        lut_tab_layout.addWidget(lut_form_widget)
         lut_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.output_lut = PathRow(
             "lut",
             str(PROJECT_ROOT / "build" / "filmviz.cube"),
-            minimum_width=260)
+            minimum_width=0)
         lut_form.addRow("Output LUT", self.output_lut)
-        note = QLabel("LUTs are deterministic and do not contain image grain.")
+        note = QLabel(
+            "LUTs are deterministic and do not contain image grain or MTF.")
         note.setWordWrap(True)
         lut_form.addRow(note)
         self.lut_button = QPushButton("Generate LUT")
         self.lut_button.clicked.connect(self.generate_lut)
         lut_form.addRow(self.lut_button)
-        self.tabs.addTab(lut_tab, "Generate LUT")
+        lut_scroll = QScrollArea()
+        lut_scroll.setWidgetResizable(True)
+        lut_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        lut_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        lut_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        lut_scroll.setWidget(lut_tab)
+
+        self.tabs.addTab(lut_scroll, "Generate LUT")
 
 
         profiles_tab = QWidget()
+        profiles_tab.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum)
         profiles_layout = QVBoxLayout(profiles_tab)
+
+        profiles_header = QWidget()
+        profiles_header_layout = QHBoxLayout(profiles_header)
+        profiles_header_layout.setContentsMargins(0, 0, 0, 0)
+        profiles_header_layout.addStretch(1)
+        self.profiles_reset_button = _reset_button()
+        profiles_header_layout.addWidget(self.profiles_reset_button)
+        profiles_layout.addWidget(profiles_header)
 
         profile_controls = QWidget()
         profile_controls_layout = QHBoxLayout(profile_controls)
@@ -1996,9 +2596,35 @@ class FilmVizWindow(QMainWindow):
         self.resources.edit.editingFinished.connect(
             self._reload_profile_plot)
 
-        self.tabs.addTab(profiles_tab, "Profiles")
+        profiles_scroll = QScrollArea()
+        profiles_scroll.setWidgetResizable(True)
+        profiles_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        profiles_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        profiles_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        profiles_scroll.setWidget(profiles_tab)
+
+        self.tabs.addTab(profiles_scroll, "Profiles")
         self._profile_family_changed()
         self._print_profile_changed()
+
+        self.pipeline_reset_button.clicked.connect(
+            self._reset_pipeline)
+        self.image_reset_button.clicked.connect(
+            self._reset_image_settings)
+        self.lut_reset_button.clicked.connect(
+            self._reset_lut_settings)
+        self.profiles_reset_button.clicked.connect(
+            self._reset_profiles)
+
+        image_actions = QWidget()
+        image_actions_layout = QHBoxLayout(image_actions)
+        image_actions_layout.setContentsMargins(0, 0, 0, 0)
+        image_actions_layout.setSpacing(6)
+        image_actions_layout.addWidget(self.convert_button, 1)
+        image_actions_layout.addWidget(self.open_output_button, 0)
+        root_layout.addWidget(image_actions, 0)
 
         status = QWidget()
         status_layout = QHBoxLayout(status)
@@ -2031,17 +2657,93 @@ class FilmVizWindow(QMainWindow):
 
 
     @Slot()
+    def _reset_pipeline(self):
+        self.input_profile.setCurrentIndex(0)
+        if self.negative_profile.count() > 0:
+            self.negative_profile.setCurrentIndex(0)
+
+        print_index = self.print_profile.findData("kodak-2383")
+        if print_index < 0 and self.print_profile.count() > 0:
+            print_index = 0
+        if print_index >= 0:
+            self.print_profile.setCurrentIndex(print_index)
+
+        self.output_profile.setCurrentText("rec709-gamma24")
+        self.exposure.setValue(0.0)
+        self.negative_flash.setValue(0.0)
+        self.print_flash.setValue(0.0)
+        self.push_pull.setValue(0.0)
+        self.negative_bleach_bypass.setValue(0.0)
+        self.print_bleach_bypass.setValue(0.0)
+        self.printer_light_red.setValue(25.0)
+        self.printer_light_green.setValue(25.0)
+        self.printer_light_blue.setValue(25.0)
+        self.printer_light_master.setValue(0.0)
+        self.printer_temperature.setValue(3200.0)
+        self.middle_gray.setValue(0.18)
+        self.lut_size.setValue(65)
+        self.use_lut_acceleration.setChecked(True)
+        self.threads.setValue(0)
+        self._print_profile_changed()
+
+    @Slot()
+    def _reset_image_settings(self):
+        self.negative_grain.setValue(0.0)
+        self.print_grain.setValue(0.0)
+        self.grain_size.setValue(1.0)
+        self.grain_chroma.setValue(1.0)
+        self.grain_seed.setValue(1)
+
+        format_index = self.film_format.findData("super-35")
+        if format_index >= 0:
+            self.film_format.setCurrentIndex(format_index)
+
+        self.negative_mtf.setValue(0.0)
+        self.print_mtf.setValue(0.0)
+        self.halation_strength.setValue(0.0)
+        self.halation_radius.setValue(12.0)
+        self.halation_threshold.setValue(0.7)
+        self._film_format_changed()
+
+    @Slot()
+    def _reset_lut_settings(self):
+        self.output_lut.edit.setText(
+            str(PROJECT_ROOT / "build" / "filmviz.cube"))
+
+    @Slot()
+    def _reset_profiles(self):
+        if self.profile_family.count() > 0:
+            self.profile_family.setCurrentIndex(0)
+        if self.profile_curve_type.count() > 0:
+            self.profile_curve_type.setCurrentIndex(0)
+        self._reload_profile_plot()
+
+    @Slot()
     def _print_profile_changed(self):
         negative_only = self.print_profile.currentData() == "none"
         for widget in (
-            self.print_bleach_bypass,
-            self.printer_light_red,
-            self.printer_light_green,
-            self.printer_light_blue,
+            self.print_flash_control,
+            self.print_bleach_bypass_control,
+            self.printer_light_master_control,
+            self.printer_light_red_control,
+            self.printer_light_green_control,
+            self.printer_light_blue_control,
             self.printer_temperature,
-            self.print_grain,
+            self.print_grain_control,
+            self.print_mtf_control,
         ):
             widget.setEnabled(not negative_only)
+
+    @Slot()
+    def _film_format_changed(self):
+        identifier = self.film_format.currentData()
+        format_entry = self.film_formats_by_id.get(identifier)
+
+        if format_entry is not None and identifier != "custom":
+            self.image_width_mm.setValue(
+                float(format_entry["image_width_mm"]))
+
+        self.image_width_mm.setEnabled(identifier == "custom")
 
     def _load_diagnostics(self, filename: str):
         try:
@@ -2114,6 +2816,8 @@ class FilmVizWindow(QMainWindow):
                 negative=arguments["negative"],
                 print=arguments["print"],
                 exposure=arguments["exposure"],
+                negative_flash=arguments["negative_flash"],
+                print_flash=arguments["print_flash"],
                 push_pull=arguments["push_pull"],
                 negative_bleach_bypass=
                     arguments["negative_bleach_bypass"],
@@ -2125,6 +2829,8 @@ class FilmVizWindow(QMainWindow):
                     arguments["printer_light_green"],
                 printer_light_blue=
                     arguments["printer_light_blue"],
+                printer_light_master=
+                    arguments["printer_light_master"],
                 middle_gray=arguments["middle_gray"],
                 printer_temperature=
                     arguments["printer_temperature"],
@@ -2319,12 +3025,15 @@ class FilmVizWindow(QMainWindow):
             lut_size=self.lut_size.value(),
             use_lut_acceleration=self.use_lut_acceleration.isChecked(),
             exposure=self.exposure.value(),
+            negative_flash=self.negative_flash.value(),
+            print_flash=self.print_flash.value(),
             push_pull=self.push_pull.value(),
             negative_bleach_bypass=self.negative_bleach_bypass.value(),
             print_bleach_bypass=self.print_bleach_bypass.value(),
             printer_light_red=self.printer_light_red.value(),
             printer_light_green=self.printer_light_green.value(),
             printer_light_blue=self.printer_light_blue.value(),
+            printer_light_master=self.printer_light_master.value(),
             middle_gray=self.middle_gray.value(),
             printer_temperature=self.printer_temperature.value(),
             threads=self.threads.value(),
@@ -2341,6 +3050,10 @@ class FilmVizWindow(QMainWindow):
             grain_size=self.grain_size.value(),
             grain_chroma=self.grain_chroma.value(),
             grain_seed=self.grain_seed.value(),
+            film_format=self.film_format.currentData(),
+            image_width_mm=self.image_width_mm.value(),
+            negative_mtf=self.negative_mtf.value() * 0.01,
+            print_mtf=self.print_mtf.value() * 0.01,
             halation_strength=self.halation_strength.value(),
             halation_radius=self.halation_radius.value(),
             halation_threshold=self.halation_threshold.value(),

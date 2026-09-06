@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell.
 
 #include "filmpipeline.h"
+#include "filmformat.h"
 #include "imageprocessor.h"
 #include "inputtransform.h"
 #include "lut3d.h"
@@ -41,16 +42,22 @@ struct FilmVizTool
     float middle_gray = 0.18f;
     float printer_temperature = 3200.0f;
     float exposure_stops = 0.0f;
+    float negative_flash = 0.0f;
+    float print_flash = 0.0f;
     float push_pull_stops = 0.0f;
     float negative_bleach_bypass = 0.0f;
     float print_bleach_bypass = 0.0f;
     float printer_light_red = 25.0f;
     float printer_light_green = 25.0f;
     float printer_light_blue = 25.0f;
+    float printer_light_master = 0.0f;
     float negative_grain = 0.0f;
     float print_grain = 0.0f;
     float grain_size = 1.0f;
     float grain_chroma = 1.0f;
+    float image_width_mm = 0.0f;
+    float negative_mtf = 0.0f;
+    float print_mtf = 0.0f;
     float halation_strength = 0.0f;
     float halation_radius = 12.0f;
     float halation_threshold = 0.7f;
@@ -59,6 +66,8 @@ struct FilmVizTool
     std::string resources;
     std::string input = "awg3-logc3-ei800";
     std::string output = "ap0-linear";
+    std::string film_format =
+        FilmFormatCatalog::default_format().identifier;
     std::string negative =
         NegativeProfileCatalog::default_profile().identifier;
     std::string print =
@@ -196,6 +205,19 @@ print_profiles()
         << std::setw(20)
         << "none"
         << "View negative without print film\n"
+        << "  film format:\n";
+
+    for (const auto& format : FilmFormatCatalog::formats()) {
+        std::cout
+            << "    "
+            << std::left
+            << std::setw(20)
+            << format.identifier
+            << format.display_name
+            << " (" << format.image_width_mm << " mm)\n";
+    }
+
+    std::cout
         << "  output:\n"
         << "    ap0-linear         viewed print as ACES2065-1 AP0 linear\n"
         << "    rec709-gamma24     direct Rec.709/Gamma 2.4 preview (no ACES RRT)\n";
@@ -289,12 +311,22 @@ validate_profile_options(
         return false;
     }
 
-    if (tool.printer_light_red < 0.0f
-        || tool.printer_light_red > 50.0f
-        || tool.printer_light_green < 0.0f
-        || tool.printer_light_green > 50.0f
-        || tool.printer_light_blue < 0.0f
-        || tool.printer_light_blue > 50.0f) {
+    if (tool.negative_flash < 0.0f
+        || tool.negative_flash > 25.0f
+        || tool.print_flash < 0.0f
+        || tool.print_flash > 25.0f) {
+        print_error(
+            "flash percentages must be in [0,25]: ",
+            tool.negative_flash);
+        return false;
+    }
+
+    if (tool.printer_light_red + tool.printer_light_master < 0.0f
+        || tool.printer_light_red + tool.printer_light_master > 50.0f
+        || tool.printer_light_green + tool.printer_light_master < 0.0f
+        || tool.printer_light_green + tool.printer_light_master > 50.0f
+        || tool.printer_light_blue + tool.printer_light_master < 0.0f
+        || tool.printer_light_blue + tool.printer_light_master > 50.0f) {
 
         print_error(
             "printer lights must be in [0,50]: ",
@@ -322,6 +354,36 @@ validate_profile_options(
         print_error(
             "grain chroma must be non-negative: ",
             tool.grain_chroma);
+        return false;
+    }
+
+    const FilmFormatCatalog::Format* film_format =
+        FilmFormatCatalog::find(tool.film_format);
+
+    if (!film_format) {
+        print_error("unknown film format: ", tool.film_format);
+        return false;
+    }
+
+    if (tool.image_width_mm <= 0.0f) {
+        tool.image_width_mm = film_format->image_width_mm;
+    }
+
+    if (tool.negative_mtf < 0.0f
+        || tool.negative_mtf > 2.0f
+        || tool.print_mtf < 0.0f
+        || tool.print_mtf > 2.0f) {
+        print_error("MTF amounts must be in [0,2]: ", tool.negative_mtf);
+        return false;
+    }
+
+    if (tool.input_image.empty()
+        && (tool.negative_mtf > 0.0f
+            || tool.print_mtf > 0.0f)) {
+        print_error(
+            "MTF is spatial and requires --input-image; "
+            "it cannot be stored in a .cube LUT",
+            "");
         return false;
     }
 
@@ -410,6 +472,12 @@ main(
     ap.arg("--exposure %f:STOPS", &tool.exposure_stops)
       .help("Camera exposure adjustment in stops (default: 0)");
 
+    ap.arg("--negative-flash %f:PERCENT", &tool.negative_flash)
+      .help("Neutral negative preflash as percent of middle-gray exposure");
+
+    ap.arg("--print-flash %f:PERCENT", &tool.print_flash)
+      .help("Neutral print flash as percent of reference printer exposure");
+
     ap.arg("--push-pull %f:STOPS", &tool.push_pull_stops)
       .help("Approximate negative-development push (+) or pull (-) (default: 0)");
 
@@ -428,6 +496,9 @@ main(
     ap.arg("--printer-light-b %f:POINTS", &tool.printer_light_blue)
       .help("Blue printer light on 0-50 scale; 25 is neutral (default: 25)");
 
+    ap.arg("--printer-light-master %f:POINTS", &tool.printer_light_master)
+      .help("Linked offset added to all three printer lights (default: 0)");
+
     ap.separator("Image processing flags:");
 
     ap.arg("--input-image %s:FILE", &tool.input_image)
@@ -443,13 +514,25 @@ main(
       .help("Measured print-stock grain strength; 0 disables, 1 is measured RMS");
 
     ap.arg("--grain-size %f:PIXELS", &tool.grain_size)
-      .help("Spatial grain correlation size in output pixels (default: 1)");
+      .help("Artistic grain spatial scale in output pixels (default: 1)");
 
     ap.arg("--grain-chroma %f:AMOUNT", &tool.grain_chroma)
       .help("Grain chroma: 0 neutral, 1 measured per-channel result (default: 1)");
 
     ap.arg("--grain-seed %d:SEED", &tool.grain_seed)
       .help("Deterministic grain seed (default: 1)");
+
+    ap.arg("--film-format %s:FORMAT", &tool.film_format)
+      .help("regular-8, super-8, 16mm, super-16, 35mm, super-35, 65mm, or custom");
+
+    ap.arg("--image-width-mm %f:MM", &tool.image_width_mm)
+      .help("Override active film-image width used for cycles/mm MTF mapping");
+
+    ap.arg("--negative-mtf %f:AMOUNT", &tool.negative_mtf)
+      .help("Measured negative MTF: 0 bypass, 1 measured, 2 exaggerated");
+
+    ap.arg("--print-mtf %f:AMOUNT", &tool.print_mtf)
+      .help("Measured print MTF: 0 bypass, 1 measured, 2 exaggerated");
 
     ap.arg("--halation %f:STRENGTH", &tool.halation_strength)
       .help("Image-space halation strength; 0 disables, 1 full effect (default: 0)");
@@ -559,6 +642,9 @@ main(
     pipeline_settings.negative_profile =
         tool.negative;
 
+    pipeline_settings.print_profile =
+        tool.print;
+
     pipeline_settings.middle_gray =
         tool.middle_gray;
 
@@ -567,6 +653,12 @@ main(
 
     pipeline_settings.exposure_stops =
         tool.exposure_stops;
+
+    pipeline_settings.negative_flash_percent =
+        tool.negative_flash;
+
+    pipeline_settings.print_flash_percent =
+        tool.print_flash;
 
     pipeline_settings.push_pull_stops =
         tool.push_pull_stops;
@@ -585,6 +677,9 @@ main(
 
     pipeline_settings.printer_light_blue =
         tool.printer_light_blue;
+
+    pipeline_settings.printer_light_master =
+        tool.printer_light_master;
 
     FilmPipeline pipeline;
 
@@ -611,6 +706,10 @@ main(
         print_info("negative grain: ", tool.negative_grain);
         print_info("print grain: ", tool.print_grain);
         print_info("grain chroma: ", tool.grain_chroma);
+        print_info("film format: ", tool.film_format);
+        print_info("active image width mm: ", tool.image_width_mm);
+        print_info("negative MTF: ", tool.negative_mtf);
+        print_info("print MTF: ", tool.print_mtf);
         print_info("halation: ", tool.halation_strength);
         print_info("halation radius: ", tool.halation_radius);
         print_info("halation threshold: ", tool.halation_threshold);
@@ -631,6 +730,14 @@ main(
             tool.grain_chroma;
         image_settings.grain_seed =
             static_cast<std::uint32_t>(tool.grain_seed);
+        image_settings.film_format =
+            tool.film_format;
+        image_settings.image_width_mm =
+            tool.image_width_mm;
+        image_settings.negative_mtf_amount =
+            tool.negative_mtf;
+        image_settings.print_mtf_amount =
+            tool.print_mtf;
         image_settings.halation_strength =
             tool.halation_strength;
         image_settings.halation_radius_pixels =

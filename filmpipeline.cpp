@@ -68,11 +68,24 @@ FilmPipeline::initialize(
             && settings_.print_profile != "none")
         || !valid_unit_control(settings_.negative_bleach_bypass)
         || !valid_unit_control(settings_.print_bleach_bypass)
-        || !valid_printer_light(settings_.printer_light_red)
-        || !valid_printer_light(settings_.printer_light_green)
-        || !valid_printer_light(settings_.printer_light_blue)) {
+        || !std::isfinite(settings_.negative_flash_percent)
+        || settings_.negative_flash_percent < 0.0f
+        || settings_.negative_flash_percent > 25.0f
+        || !std::isfinite(settings_.print_flash_percent)
+        || settings_.print_flash_percent < 0.0f
+        || settings_.print_flash_percent > 25.0f
+        || !std::isfinite(settings_.printer_light_master)
+        || !valid_printer_light(
+            settings_.printer_light_red
+            + settings_.printer_light_master)
+        || !valid_printer_light(
+            settings_.printer_light_green
+            + settings_.printer_light_master)
+        || !valid_printer_light(
+            settings_.printer_light_blue
+            + settings_.printer_light_master)) {
 
-        error_ = "invalid bleach-bypass or printer-light settings";
+        error_ = "invalid flash, bleach-bypass or printer-light settings";
         return false;
     }
 
@@ -326,11 +339,14 @@ FilmPipeline::initialize(
     print_settings.reference_status_a_density =
         settings_.print_reference_status_a_density;
     print_settings.printer_light_red =
-        settings_.printer_light_red;
+        settings_.printer_light_red
+        + settings_.printer_light_master;
     print_settings.printer_light_green =
-        settings_.printer_light_green;
+        settings_.printer_light_green
+        + settings_.printer_light_master;
     print_settings.printer_light_blue =
-        settings_.printer_light_blue;
+        settings_.printer_light_blue
+        + settings_.printer_light_master;
 
     print_processor_ =
         std::make_unique<PrintFilmProcessor>(
@@ -455,20 +471,37 @@ FilmPipeline::process_negative_exposure(
 {
     Result result;
 
-    result.negative_exposure =
+    FilmExposure flashed_negative_exposure =
         negative_exposure;
 
+    const float negative_flash_scale =
+        settings_.negative_flash_percent
+        * 0.01f;
+
+    flashed_negative_exposure.red +=
+        reference_negative_exposure_.red
+        * negative_flash_scale;
+    flashed_negative_exposure.green +=
+        reference_negative_exposure_.green
+        * negative_flash_scale;
+    flashed_negative_exposure.blue +=
+        reference_negative_exposure_.blue
+        * negative_flash_scale;
+
+    result.negative_exposure =
+        flashed_negative_exposure;
+
     if (!valid_
-        || !std::isfinite(negative_exposure.red)
-        || !std::isfinite(negative_exposure.green)
-        || !std::isfinite(negative_exposure.blue)) {
+        || !std::isfinite(flashed_negative_exposure.red)
+        || !std::isfinite(flashed_negative_exposure.green)
+        || !std::isfinite(flashed_negative_exposure.blue)) {
         return result;
     }
 
     result.negative_status_m_density =
         negative_processor_->develop(
             relative_negative_log_exposure(
-                negative_exposure));
+                flashed_negative_exposure));
 
     if (std::abs(settings_.push_pull_stops) > 1e-7f) {
         // No alternate-development measurements are available for the active
@@ -597,9 +630,25 @@ FilmPipeline::process_negative_exposure(
         return result;
     }
 
-    const FilmExposure print_exposure =
+    FilmExposure print_exposure =
         print_processor_->expose(
             negative_transmittance);
+
+    const float print_flash_scale =
+        settings_.print_flash_percent
+        * 0.01f;
+    const FilmExposure& neutral_print_exposure =
+        print_processor_->balance().neutral_reference_exposure;
+
+    print_exposure.red +=
+        neutral_print_exposure.red
+        * print_flash_scale;
+    print_exposure.green +=
+        neutral_print_exposure.green
+        * print_flash_scale;
+    print_exposure.blue +=
+        neutral_print_exposure.blue
+        * print_flash_scale;
 
     result.print_exposure =
         print_exposure;

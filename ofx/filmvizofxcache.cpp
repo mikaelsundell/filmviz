@@ -15,8 +15,9 @@ namespace
 constexpr char kMagic[8] = {'F','V','O','F','X','C','H','E'};
 // Increment whenever a core pipeline change alters cached transform values,
 // even if the binary payload layout itself is unchanged. Version 4 adopts the
-// exposure-separated rgb2spec reconstruction used by FilmPipeline.
-constexpr std::uint32_t kVersion = 4u;
+// exposure-separated rgb2spec reconstruction used by FilmPipeline. Version 5
+// adds negative/print flashing and linked master printer timing.
+constexpr std::uint32_t kVersion = 5u;
 constexpr std::uint32_t kHasNegativeExposure = 1u << 0u;
 
 void
@@ -90,13 +91,16 @@ FilmVizOfxTransformKey::operator==(
         && output_profile == other.output_profile
         && lut_size == other.lut_size
         && push_pull_stops == other.push_pull_stops
+        && negative_flash_percent == other.negative_flash_percent
+        && print_flash_percent == other.print_flash_percent
         && middle_gray == other.middle_gray
         && printer_temperature == other.printer_temperature
         && negative_bleach_bypass == other.negative_bleach_bypass
         && print_bleach_bypass == other.print_bleach_bypass
         && printer_light_red == other.printer_light_red
         && printer_light_green == other.printer_light_green
-        && printer_light_blue == other.printer_light_blue;
+        && printer_light_blue == other.printer_light_blue
+        && printer_light_master == other.printer_light_master;
 }
 
 std::uint64_t
@@ -111,6 +115,8 @@ filmviz_ofx_transform_hash(
     hash_value(hash, key.output_profile);
     hash_value(hash, key.lut_size);
     hash_value(hash, key.push_pull_stops);
+    hash_value(hash, key.negative_flash_percent);
+    hash_value(hash, key.print_flash_percent);
     hash_value(hash, key.middle_gray);
     hash_value(hash, key.printer_temperature);
     hash_value(hash, key.negative_bleach_bypass);
@@ -118,6 +124,7 @@ filmviz_ofx_transform_hash(
     hash_value(hash, key.printer_light_red);
     hash_value(hash, key.printer_light_green);
     hash_value(hash, key.printer_light_blue);
+    hash_value(hash, key.printer_light_master);
 
     return hash;
 }

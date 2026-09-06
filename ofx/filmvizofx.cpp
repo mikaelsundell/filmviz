@@ -7,6 +7,7 @@
 #include "ofxCore.h"
 #include "filmvizofxprocessor.h"
 #include "filmvizofxlog.h"
+#include "filmformat.h"
 #include "negativeprofile.h"
 #include "printprofile.h"
 
@@ -51,13 +52,20 @@ constexpr const char* kParamNegativeProfile = "negativeProfile";
 constexpr const char* kParamPrintProfile = "printProfile";
 constexpr const char* kParamOutputProfile = "outputProfile";
 constexpr const char* kParamExposure = "exposure";
+constexpr const char* kParamNegativeFlash = "negativeFlash";
+constexpr const char* kParamPrintFlash = "printFlash";
 constexpr const char* kParamPushPull = "pushPull";
 constexpr const char* kParamNegativeBleachBypass = "negativeBleachBypass";
 constexpr const char* kParamPrintBleachBypass = "printBleachBypass";
 constexpr const char* kParamPrinterLightRed = "printerLightRed";
 constexpr const char* kParamPrinterLightGreen = "printerLightGreen";
 constexpr const char* kParamPrinterLightBlue = "printerLightBlue";
+constexpr const char* kParamPrinterLightMaster = "printerLightMaster";
 constexpr const char* kParamMiddleGray = "middleGray";
+constexpr const char* kParamFilmFormat = "filmFormat";
+constexpr const char* kParamImageWidthMm = "imageWidthMm";
+constexpr const char* kParamNegativeMtf = "negativeMtf";
+constexpr const char* kParamPrintMtf = "printMtf";
 constexpr const char* kParamEnableGrain = "enableGrain";
 constexpr const char* kParamNegativeGrain = "negativeGrain";
 constexpr const char* kParamPrintGrain = "printGrain";
@@ -94,6 +102,10 @@ interactive_transform_settings(
     // size are restored for the non-interactive render.
     preview.push_pull_stops =
         quantize_interactive(preview.push_pull_stops, 0.10f);
+    preview.negative_flash_percent =
+        quantize_interactive(preview.negative_flash_percent, 0.10f);
+    preview.print_flash_percent =
+        quantize_interactive(preview.print_flash_percent, 0.10f);
     preview.negative_bleach_bypass =
         quantize_interactive(preview.negative_bleach_bypass, 0.05f);
     preview.print_bleach_bypass =
@@ -104,6 +116,8 @@ interactive_transform_settings(
         quantize_interactive(preview.printer_light_green, 0.50f);
     preview.printer_light_blue =
         quantize_interactive(preview.printer_light_blue, 0.50f);
+    preview.printer_light_master =
+        quantize_interactive(preview.printer_light_master, 0.50f);
     preview.middle_gray =
         std::max(
             0.01f,
@@ -129,13 +143,20 @@ struct InstanceData
     OfxParamHandle print = nullptr;
     OfxParamHandle output = nullptr;
     OfxParamHandle exposure = nullptr;
+    OfxParamHandle negative_flash = nullptr;
+    OfxParamHandle print_flash = nullptr;
     OfxParamHandle push_pull = nullptr;
     OfxParamHandle negative_bypass = nullptr;
     OfxParamHandle print_bypass = nullptr;
     OfxParamHandle printer_r = nullptr;
     OfxParamHandle printer_g = nullptr;
     OfxParamHandle printer_b = nullptr;
+    OfxParamHandle printer_master = nullptr;
     OfxParamHandle middle_gray = nullptr;
+    OfxParamHandle film_format = nullptr;
+    OfxParamHandle image_width_mm = nullptr;
+    OfxParamHandle negative_mtf = nullptr;
+    OfxParamHandle print_mtf = nullptr;
     OfxParamHandle threads = nullptr;
 
     OfxParamHandle grain_enabled = nullptr;
@@ -267,6 +288,7 @@ read_settings(
     int negative = 0;
     int print = 0;
     int output = 1;
+    int film_format = 5;
     int threads = 0;
 
     int grain_enabled = 0;
@@ -274,13 +296,19 @@ read_settings(
     int halation_enabled = 0;
 
     double exposure = 0.0;
+    double negative_flash = 0.0;
+    double print_flash = 0.0;
     double push_pull = 0.0;
     double negative_bypass = 0.0;
     double print_bypass = 0.0;
     double printer_r = 25.0;
     double printer_g = 25.0;
     double printer_b = 25.0;
+    double printer_master = 0.0;
     double middle_gray = 0.18;
+    double image_width_mm = 24.89;
+    double negative_mtf = 0.0;
+    double print_mtf = 0.0;
 
     double negative_grain = 0.0;
     double print_grain = 0.0;
@@ -299,13 +327,20 @@ read_settings(
         gParameterSuite->paramGetValueAtTime(instance.print, time, &print),
         gParameterSuite->paramGetValueAtTime(instance.output, time, &output),
         gParameterSuite->paramGetValueAtTime(instance.exposure, time, &exposure),
+        gParameterSuite->paramGetValueAtTime(instance.negative_flash, time, &negative_flash),
+        gParameterSuite->paramGetValueAtTime(instance.print_flash, time, &print_flash),
         gParameterSuite->paramGetValueAtTime(instance.push_pull, time, &push_pull),
         gParameterSuite->paramGetValueAtTime(instance.negative_bypass, time, &negative_bypass),
         gParameterSuite->paramGetValueAtTime(instance.print_bypass, time, &print_bypass),
         gParameterSuite->paramGetValueAtTime(instance.printer_r, time, &printer_r),
         gParameterSuite->paramGetValueAtTime(instance.printer_g, time, &printer_g),
         gParameterSuite->paramGetValueAtTime(instance.printer_b, time, &printer_b),
+        gParameterSuite->paramGetValueAtTime(instance.printer_master, time, &printer_master),
         gParameterSuite->paramGetValueAtTime(instance.middle_gray, time, &middle_gray),
+        gParameterSuite->paramGetValueAtTime(instance.film_format, time, &film_format),
+        gParameterSuite->paramGetValueAtTime(instance.image_width_mm, time, &image_width_mm),
+        gParameterSuite->paramGetValueAtTime(instance.negative_mtf, time, &negative_mtf),
+        gParameterSuite->paramGetValueAtTime(instance.print_mtf, time, &print_mtf),
         gParameterSuite->paramGetValueAtTime(instance.threads, time, &threads),
         gParameterSuite->paramGetValueAtTime(instance.grain_enabled, time, &grain_enabled),
         gParameterSuite->paramGetValueAtTime(instance.negative_grain, time, &negative_grain),
@@ -336,11 +371,15 @@ read_settings(
         NegativeProfileCatalog::profiles();
     const auto& print_profiles =
         PrintProfileCatalog::profiles();
+    const auto& film_formats =
+        FilmFormatCatalog::formats();
 
     if (negative < 0
         || negative >= static_cast<int>(negative_profiles.size())
         || print < 0
-        || print >= static_cast<int>(print_profiles.size())) {
+        || print >= static_cast<int>(print_profiles.size())
+        || film_format < 0
+        || film_format >= static_cast<int>(film_formats.size())) {
         return false;
     }
 
@@ -352,13 +391,25 @@ read_settings(
     settings.output_profile = output;
     settings.threads = threads;
     settings.exposure_stops = static_cast<float>(exposure);
+    settings.negative_flash_percent = static_cast<float>(negative_flash);
+    settings.print_flash_percent = static_cast<float>(print_flash);
     settings.push_pull_stops = static_cast<float>(push_pull);
     settings.negative_bleach_bypass = static_cast<float>(negative_bypass);
     settings.print_bleach_bypass = static_cast<float>(print_bypass);
     settings.printer_light_red = static_cast<float>(printer_r);
     settings.printer_light_green = static_cast<float>(printer_g);
     settings.printer_light_blue = static_cast<float>(printer_b);
+    settings.printer_light_master = static_cast<float>(printer_master);
     settings.middle_gray = static_cast<float>(middle_gray);
+    settings.film_format =
+        film_formats[static_cast<std::size_t>(film_format)].identifier;
+    settings.image_width_mm =
+        settings.film_format == "custom"
+            ? static_cast<float>(image_width_mm)
+            : film_formats[
+                static_cast<std::size_t>(film_format)].image_width_mm;
+    settings.negative_mtf_amount = static_cast<float>(negative_mtf);
+    settings.print_mtf_amount = static_cast<float>(print_mtf);
 
     settings.grain_enabled = grain_enabled != 0;
     settings.negative_grain = static_cast<float>(negative_grain);
@@ -423,13 +474,20 @@ create_instance(
         && fetch_param(parameter_set, kParamPrintProfile, instance->print)
         && fetch_param(parameter_set, kParamOutputProfile, instance->output)
         && fetch_param(parameter_set, kParamExposure, instance->exposure)
+        && fetch_param(parameter_set, kParamNegativeFlash, instance->negative_flash)
+        && fetch_param(parameter_set, kParamPrintFlash, instance->print_flash)
         && fetch_param(parameter_set, kParamPushPull, instance->push_pull)
         && fetch_param(parameter_set, kParamNegativeBleachBypass, instance->negative_bypass)
         && fetch_param(parameter_set, kParamPrintBleachBypass, instance->print_bypass)
         && fetch_param(parameter_set, kParamPrinterLightRed, instance->printer_r)
         && fetch_param(parameter_set, kParamPrinterLightGreen, instance->printer_g)
         && fetch_param(parameter_set, kParamPrinterLightBlue, instance->printer_b)
+        && fetch_param(parameter_set, kParamPrinterLightMaster, instance->printer_master)
         && fetch_param(parameter_set, kParamMiddleGray, instance->middle_gray)
+        && fetch_param(parameter_set, kParamFilmFormat, instance->film_format)
+        && fetch_param(parameter_set, kParamImageWidthMm, instance->image_width_mm)
+        && fetch_param(parameter_set, kParamNegativeMtf, instance->negative_mtf)
+        && fetch_param(parameter_set, kParamPrintMtf, instance->print_mtf)
         && fetch_param(parameter_set, kParamWorkerThreads, instance->threads)
         && fetch_param(parameter_set, kParamEnableGrain, instance->grain_enabled)
         && fetch_param(parameter_set, kParamNegativeGrain, instance->negative_grain)
@@ -928,6 +986,23 @@ describe_in_context(
         print_options.push_back(profile.display_name.c_str());
     }
 
+    const auto& supported_formats =
+        FilmFormatCatalog::formats();
+    std::vector<const char*> format_options;
+    format_options.reserve(supported_formats.size());
+    int format_default = 0;
+
+    for (std::size_t index = 0;
+         index < supported_formats.size();
+         ++index) {
+        const auto& format = supported_formats[index];
+        format_options.push_back(format.display_name.c_str());
+        if (format.identifier
+            == FilmFormatCatalog::default_format().identifier) {
+            format_default = static_cast<int>(index);
+        }
+    }
+
     static const char* output_profiles[] = {
         "ACES2065-1 / AP0",
         "Rec.709 / Gamma 2.4"
@@ -940,17 +1015,24 @@ describe_in_context(
         || !define_choice_parameter(parameter_set, kParamPrintProfile, "Print", print_options.data(), static_cast<int>(print_options.size()), 0)
         || !define_choice_parameter(parameter_set, kParamOutputProfile, "Output", output_profiles, 2, 1)
         || !define_double_parameter(parameter_set, kParamExposure, "Exposure", 0.0, -8.0, 8.0)
+        || !define_double_parameter(parameter_set, kParamNegativeFlash, "Negative Flash (%)", 0.0, 0.0, 25.0)
+        || !define_double_parameter(parameter_set, kParamPrintFlash, "Print Flash (%)", 0.0, 0.0, 25.0)
         || !define_double_parameter(parameter_set, kParamPushPull, "Push / Pull", 0.0, -3.0, 3.0)
         || !define_double_parameter(parameter_set, kParamNegativeBleachBypass, "Negative Bleach Bypass", 0.0, 0.0, 1.0)
         || !define_double_parameter(parameter_set, kParamPrintBleachBypass, "Print Bleach Bypass", 0.0, 0.0, 1.0)
         || !define_double_parameter(parameter_set, kParamPrinterLightRed, "Printer Light Red", 25.0, 0.0, 50.0)
         || !define_double_parameter(parameter_set, kParamPrinterLightGreen, "Printer Light Green", 25.0, 0.0, 50.0)
         || !define_double_parameter(parameter_set, kParamPrinterLightBlue, "Printer Light Blue", 25.0, 0.0, 50.0)
+        || !define_double_parameter(parameter_set, kParamPrinterLightMaster, "Printer Light Master", 0.0, -25.0, 25.0)
         || !define_double_parameter(parameter_set, kParamMiddleGray, "Middle Gray", 0.18, 0.01, 1.0)
+        || !define_choice_parameter(parameter_set, kParamFilmFormat, "Film Format", format_options.data(), static_cast<int>(format_options.size()), format_default)
+        || !define_double_parameter(parameter_set, kParamImageWidthMm, "Custom Image Width (mm)", 24.89, 1.0, 100.0)
+        || !define_double_parameter(parameter_set, kParamNegativeMtf, "Negative MTF", 0.0, 0.0, 2.0)
+        || !define_double_parameter(parameter_set, kParamPrintMtf, "Print MTF", 0.0, 0.0, 2.0)
         || !define_boolean_parameter(parameter_set, kParamEnableGrain, "Enable Grain", 0)
         || !define_double_parameter(parameter_set, kParamNegativeGrain, "Negative Grain", 0.0, 0.0, 2.0)
         || !define_double_parameter(parameter_set, kParamPrintGrain, "Print Grain", 0.0, 0.0, 2.0)
-        || !define_double_parameter(parameter_set, kParamGrainSize, "Grain Size", 1.0, 1.0, 5.0)
+        || !define_double_parameter(parameter_set, kParamGrainSize, "Grain Scale", 1.0, 1.0, 5.0)
         || !define_double_parameter(parameter_set, kParamGrainChroma, "Grain Chroma", 1.0, 0.0, 2.0)
         || !define_integer_parameter(parameter_set, kParamGrainSeed, "Grain Seed", 1, 0, 1000000)
         || !define_boolean_parameter(parameter_set, kParamEnableHalation, "Enable Halation", 0)
@@ -1224,8 +1306,16 @@ render(
         << " exposure=" << settings.exposure_stops
         << " lut=" << settings.lut_size
         << " interactive=" << (interactive ? 1 : 0)
+        << " format=" << settings.film_format
+        << " width_mm=" << settings.image_width_mm
+        << " negative_mtf=" << settings.negative_mtf_amount
+        << " print_mtf=" << settings.print_mtf_amount
         << " grain=" << (settings.grain_enabled ? 1 : 0)
         << " halation=" << (settings.halation_enabled ? 1 : 0);
+
+    const bool requires_cpu_spatial =
+        settings.negative_mtf_amount > 0.0f
+        || settings.print_mtf_amount > 0.0f;
 
     FilmVizOfxLog::Scope render_scope(
         "render",
@@ -1299,7 +1389,7 @@ render(
             //   Metal -> Metal when available, otherwise CPU fallback below.
             //   CPU   -> explicitly stage through shared buffers so the CPU
             //            reference path can still be compared in a Metal render.
-            if (backend == 2) {
+            if (backend == 2 || requires_cpu_spatial) {
                 rendered =
                     instance->metal_processor.render_cpu_bridge(
                         instance->processor,
@@ -1343,21 +1433,25 @@ render(
         if (!rendered) {
             render_scope.finish(
                 std::string("backend=")
-                    + (backend == 2 ? "cpu_bridge" : "metal")
+                    + (backend == 2 || requires_cpu_spatial
+                        ? "cpu_bridge"
+                        : "metal")
                     + " result=failed error=" + error);
 
             if (error == "render aborted") {
                 return kOfxStatOK;
             }
 
-            return backend == 2
+            return backend == 2 || requires_cpu_spatial
                 ? kOfxStatFailed
                 : kOfxStatGPURenderFailed;
         }
 
         render_scope.finish(
             std::string("backend=")
-                + (backend == 2 ? "cpu_bridge" : "metal")
+                + (backend == 2 || requires_cpu_spatial
+                    ? "cpu_bridge"
+                    : "metal")
                 + " result=ok");
         return kOfxStatOK;
     }

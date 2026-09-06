@@ -49,6 +49,7 @@ set(FILMVIZ_CORE_SOURCES
     diagramwriter.cpp
     filmdensitycalibration.cpp
     filmdyemodel.cpp
+    filmformat.cpp
     filmpipeline.cpp
     filmprocessor.cpp
     filmstock.cpp
@@ -67,6 +68,7 @@ set(FILMVIZ_CORE_SOURCES
     spectralcolorimetry.cpp
     spectralilluminant.cpp
     spectralreconstructor.cpp
+    spatialresponsemodel.cpp
     statusmdensitometer.cpp
     threading.cpp
     mitsuba/rgb2spec.c
@@ -149,6 +151,7 @@ if(BUILD_TESTING)
         tests/test_lut3d.cpp
         tests/test_negative_profile.cpp
         tests/test_pipeline.cpp
+        tests/test_regression_set.cpp
     )
 
     foreach(test_source IN LISTS FILMVIZ_TEST_SOURCES)
@@ -168,6 +171,7 @@ if(BUILD_TESTING)
         target_compile_definitions(${test_name}
             PRIVATE
                 FILMVIZ_TEST_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources"
+                FILMVIZ_REGRESSION_DIR="${CMAKE_CURRENT_SOURCE_DIR}/regression_set"
         )
 
         add_test(
@@ -180,6 +184,14 @@ if(BUILD_TESTING)
                 TIMEOUT 120
         )
     endforeach()
+
+    add_custom_target(update_regression_set
+        COMMAND $<TARGET_FILE:test_regression_set> --update
+        DEPENDS test_regression_set
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMENT "Updating checked-in FilmViz regression stamps"
+        VERBATIM
+    )
 
     set_tests_properties(
         test_density_calibration
@@ -398,6 +410,7 @@ install(
         filmdata.h
         filmdensitycalibration.h
         filmdyemodel.h
+        filmformat.h
         filmpipeline.h
         filmprocessor.h
         filmstock.h
@@ -413,6 +426,7 @@ install(
         printviewer.h
         spectralilluminant.h
         spectralreconstructor.h
+        spatialresponsemodel.h
         statusmdensitometer.h
         threading.h
     DESTINATION include/filmviz

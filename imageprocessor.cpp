@@ -7,6 +7,9 @@
 #include "granularitymodel.h"
 #include "halationmodel.h"
 #include "lut3d.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
+#include "spatialresponsemodel.h"
 #include "threading.h"
 
 #include <OpenImageIO/imagebuf.h>
@@ -224,6 +227,15 @@ ImageProcessor::process(
         || settings.print_grain_strength < 0.0f
         || settings.grain_size_pixels < 1.0f
         || settings.grain_chroma < 0.0f
+        || !FilmFormatCatalog::find(settings.film_format)
+        || !std::isfinite(settings.image_width_mm)
+        || settings.image_width_mm <= 0.0f
+        || !std::isfinite(settings.negative_mtf_amount)
+        || settings.negative_mtf_amount < 0.0f
+        || settings.negative_mtf_amount > 2.0f
+        || !std::isfinite(settings.print_mtf_amount)
+        || settings.print_mtf_amount < 0.0f
+        || settings.print_mtf_amount > 2.0f
         || !HalationModel::valid_settings(
             halation_validation_settings)) {
 
@@ -1013,6 +1025,76 @@ ImageProcessor::process(
         return false;
     }
 
+    const float print_mtf_amount =
+        pipeline.settings().print_profile == "none"
+            ? 0.0f
+            : settings.print_mtf_amount;
+
+    if (settings.negative_mtf_amount > 0.0f
+        || print_mtf_amount > 0.0f) {
+        const auto* negative_profile =
+            NegativeProfileCatalog::find(
+                pipeline.settings().negative_profile);
+        const auto* print_profile =
+            PrintProfileCatalog::find(
+                pipeline.settings().print_profile == "none"
+                    ? PrintProfileCatalog::default_profile().identifier
+                    : pipeline.settings().print_profile);
+
+        if (!negative_profile || !print_profile) {
+            error_ = "could not resolve MTF profile metadata";
+            return false;
+        }
+
+        const std::filesystem::path resources(
+            pipeline.settings().resources_directory);
+        const std::filesystem::path negative_mtf =
+            resources
+            / negative_profile->resource_directory
+            / (negative_profile->resource_prefix
+               + "_modulation_transfer_function_curves.csv");
+        const std::filesystem::path print_mtf =
+            resources
+            / print_profile->resource_directory
+            / print_profile->mtf_filename;
+        SpatialResponseModel spatial_response;
+
+        if (!spatial_response.load(
+                negative_mtf.string(),
+                print_mtf.string())) {
+            error_ = "could not initialize measured MTF response";
+            return false;
+        }
+
+        SpatialResponseModel::Settings spatial_settings;
+        spatial_settings.image_width_mm = settings.image_width_mm;
+        spatial_settings.negative_amount = settings.negative_mtf_amount;
+        spatial_settings.print_amount = print_mtf_amount;
+        spatial_settings.gamma24_encoded =
+            settings.output == Output::Rec709Gamma24;
+
+        if (progress) {
+            progress("Measured MTF", 0, 1);
+        }
+
+        if (!spatial_response.apply(
+                output_pixels,
+                input_spec.width,
+                input_spec.height,
+                spatial_settings,
+                cancel)) {
+            error_ =
+                cancelled()
+                    ? "image processing cancelled"
+                    : "measured MTF processing failed";
+            return false;
+        }
+
+        if (progress) {
+            progress("Measured MTF", 1, 1);
+        }
+    }
+
     const std::filesystem::path output_path(output_filename);
     std::error_code filesystem_error;
 
@@ -1052,6 +1134,18 @@ ImageProcessor::process(
     output_spec.attribute(
         "filmviz:grain_chroma",
         settings.grain_chroma);
+    output_spec.attribute(
+        "filmviz:film_format",
+        settings.film_format);
+    output_spec.attribute(
+        "filmviz:image_width_mm",
+        settings.image_width_mm);
+    output_spec.attribute(
+        "filmviz:negative_mtf_amount",
+        settings.negative_mtf_amount);
+    output_spec.attribute(
+        "filmviz:print_mtf_amount",
+        print_mtf_amount);
     output_spec.attribute(
         "filmviz:halation_strength",
         settings.halation_strength);

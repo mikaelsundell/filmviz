@@ -41,6 +41,13 @@ no shell environment setup is required.
 Running `python3 python/filmviz_app.py` directly remains supported when that
 Python environment can already import both PySide6 and `filmviz_python`.
 
+The image interface exposes negative and print flash, linked master printer
+timing, density-dependent negative/print grain, and measured negative/print
+MTF. Film-format presets supply the physical active-image width used to convert
+the MTF curves from cycles/mm to pixels; Custom enables direct width entry.
+These controls call the shared C++ models rather than duplicating film logic in
+Python.
+
 If PySide6 is installed in the same non-system dependency prefix, the app reads
 `build/CMakeCache.txt` and adds that prefix's Python site-packages directory.
 You can also set `FILMVIZ_DEPENDENCY_PREFIX` explicitly.

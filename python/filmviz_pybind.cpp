@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell.
 
 #include "filmpipeline.h"
+#include "filmformat.h"
 #include "imageprocessor.h"
 #include "inputtransform.h"
 #include "lut3d.h"
@@ -81,12 +82,15 @@ pipeline_settings(
     const std::string& negative,
     const std::string& print,
     float exposure,
+    float negative_flash,
+    float print_flash,
     float push_pull,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
     float printer_light_green,
     float printer_light_blue,
+    float printer_light_master,
     float middle_gray,
     float printer_temperature)
 {
@@ -95,12 +99,15 @@ pipeline_settings(
     settings.negative_profile = negative;
     settings.print_profile = print;
     settings.exposure_stops = exposure;
+    settings.negative_flash_percent = negative_flash;
+    settings.print_flash_percent = print_flash;
     settings.push_pull_stops = push_pull;
     settings.negative_bleach_bypass = negative_bleach_bypass;
     settings.print_bleach_bypass = print_bleach_bypass;
     settings.printer_light_red = printer_light_red;
     settings.printer_light_green = printer_light_green;
     settings.printer_light_blue = printer_light_blue;
+    settings.printer_light_master = printer_light_master;
     settings.middle_gray = middle_gray;
     settings.printer_temperature_kelvin = printer_temperature;
     return settings;
@@ -158,12 +165,15 @@ generate_lut(
     const std::string& output,
     int lut_size,
     float exposure,
+    float negative_flash,
+    float print_flash,
     float push_pull,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
     float printer_light_green,
     float printer_light_blue,
+    float printer_light_master,
     float middle_gray,
     float printer_temperature,
     int threads,
@@ -189,12 +199,15 @@ generate_lut(
                 negative,
                 print,
                 exposure,
+                negative_flash,
+                print_flash,
                 push_pull,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
                 printer_light_green,
                 printer_light_blue,
+                printer_light_master,
                 middle_gray,
                 printer_temperature))) {
 
@@ -279,6 +292,8 @@ generate_lut(
         "Input: " + input,
         "Negative: " + negative + " / ISO Status-M density calibration",
         "Exposure stops: " + std::to_string(exposure),
+        "Negative flash percent: " + std::to_string(negative_flash),
+        "Print flash percent: " + std::to_string(print_flash),
         "Push/pull stops: " + std::to_string(push_pull) + " / approximate contrast",
         "Negative bleach bypass: " + std::to_string(negative_bleach_bypass),
         "Print bleach bypass: " + std::to_string(print_bleach_bypass),
@@ -286,6 +301,7 @@ generate_lut(
             + std::to_string(printer_light_red) + " / "
             + std::to_string(printer_light_green) + " / "
             + std::to_string(printer_light_blue),
+        "Printer light master: " + std::to_string(printer_light_master),
         "Print: " + print + " / printer K=" + std::to_string(printer_temperature),
         "Output: " + output,
         "No ACES RRT/ODT is applied by FilmViz"
@@ -313,12 +329,15 @@ process_image(
     int lut_size,
     bool use_lut_acceleration,
     float exposure,
+    float negative_flash,
+    float print_flash,
     float push_pull,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
     float printer_light_green,
     float printer_light_blue,
+    float printer_light_master,
     float middle_gray,
     float printer_temperature,
     float negative_grain,
@@ -326,6 +345,10 @@ process_image(
     float grain_size,
     float grain_chroma,
     unsigned int grain_seed,
+    const std::string& film_format,
+    float image_width_mm,
+    float negative_mtf,
+    float print_mtf,
     float halation_strength,
     float halation_radius,
     float halation_threshold,
@@ -346,12 +369,15 @@ process_image(
                 negative,
                 print,
                 exposure,
+                negative_flash,
+                print_flash,
                 push_pull,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
                 printer_light_green,
                 printer_light_blue,
+                printer_light_master,
                 middle_gray,
                 printer_temperature))) {
 
@@ -369,6 +395,10 @@ process_image(
     settings.grain_size_pixels = grain_size;
     settings.grain_chroma = grain_chroma;
     settings.grain_seed = grain_seed;
+    settings.film_format = film_format;
+    settings.image_width_mm = image_width_mm;
+    settings.negative_mtf_amount = negative_mtf;
+    settings.print_mtf_amount = print_mtf;
     settings.halation_strength = halation_strength;
     settings.halation_radius_pixels = halation_radius;
     settings.halation_threshold = halation_threshold;
@@ -543,12 +573,15 @@ probe_image_pixel(
     const std::string& negative,
     const std::string& print,
     float exposure,
+    float negative_flash,
+    float print_flash,
     float push_pull,
     float negative_bleach_bypass,
     float print_bleach_bypass,
     float printer_light_red,
     float printer_light_green,
     float printer_light_blue,
+    float printer_light_master,
     float middle_gray,
     float printer_temperature,
     double u,
@@ -648,12 +681,15 @@ probe_image_pixel(
                 negative,
                 print,
                 exposure,
+                negative_flash,
+                print_flash,
                 push_pull,
                 negative_bleach_bypass,
                 print_bleach_bypass,
                 printer_light_red,
                 printer_light_green,
                 printer_light_blue,
+                printer_light_master,
                 middle_gray,
                 printer_temperature))) {
 
@@ -856,6 +892,17 @@ PYBIND11_MODULE(filmviz_python, module)
             print_identifiers.append("none");
             result["print"] = print_identifiers;
             result["print_details"] = print_details;
+            py::list film_formats;
+
+            for (const auto& format : FilmFormatCatalog::formats()) {
+                py::dict detail;
+                detail["identifier"] = format.identifier;
+                detail["display_name"] = format.display_name;
+                detail["image_width_mm"] = format.image_width_mm;
+                film_formats.append(detail);
+            }
+
+            result["film_formats"] = film_formats;
             result["output"] = py::make_tuple(
                 "ap0-linear",
                 "rec709-gamma24");
@@ -875,12 +922,15 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("output") = "ap0-linear",
         py::arg("lut_size") = 33,
         py::arg("exposure") = 0.0f,
+        py::arg("negative_flash") = 0.0f,
+        py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,
         py::arg("printer_light_green") = 25.0f,
         py::arg("printer_light_blue") = 25.0f,
+        py::arg("printer_light_master") = 0.0f,
         py::arg("middle_gray") = 0.18f,
         py::arg("printer_temperature") = 3200.0f,
         py::arg("threads") = 0,
@@ -902,12 +952,15 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("lut_size") = 33,
         py::arg("use_lut_acceleration") = true,
         py::arg("exposure") = 0.0f,
+        py::arg("negative_flash") = 0.0f,
+        py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,
         py::arg("printer_light_green") = 25.0f,
         py::arg("printer_light_blue") = 25.0f,
+        py::arg("printer_light_master") = 0.0f,
         py::arg("middle_gray") = 0.18f,
         py::arg("printer_temperature") = 3200.0f,
         py::arg("negative_grain") = 0.0f,
@@ -915,6 +968,12 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("grain_size") = 1.0f,
         py::arg("grain_chroma") = 1.0f,
         py::arg("grain_seed") = 1u,
+        py::arg("film_format") =
+            FilmFormatCatalog::default_format().identifier,
+        py::arg("image_width_mm") =
+            FilmFormatCatalog::default_format().image_width_mm,
+        py::arg("negative_mtf") = 0.0f,
+        py::arg("print_mtf") = 0.0f,
         py::arg("halation_strength") = 0.0f,
         py::arg("halation_radius") = 12.0f,
         py::arg("halation_threshold") = 0.7f,
@@ -932,12 +991,15 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("print") =
             PrintProfileCatalog::default_profile().identifier,
         py::arg("exposure") = 0.0f,
+        py::arg("negative_flash") = 0.0f,
+        py::arg("print_flash") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
         py::arg("print_bleach_bypass") = 0.0f,
         py::arg("printer_light_red") = 25.0f,
         py::arg("printer_light_green") = 25.0f,
         py::arg("printer_light_blue") = 25.0f,
+        py::arg("printer_light_master") = 0.0f,
         py::arg("middle_gray") = 0.18f,
         py::arg("printer_temperature") = 3200.0f,
         py::arg("u") = 0.5,

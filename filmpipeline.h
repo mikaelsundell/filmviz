@@ -47,6 +47,10 @@ public:
         float negative_zero_stop_log_exposure = -0.515f;
         float exposure_stops = 0.0f;
 
+        // Uniform exposure added before negative development, expressed as a
+        // percentage of the calibrated middle-gray record exposure.
+        float negative_flash_percent = 0.0f;
+
         // Push/pull is an explicit approximation because alternate-process
         // characteristic curves are not part of the active negative profiles.
         // Positive values increase negative contrast around the calibrated
@@ -63,6 +67,14 @@ public:
 
         float print_reference_status_a_density = 1.0f;
         float printer_temperature_kelvin = 3200.0f;
+
+        // Linked printer-light offset. One point equals 0.025 LogE and is
+        // added to all three record-specific light settings.
+        float printer_light_master = 0.0f;
+
+        // Uniform exposure added before print development, expressed as a
+        // percentage of the neutral reference printer exposure.
+        float print_flash_percent = 0.0f;
 
         // Traditional printer-light controls. 25/25/25 is the calibrated
         // neutral operating point. Each point changes the corresponding

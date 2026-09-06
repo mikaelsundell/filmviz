@@ -171,3 +171,23 @@ No measured Verita push/pull curve family is currently present. The CLI control
 therefore scales negative Status-M density around the calibrated middle-gray
 anchor by `2^(0.2 * stops)`. Treat this as an explicit processing approximation,
 not a newly calibrated stock property.
+
+## Flash, printer timing and measured spatial response
+
+Negative flash is modeled as uniform per-record exposure before the measured
+negative characteristic curves, expressed as a percentage of the calibrated
+middle-gray exposure. Print flash is uniform exposure before the print curves,
+expressed against the neutral reference printer exposure. Both default to zero.
+The master printer-light control is a linked offset to the three existing
+printer-light settings, retaining the calibrated 0.025 LogE per point mapping.
+
+The Kodak negative and 2383 modulation-transfer measurements are expressed in
+cycles/mm. `SpatialResponseModel` maps that physical axis to pixels using the
+selected active image width and cascades the negative and print responses into
+a DC-preserving channel-dependent filter. This is a measured small-signal
+system MTF applied to the rendered image. It does not invent interlayer
+chemistry, density-dependent dye shapes, scanner response or a microscopic
+spatial simulation. A strength of one selects the measured curve; zero is a
+strict bypass. Film-format dimensions are mapping metadata rather than new
+stock calibration values, and Custom is available where the actual aperture or
+crop differs from a preset.

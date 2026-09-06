@@ -11,6 +11,9 @@
 #include "imageprocessor.h"
 #include "inputtransform.h"
 #include "lut3d.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
+#include "spatialresponsemodel.h"
 #include "threading.h"
 
 #include <algorithm>
@@ -269,6 +272,8 @@ transform_key(
     key.output_profile = settings.output_profile;
     key.lut_size = settings.lut_size;
     key.push_pull_stops = settings.push_pull_stops;
+    key.negative_flash_percent = settings.negative_flash_percent;
+    key.print_flash_percent = settings.print_flash_percent;
     key.middle_gray = settings.middle_gray;
     key.printer_temperature = settings.printer_temperature;
     key.negative_bleach_bypass = settings.negative_bleach_bypass;
@@ -276,6 +281,7 @@ transform_key(
     key.printer_light_red = settings.printer_light_red;
     key.printer_light_green = settings.printer_light_green;
     key.printer_light_blue = settings.printer_light_blue;
+    key.printer_light_master = settings.printer_light_master;
     return key;
 }
 
@@ -291,11 +297,14 @@ settings_summary(
         << " output=" << settings.output_profile
         << " lut=" << settings.lut_size
         << " exposure=" << settings.exposure_stops
+        << " negative_flash=" << settings.negative_flash_percent
+        << " print_flash=" << settings.print_flash_percent
         << " push_pull=" << settings.push_pull_stops
         << " lights="
         << settings.printer_light_red << ','
         << settings.printer_light_green << ','
         << settings.printer_light_blue
+        << " master=" << settings.printer_light_master
         << " temp=" << settings.printer_temperature
         << " neg_bypass=" << settings.negative_bleach_bypass
         << " print_bypass=" << settings.print_bleach_bypass;
@@ -375,6 +384,7 @@ struct FilmVizOfxProcessor::Cache
     std::string resources_directory;
     std::shared_ptr<FilmPipeline> pipeline;
     std::unique_ptr<InputTransform> input_transform;
+    std::unique_ptr<SpatialResponseModel> spatial_response;
     // Two-stage cached transform:
     // encoded input -> raw negative exposure -> developed/viewed output.
     // Exposure is applied between these two LUTs and therefore never changes
@@ -399,6 +409,8 @@ FilmVizOfxRenderSettings::operator==(
         && lut_size == other.lut_size
         && threads == other.threads
         && exposure_stops == other.exposure_stops
+        && negative_flash_percent == other.negative_flash_percent
+        && print_flash_percent == other.print_flash_percent
         && push_pull_stops == other.push_pull_stops
         && middle_gray == other.middle_gray
         && printer_temperature == other.printer_temperature
@@ -407,6 +419,11 @@ FilmVizOfxRenderSettings::operator==(
         && printer_light_red == other.printer_light_red
         && printer_light_green == other.printer_light_green
         && printer_light_blue == other.printer_light_blue
+        && printer_light_master == other.printer_light_master
+        && film_format == other.film_format
+        && image_width_mm == other.image_width_mm
+        && negative_mtf_amount == other.negative_mtf_amount
+        && print_mtf_amount == other.print_mtf_amount
         && grain_enabled == other.grain_enabled
         && negative_grain == other.negative_grain
         && print_grain == other.print_grain
@@ -450,6 +467,12 @@ FilmVizOfxProcessor::configure(
         || settings.lut_size > 129
         || !finite_setting(settings.exposure_stops)
         || !finite_setting(settings.push_pull_stops)
+        || !finite_setting(settings.negative_flash_percent)
+        || settings.negative_flash_percent < 0.0f
+        || settings.negative_flash_percent > 25.0f
+        || !finite_setting(settings.print_flash_percent)
+        || settings.print_flash_percent < 0.0f
+        || settings.print_flash_percent > 25.0f
         || !finite_setting(settings.middle_gray)
         || settings.middle_gray <= 0.0f
         || !finite_setting(settings.printer_temperature)
@@ -458,12 +481,19 @@ FilmVizOfxProcessor::configure(
         || settings.negative_bleach_bypass > 1.0f
         || settings.print_bleach_bypass < 0.0f
         || settings.print_bleach_bypass > 1.0f
-        || settings.printer_light_red < 0.0f
-        || settings.printer_light_red > 50.0f
-        || settings.printer_light_green < 0.0f
-        || settings.printer_light_green > 50.0f
-        || settings.printer_light_blue < 0.0f
-        || settings.printer_light_blue > 50.0f
+        || settings.printer_light_red + settings.printer_light_master < 0.0f
+        || settings.printer_light_red + settings.printer_light_master > 50.0f
+        || settings.printer_light_green + settings.printer_light_master < 0.0f
+        || settings.printer_light_green + settings.printer_light_master > 50.0f
+        || settings.printer_light_blue + settings.printer_light_master < 0.0f
+        || settings.printer_light_blue + settings.printer_light_master > 50.0f
+        || !FilmFormatCatalog::find(settings.film_format)
+        || !finite_setting(settings.image_width_mm)
+        || settings.image_width_mm <= 0.0f
+        || settings.negative_mtf_amount < 0.0f
+        || settings.negative_mtf_amount > 2.0f
+        || settings.print_mtf_amount < 0.0f
+        || settings.print_mtf_amount > 2.0f
         || settings.negative_grain < 0.0f
         || settings.print_grain < 0.0f
         || settings.grain_size < 1.0f
@@ -493,8 +523,8 @@ FilmVizOfxProcessor::configure(
 
     std::lock_guard<std::mutex> instance_lock(mutex_);
 
-    // Runtime-only controls (Exposure, grain and halation) do not change the
-    // shared transform assets or their Metal uploads.
+    // Runtime-only controls (Exposure, measured MTF, grain and halation) do
+    // not change the shared transform assets or their Metal uploads.
     settings_ = settings;
 
     if (cache_
@@ -581,6 +611,43 @@ FilmVizOfxProcessor::configure(
         next->input_transform =
             std::make_unique<InputTransform>(
                 input_encoding(settings.input_profile));
+
+        const auto* negative_profile =
+            NegativeProfileCatalog::find(settings.negative_profile);
+        const auto* print_profile =
+            PrintProfileCatalog::find(
+                settings.print_profile == "none"
+                    ? PrintProfileCatalog::default_profile().identifier
+                    : settings.print_profile);
+
+        if (!negative_profile || !print_profile) {
+            error = "could not resolve OFX MTF profile metadata";
+            configure_scope.finish("result=failed error=" + error);
+            return false;
+        }
+
+        const std::filesystem::path resources(resources_directory);
+        const std::filesystem::path negative_mtf =
+            resources
+            / negative_profile->resource_directory
+            / (negative_profile->resource_prefix
+               + "_modulation_transfer_function_curves.csv");
+        const std::filesystem::path print_mtf =
+            resources
+            / print_profile->resource_directory
+            / print_profile->mtf_filename;
+
+        next->spatial_response =
+            std::make_unique<SpatialResponseModel>();
+
+        // MTF is an optional image-space control. A missing curve must not
+        // prevent the zero-MTF production transform from loading; render()
+        // reports the unavailable data only when MTF is actually enabled.
+        if (!next->spatial_response->load(
+                negative_mtf.string(),
+                print_mtf.string())) {
+            next->spatial_response.reset();
+        }
 
         const int size = settings.lut_size;
         const std::size_t field_size =
@@ -673,6 +740,10 @@ FilmVizOfxProcessor::configure(
             pipeline_settings.resources_directory = resources_directory;
             pipeline_settings.negative_profile = settings.negative_profile;
             pipeline_settings.print_profile = settings.print_profile;
+            pipeline_settings.negative_flash_percent =
+                settings.negative_flash_percent;
+            pipeline_settings.print_flash_percent =
+                settings.print_flash_percent;
 
             // Exposure is intentionally NOT baked into the transform. The
             // first LUT ends at raw negative exposure; runtime exposure
@@ -688,6 +759,8 @@ FilmVizOfxProcessor::configure(
             pipeline_settings.printer_light_red = settings.printer_light_red;
             pipeline_settings.printer_light_green = settings.printer_light_green;
             pipeline_settings.printer_light_blue = settings.printer_light_blue;
+            pipeline_settings.printer_light_master =
+                settings.printer_light_master;
 
             const auto pipeline_start =
                 std::chrono::steady_clock::now();
@@ -1552,6 +1625,80 @@ FilmVizOfxProcessor::render(
     if (failed.load(std::memory_order_relaxed)) {
         error = "FilmViz OFX image access failed";
         return false;
+    }
+
+    const bool use_mtf =
+        settings.negative_mtf_amount > 0.0f
+        || settings.print_mtf_amount > 0.0f;
+
+    if (use_mtf) {
+        if (!cache->spatial_response
+            || !cache->spatial_response->valid()) {
+            error = "FilmViz OFX measured MTF response is unavailable";
+            return false;
+        }
+
+        const int width = render_x2 - render_x1;
+        const int height = render_y2 - render_y1;
+        std::vector<float> rgb(
+            static_cast<std::size_t>(width)
+                * static_cast<std::size_t>(height)
+                * 3u,
+            0.0f);
+
+        for (int y = render_y1; y < render_y2; ++y) {
+            for (int x = render_x1; x < render_x2; ++x) {
+                const float* pixel =
+                    source_pixel(destination, x, y);
+
+                if (!pixel) {
+                    error = "FilmViz OFX MTF image access failed";
+                    return false;
+                }
+
+                const std::size_t index =
+                    (static_cast<std::size_t>(y - render_y1)
+                         * static_cast<std::size_t>(width)
+                     + static_cast<std::size_t>(x - render_x1))
+                    * 3u;
+                rgb[index + 0u] = pixel[0];
+                rgb[index + 1u] = pixel[1];
+                rgb[index + 2u] = pixel[2];
+            }
+        }
+
+        SpatialResponseModel::Settings spatial_settings;
+        spatial_settings.image_width_mm = settings.image_width_mm;
+        spatial_settings.negative_amount = settings.negative_mtf_amount;
+        spatial_settings.print_amount = settings.print_mtf_amount;
+        spatial_settings.sampling_width_pixels = source_width;
+        spatial_settings.gamma24_encoded = settings.output_profile == 1;
+
+        if (!cache->spatial_response->apply(
+                rgb,
+                width,
+                height,
+                spatial_settings,
+                aborted)) {
+            error = aborted()
+                ? "render aborted"
+                : "FilmViz OFX measured MTF processing failed";
+            return false;
+        }
+
+        for (int y = render_y1; y < render_y2; ++y) {
+            for (int x = render_x1; x < render_x2; ++x) {
+                float* pixel = destination_pixel(destination, x, y);
+                const std::size_t index =
+                    (static_cast<std::size_t>(y - render_y1)
+                         * static_cast<std::size_t>(width)
+                     + static_cast<std::size_t>(x - render_x1))
+                    * 3u;
+                pixel[0] = rgb[index + 0u];
+                pixel[1] = rgb[index + 1u];
+                pixel[2] = rgb[index + 2u];
+            }
+        }
     }
 
     return true;

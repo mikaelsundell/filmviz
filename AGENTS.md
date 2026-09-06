@@ -74,6 +74,7 @@ the measured per-channel result and `0` producing neutral grain.
 - `filmdensitycalibration.*`: nonlinear measurement-coordinate solve.
 - `statusmdensitometer.*`: ISO Status-M measurement only.
 - `filmdyemodel.*`: spectral-density basis synthesis only.
+- `filmformat.*`: physical active-image-width presets only.
 - `filmprocessor.*`: negative exposure + characteristic curves only.
 - `printfilmprocessor.*`: print exposure + characteristic curves only.
 - `printviewer.*`: viewed spectrum -> XYZ -> D60/AP0 only.
@@ -83,6 +84,7 @@ the measured per-channel result and `0` producing neutral grain.
 - `lut3d.*`: generic LUT storage/generation/validation only.
 - `granularitymodel.*`: measured density-to-RMS curves and deterministic noise only.
 - `imageprocessor.*`: image I/O, LUT application and two-stage grain rendering.
+- `spatialresponsemodel.*`: measured negative/print MTF image filtering only.
 - `threading.*`: process-wide worker count for LUT and image parallelism.
 - `python/`: thin pybind11 and PySide6 application adapters; no spectral algorithms.
 

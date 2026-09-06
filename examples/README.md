@@ -47,3 +47,22 @@ Arguments after the filenames are LUT size, exposure stops, push/pull stops,
 negative-grain strength, print-grain strength, grain size in pixels, seed, and
 grain chroma. Grain chroma `0` is neutral and `1` preserves the measured
 per-channel result. The defaults are `33 0 0 1 1 1 1 1`.
+
+The supported command-line application also exposes the new stage controls:
+
+```bash
+./build/bin/filmviz \
+    --resources resources \
+    --input-image input.tif \
+    --output-image output.tif \
+    --negative-flash 2 \
+    --print-flash 1 \
+    --printer-light-master 0.5 \
+    --film-format super-35 \
+    --negative-mtf 1 \
+    --print-mtf 1
+```
+
+Flash and printer timing are part of the spectral transform. MTF is image-only;
+the format maps measured cycles/mm to pixels. Use `--film-format custom` with
+`--image-width-mm` for a camera aperture or crop not represented by a preset.

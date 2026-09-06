@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "filmformat.h"
 #include "inputtransform.h"
 
 #include <array>
@@ -41,6 +42,13 @@ public:
         float grain_size_pixels = 1.0f;
         float grain_chroma = 1.0f;
         std::uint32_t grain_seed = 1u;
+
+        std::string film_format =
+            FilmFormatCatalog::default_format().identifier;
+        float image_width_mm =
+            FilmFormatCatalog::default_format().image_width_mm;
+        float negative_mtf_amount = 0.0f;
+        float print_mtf_amount = 0.0f;
 
         // Spatial negative-stage halation. It is deliberately excluded from
         // LUT generation because it depends on neighbouring pixels and is

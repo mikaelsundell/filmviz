@@ -17,6 +17,8 @@ struct FilmVizOfxTransformKey
     int lut_size = 33;
 
     float push_pull_stops = 0.0f;
+    float negative_flash_percent = 0.0f;
+    float print_flash_percent = 0.0f;
     float middle_gray = 0.18f;
     float printer_temperature = 3200.0f;
     float negative_bleach_bypass = 0.0f;
@@ -24,6 +26,7 @@ struct FilmVizOfxTransformKey
     float printer_light_red = 25.0f;
     float printer_light_green = 25.0f;
     float printer_light_blue = 25.0f;
+    float printer_light_master = 0.0f;
 
     bool operator==(const FilmVizOfxTransformKey& other) const;
 };
