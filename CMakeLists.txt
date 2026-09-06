@@ -57,12 +57,13 @@ set(FILMVIZ_CORE_SOURCES
     imageprocessor.cpp
     inputtransform.cpp
     lut3d.cpp
+    negativeprofile.cpp
     printdyemodel.cpp
+    printprofile.cpp
     printercalibration.cpp
     printfilmprocessor.cpp
     printfilmstock.cpp
     printviewer.cpp
-    sampledspectralreconstructor.cpp
     spectralcolorimetry.cpp
     spectralilluminant.cpp
     spectralreconstructor.cpp
@@ -405,10 +406,11 @@ install(
         imageprocessor.h
         inputtransform.h
         lut3d.h
+        negativeprofile.h
         printfilmprocessor.h
         printfilmstock.h
+        printprofile.h
         printviewer.h
-        sampledspectralreconstructor.h
         spectralilluminant.h
         spectralreconstructor.h
         statusmdensitometer.h

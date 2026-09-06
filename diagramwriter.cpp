@@ -2860,7 +2860,7 @@ DiagramWriter::write_print_stock_source_diagnostics(
     bool success = true;
 
     // ------------------------------------------------------------------
-    // 1. Kodak 2383 sensitometric curves.
+    // 1. Kodak Vision 2383/3383 sensitometric curves.
     // Raw digitized source: log exposure -> Status A density.
     // ------------------------------------------------------------------
     {
@@ -2926,7 +2926,7 @@ DiagramWriter::write_print_stock_source_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // 2. Kodak 2383 spectral sensitivity.
+    // 2. Kodak Vision 2383/3383 spectral sensitivity.
     //
     // The two lower-left traces are intentionally shown as unresolved
     // auxiliary source traces rather than silently assigning them to a layer.
@@ -3010,7 +3010,7 @@ DiagramWriter::write_print_stock_source_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // 3. Kodak 2383 spectral dye-density curves.
+    // 3. Kodak Vision 2383/3383 spectral dye-density curves.
     // Unlike the negative source, these are independently digitized C/M/Y
     // print-dye curves plus Kodak's visual-neutral reference.
     // ------------------------------------------------------------------
@@ -3085,7 +3085,7 @@ DiagramWriter::write_print_stock_source_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // 4. Kodak 2383 MTF.
+    // 4. Kodak Vision 2383/3383 MTF.
     // The Kodak source graph uses logarithmic frequency and response axes.
     // ------------------------------------------------------------------
     {
@@ -3325,7 +3325,7 @@ DiagramWriter::write_print_pipeline_diagnostics(
 
         PlotOptions options;
         options.title =
-            "KODAK 2383 VIRTUAL PRINTER ILLUMINANT";
+            "KODAK VISION 2383/3383 VIRTUAL PRINTER ILLUMINANT";
         options.subtitle =
             "ACTIVE SPD USED FOR NEGATIVE TO PRINT EXPOSURE";
         options.x_label =
@@ -3364,7 +3364,7 @@ DiagramWriter::write_print_pipeline_diagnostics(
     }
 
     // ------------------------------------------------------------------
-    // Kodak 2383 dye-model reference reconstruction.
+    // Kodak Vision 2383/3383 dye-model reference reconstruction.
     // At Status-A R/G/B density 1.0 this must reproduce Kodak's published
     // visual-neutral spectral-density curve.
     // ------------------------------------------------------------------
@@ -3380,7 +3380,7 @@ DiagramWriter::write_print_pipeline_diagnostics(
 
         PlotOptions options;
         options.title =
-            "KODAK 2383 PRINT DYE MODEL REFERENCE";
+            "KODAK VISION 2383/3383 PRINT DYE MODEL REFERENCE";
         options.subtitle =
             "STATUS-A R G B DENSITY 1.0  MEASURED NEUTRAL VS RECONSTRUCTION";
         options.x_label =
@@ -3442,7 +3442,7 @@ DiagramWriter::write_print_pipeline_diagnostics(
 
         PlotOptions options;
         options.title =
-            "KODAK 2383 PRINT DYE REFERENCE RESIDUAL";
+            "KODAK VISION 2383/3383 PRINT DYE REFERENCE RESIDUAL";
         options.subtitle =
             "RECONSTRUCTED VISUAL NEUTRAL MINUS DIGITIZED KODAK CURVE";
         options.x_label =
@@ -3529,7 +3529,7 @@ DiagramWriter::write_print_pipeline_diagnostics(
     {
         PlotOptions options;
         options.title =
-            "KODAK 2383 SYNTHESIZED PRINT SPECTRAL DENSITY";
+            "KODAK VISION 2383/3383 SYNTHESIZED PRINT SPECTRAL DENSITY";
         options.subtitle =
             "VERITA NEUTRAL NEGATIVE LADDER  -4 -2 0 +2 +4 STOPS";
         options.x_label =
@@ -3618,7 +3618,7 @@ DiagramWriter::write_print_pipeline_diagnostics(
     {
         PlotOptions options;
         options.title =
-            "KODAK 2383 SYNTHESIZED PRINT TRANSMITTANCE";
+            "KODAK VISION 2383/3383 SYNTHESIZED PRINT TRANSMITTANCE";
         options.subtitle =
             "T LAMBDA = 10^-D LAMBDA  VERITA NEUTRAL -4 / 0 / +4 STOPS";
         options.x_label =
@@ -3720,7 +3720,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
         PlotOptions options;
         options.title =
-            "KODAK 2383 VIEWING ILLUMINANT";
+            "KODAK VISION 2383/3383 VIEWING ILLUMINANT";
         options.subtitle =
             "OUTPUT-SIDE SPD USED FOR PRINT -> CIE XYZ";
         options.x_label =
@@ -3812,7 +3812,7 @@ DiagramWriter::write_print_viewer_diagnostics(
             {
                 PlotOptions options;
                 options.title =
-                    "KODAK 2383 SOURCE DYE SEMANTICS";
+                    "KODAK VISION 2383/3383 SOURCE DYE SEMANTICS";
                 options.subtitle =
                     "C/M/Y ARE PEAK-NORMALIZED SHAPES - RAW SUM IS NOT AN ABSOLUTE DENSITY MODEL";
                 options.x_label =
@@ -3847,7 +3847,7 @@ DiagramWriter::write_print_viewer_diagnostics(
             {
                 PlotOptions options;
                 options.title =
-                    "KODAK 2383 LEGACY RAW-SUM RESIDUAL";
+                    "KODAK VISION 2383/3383 LEGACY RAW-SUM RESIDUAL";
                 options.subtitle =
                     "VISUAL NEUTRAL - RAW PEAK-NORMALIZED C/M/Y  NOT A PHYSICAL BASE/STAIN MEASUREMENT";
                 options.x_label =
@@ -3949,7 +3949,7 @@ DiagramWriter::write_print_viewer_diagnostics(
                 return std::sqrt(dx * dx + dy * dy);
             };
 
-            std::cout << "info: constrained basis-fit diagnostic Kodak 2383 constrained basis-fit diagnostics" << std::endl;
+            std::cout << "info: constrained basis-fit diagnostic print-film constrained basis-fit diagnostics" << std::endl;
             std::cout
                 << "info:   model A nonnegative amplitudes C/M/Y: "
                 << model_a.coefficients[0] << ", "
@@ -4010,7 +4010,7 @@ DiagramWriter::write_print_viewer_diagnostics(
             {
                 PlotOptions options;
                 options.title =
-                    "KODAK 2383 CONSTRAINED DYE-BASIS FIT";
+                    "KODAK VISION 2383/3383 CONSTRAINED DYE-BASIS FIT";
                 options.subtitle =
                     "MEASURED VISUAL NEUTRAL VS NONNEGATIVE C/M/Y FITS  DIAGNOSTIC ONLY";
                 options.x_label =
@@ -4043,7 +4043,7 @@ DiagramWriter::write_print_viewer_diagnostics(
             {
                 PlotOptions options;
                 options.title =
-                    "KODAK 2383 CONSTRAINED DYE-BASIS FIT RESIDUALS";
+                    "KODAK VISION 2383/3383 CONSTRAINED DYE-BASIS FIT RESIDUALS";
                 options.subtitle =
                     "RECONSTRUCTED - MEASURED VISUAL NEUTRAL  LOWER IS BETTER";
                 options.x_label =
@@ -4202,7 +4202,7 @@ DiagramWriter::write_print_viewer_diagnostics(
                     return std::sqrt(dx * dx + dy * dy);
                 };
 
-            std::cout << "info: D55 colorimetric reference calibration Kodak 2383 colorimetric reference calibration" << std::endl;
+            std::cout << "info: D55 colorimetric reference calibration print-film colorimetric reference calibration" << std::endl;
             std::cout
                 << "info:   calibrated nonnegative amplitudes C/M/Y: "
                 << calibration.coefficients[0] << ", "
@@ -4252,7 +4252,7 @@ DiagramWriter::write_print_viewer_diagnostics(
             {
                 PlotOptions options;
                 options.title =
-                    "KODAK 2383 COLORIMETRIC REFERENCE CALIBRATION";
+                    "KODAK VISION 2383/3383 COLORIMETRIC REFERENCE CALIBRATION";
                 options.subtitle =
                     "C/M/Y AMPLITUDES MATCH MEASURED VISUAL-NEUTRAL XYZ UNDER D55  DIAGNOSTIC ONLY";
                 options.x_label =
@@ -4282,7 +4282,7 @@ DiagramWriter::write_print_viewer_diagnostics(
             {
                 PlotOptions options;
                 options.title =
-                    "KODAK 2383 LOCAL DYE-BASIS CHROMATICITY RESPONSE";
+                    "KODAK VISION 2383/3383 LOCAL DYE-BASIS CHROMATICITY RESPONSE";
                 options.subtitle =
                     "CIE XY TRAJECTORIES FOR +/-10% C/M/Y AMPLITUDE AROUND COLORIMETRIC NEUTRAL";
                 options.x_label =
@@ -4310,7 +4310,7 @@ DiagramWriter::write_print_viewer_diagnostics(
             {
                 PlotOptions options;
                 options.title =
-                    "KODAK 2383 COLORIMETRIC CALIBRATION SPECTRAL RESIDUAL";
+                    "KODAK VISION 2383/3383 COLORIMETRIC CALIBRATION SPECTRAL RESIDUAL";
                 options.subtitle =
                     "CALIBRATED C/M/Y DENSITY - MEASURED VISUAL NEUTRAL  NOT USED BY RENDERER";
                 options.x_label =
@@ -4481,7 +4481,7 @@ DiagramWriter::write_print_viewer_diagnostics(
         }
 
         PlotOptions options;
-        options.title = "KODAK 2383 STATUS-A AUDIT STATUS-A JACOBIAN";
+        options.title = "KODAK VISION 2383/3383 STATUS-A AUDIT STATUS-A JACOBIAN";
         options.subtitle = "ROWS STATUS-A R/G/B  COLUMNS 0=C 1=M 2=Y  DIAGNOSTIC ONLY";
         options.x_label = "DYE AMPLITUDE INDEX  0 C   1 M   2 Y";
         options.y_label = "D STATUS-A / D DYE AMPLITUDE";
@@ -5210,7 +5210,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 INTERPOLATION AUDIT NORMALIZED DYE-GROWTH MAPPING";
+        options.title = "KODAK VISION 2383/3383 INTERPOLATION AUDIT NORMALIZED DYE-GROWTH MAPPING";
         options.subtitle = "LINEAR REFERENCE NORMALIZED RECORD GROWTH -> NEUTRAL INVERSE NEUTRAL-PRESERVING DYE AMPLITUDE";
         options.x_label = "NORMALIZED LINEAR REFERENCE RECORD-GROWTH INPUT";
         options.y_label = "NORMALIZED DYE AMPLITUDE";
@@ -5226,7 +5226,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 INTERPOLATION AUDIT DENSE INTERPOLATION ERROR";
+        options.title = "KODAK VISION 2383/3383 INTERPOLATION AUDIT DENSE INTERPOLATION ERROR";
         options.subtitle = "81-POINT AUDIT BETWEEN NEUTRAL INVERSE ANCHORS  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "ERROR";
@@ -5241,7 +5241,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 INTERPOLATION AUDIT OFF-NEUTRAL DYE RESPONSE";
+        options.title = "KODAK VISION 2383/3383 INTERPOLATION AUDIT OFF-NEUTRAL DYE RESPONSE";
         options.subtitle = "CIE XY DISPLACEMENT FOR +/-5% INDEPENDENT DYE PERTURBATION";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "FULL-SPAN DELTA XY";
@@ -5257,7 +5257,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 INTERPOLATION AUDIT LOCAL XYZ BASIS CONDITION";
+        options.title = "KODAK VISION 2383/3383 INTERPOLATION AUDIT LOCAL XYZ BASIS CONDITION";
         options.subtitle = "FROBENIUS CONDITION NUMBER OF D XYZ / D C,M,Y  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "CONDITION NUMBER";
@@ -5536,7 +5536,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 DENSE MAPPING DENSE CALIBRATION MAPPINGS";
+        options.title = "KODAK VISION 2383/3383 DENSE MAPPING DENSE CALIBRATION MAPPINGS";
         options.subtitle = "81 DIRECT NEUTRAL-PRESERVING SOLVES  NORMALIZED RECORD GROWTH -> DYE AMPLITUDE";
         options.x_label = "NORMALIZED LINEAR REFERENCE RECORD-GROWTH INPUT";
         options.y_label = "NORMALIZED DYE AMPLITUDE";
@@ -5550,7 +5550,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
     {
         PlotOptions options;
-        options.title = "KODAK 2383 DENSE MAPPING LUT VS DIRECT SOLVER ERROR";
+        options.title = "KODAK VISION 2383/3383 DENSE MAPPING LUT VS DIRECT SOLVER ERROR";
         options.subtitle = "321 INDEPENDENT DIRECT SOLVES  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "ERROR";
@@ -5565,7 +5565,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
     {
         PlotOptions options;
-        options.title = "KODAK 2383 DENSE MAPPING DIRECT SOLVER RESIDUAL";
+        options.title = "KODAK VISION 2383/3383 DENSE MAPPING DIRECT SOLVER RESIDUAL";
         options.subtitle = "TARGET VISUAL-NEUTRAL XY + LINEAR REFERENCE Y  NUMERICAL SOLVE QUALITY";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RESIDUAL";
@@ -5756,7 +5756,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 MAPPING QUALIFICATION INTERPOLATION METHOD COMPARISON";
+        options.title = "KODAK VISION 2383/3383 MAPPING QUALIFICATION INTERPOLATION METHOD COMPARISON";
         options.subtitle = "1281 DIRECT-SOLVER REFERENCES  DELTA XY  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY";
@@ -5772,7 +5772,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
     {
         PlotOptions options;
-        options.title = "KODAK 2383 MAPPING QUALIFICATION SELECTED REPRESENTATION ERROR";
+        options.title = "KODAK VISION 2383/3383 MAPPING QUALIFICATION SELECTED REPRESENTATION ERROR";
         options.subtitle = std::string(mapping_qualification_selected->name) + "  VS DIRECT NONLINEAR SOLVER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "ERROR";
@@ -5787,7 +5787,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     }
     {
         PlotOptions options;
-        options.title = "KODAK 2383 MAPPING QUALIFICATION 161-POINT CALIBRATION MAPPINGS";
+        options.title = "KODAK VISION 2383/3383 MAPPING QUALIFICATION 161-POINT CALIBRATION MAPPINGS";
         options.subtitle = "DENSE DIRECT NEUTRAL-PRESERVING SOLVES  NORMALIZED RECORD GROWTH -> DYE AMPLITUDE";
         options.x_label = "NORMALIZED LINEAR REFERENCE RECORD-GROWTH INPUT";
         options.y_label = "NORMALIZED DYE AMPLITUDE";
@@ -5806,7 +5806,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     {
         PlotOptions options;
         options.title =
-            "KODAK 2383 VIEWED NEUTRAL LADDER CHROMATICITY";
+            "KODAK VISION 2383/3383 VIEWED NEUTRAL LADDER CHROMATICITY";
         options.subtitle =
             "VERITA NEUTRAL -4 -2 0 +2 +4 STOPS  BEFORE D60 ADAPTATION";
         options.x_label =
@@ -5839,7 +5839,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     {
         PlotOptions options;
         options.title =
-            "KODAK 2383 VIEWED NEUTRAL LADDER AP0";
+            "KODAK VISION 2383/3383 VIEWED NEUTRAL LADDER AP0";
         options.subtitle =
             "BRADFORD VIEWING WHITE -> D60  LINEAR ACES2065-1";
         options.x_label =
@@ -5880,7 +5880,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     {
         PlotOptions options;
         options.title =
-            "KODAK 2383 NEUTRAL RECORD INCREMENT DECOMPOSITION";
+            "KODAK VISION 2383/3383 NEUTRAL RECORD INCREMENT DECOMPOSITION";
         options.subtitle =
             "(D - DMIN) / (DREF - DMIN)  REAL VERITA NEUTRAL LADDER";
         options.x_label =
@@ -5936,7 +5936,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     {
         PlotOptions options;
         options.title =
-            "KODAK 2383 NEUTRAL CHROMATICITY DRIFT DECOMPOSITION";
+            "KODAK VISION 2383/3383 NEUTRAL CHROMATICITY DRIFT DECOMPOSITION";
         options.subtitle =
             "CIE XY DISTANCE FROM D55 VIEWING WHITE  DIAGNOSTIC ONLY";
         options.x_label =
@@ -5970,7 +5970,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     // ------------------------------------------------------------------
     {
         PlotOptions options;
-        options.title = "KODAK 2383 LINEAR REFERENCE NEUTRAL DRIFT A/B";
+        options.title = "KODAK VISION 2383/3383 LINEAR REFERENCE NEUTRAL DRIFT A/B";
         options.subtitle = "LEGACY RESIDUAL MODEL VS RESIDUAL-FREE CALIBRATED C/M/Y";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY FROM D55 WHITE";
@@ -5990,7 +5990,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 LINEAR REFERENCE AP0 NEUTRAL BALANCE A/B";
+        options.title = "KODAK VISION 2383/3383 LINEAR REFERENCE AP0 NEUTRAL BALANCE A/B";
         options.subtitle = "(MAX - MIN) / MEAN AP0  LOWER IS MORE NEUTRAL";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RELATIVE AP0 CHANNEL SPREAD";
@@ -6015,7 +6015,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     // ------------------------------------------------------------------
     {
         PlotOptions options;
-        options.title = "KODAK 2383 STATUS-A AUDIT NEUTRAL DRIFT A/B/C";
+        options.title = "KODAK VISION 2383/3383 STATUS-A AUDIT NEUTRAL DRIFT A/B/C";
         options.subtitle = "LEGACY VS LINEAR REFERENCE DIAGONAL VS ANSI STATUS-A LOCAL MATRIX";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY FROM D55 WHITE";
@@ -6041,7 +6041,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 STATUS-A AUDIT AP0 NEUTRAL BALANCE A/B/C";
+        options.title = "KODAK VISION 2383/3383 STATUS-A AUDIT AP0 NEUTRAL BALANCE A/B/C";
         options.subtitle = "LEGACY VS LINEAR REFERENCE DIAGONAL VS STATUS-A MATRIX  LOWER IS MORE NEUTRAL";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RELATIVE AP0 CHANNEL SPREAD";
@@ -6070,7 +6070,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     // ------------------------------------------------------------------
     {
         PlotOptions options;
-        options.title = "KODAK 2383 NEUTRAL INVERSE NEUTRAL DRIFT A/B/C/D";
+        options.title = "KODAK VISION 2383/3383 NEUTRAL INVERSE NEUTRAL DRIFT A/B/C/D";
         options.subtitle = "LEGACY VS LINEAR REFERENCE DIAGONAL VS STATUS-A AUDIT STATUS-A VS NEUTRAL INVERSE NEUTRAL-PRESERVING INVERSE";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY FROM D55 WHITE";
@@ -6087,7 +6087,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 NEUTRAL INVERSE AP0 NEUTRAL BALANCE A/B/C/D";
+        options.title = "KODAK VISION 2383/3383 NEUTRAL INVERSE AP0 NEUTRAL BALANCE A/B/C/D";
         options.subtitle = "LOWER IS MORE AP0-NEUTRAL; NEUTRAL INVERSE PRESERVES KODAK VISUAL-NEUTRAL XY";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RELATIVE AP0 CHANNEL SPREAD";
@@ -6104,7 +6104,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 NEUTRAL INVERSE INFERRED DYE-GROWTH AMPLITUDES";
+        options.title = "KODAK VISION 2383/3383 NEUTRAL INVERSE INFERRED DYE-GROWTH AMPLITUDES";
         options.subtitle = "LINEAR REFERENCE MAPPING VS NEUTRAL INVERSE NEUTRAL-PRESERVING INVERSE";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DYE-SHAPE AMPLITUDE";
@@ -6204,7 +6204,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 NONLINEAR GROWTH NEUTRAL DRIFT A/B";
+        options.title = "KODAK VISION 2383/3383 NONLINEAR GROWTH NEUTRAL DRIFT A/B";
         options.subtitle = "LINEAR REFERENCE VS NONLINEAR GROWTH QUALIFIED NONLINEAR GROWTH  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DELTA XY FROM KODAK VISUAL NEUTRAL";
@@ -6219,7 +6219,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 NONLINEAR GROWTH AP0 NEUTRAL BALANCE A/B";
+        options.title = "KODAK VISION 2383/3383 NONLINEAR GROWTH AP0 NEUTRAL BALANCE A/B";
         options.subtitle = "LINEAR REFERENCE VS NONLINEAR GROWTH QUALIFIED NONLINEAR GROWTH  LOWER IS BETTER";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "RELATIVE AP0 CHANNEL SPREAD";
@@ -6234,7 +6234,7 @@ DiagramWriter::write_print_viewer_diagnostics(
 
     {
         PlotOptions options;
-        options.title = "KODAK 2383 NONLINEAR GROWTH DYE AMPLITUDE A/B";
+        options.title = "KODAK VISION 2383/3383 NONLINEAR GROWTH DYE AMPLITUDE A/B";
         options.subtitle = "LINEAR REFERENCE AMPLITUDES VS NONLINEAR GROWTH QUALIFIED NONLINEAR AMPLITUDES";
         options.x_label = "NEGATIVE EXPOSURE STOPS";
         options.y_label = "DYE-SHAPE AMPLITUDE";
@@ -6257,7 +6257,7 @@ DiagramWriter::write_print_viewer_diagnostics(
     {
         PlotOptions options;
         options.title =
-            "KODAK 2383 VIEWED NEUTRAL SPECTRA";
+            "KODAK VISION 2383/3383 VIEWED NEUTRAL SPECTRA";
         options.subtitle =
             "VIEWING SPD X PRINT TRANSMITTANCE  VERITA -4 / 0 / +4 STOPS";
         options.x_label =

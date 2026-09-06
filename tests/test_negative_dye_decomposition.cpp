@@ -690,13 +690,13 @@ main()
     passed &=
         run_stock(
             "verita-200d",
-            "Kodak Verita 200D",
+            "Kodak Verita 200D 5206/7206",
             output_directory);
 
     passed &=
         run_stock(
             "kodak-50d",
-            "Kodak VISION3 50D 5203/7203",
+            "Kodak Vision3 50D 5203/7203",
             output_directory);
 
     return

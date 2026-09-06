@@ -154,6 +154,24 @@ for target in "$OFX_BINARY" "$BUNDLE_LIBRARIES"/*.dylib; do
     done
 done
 
+# Remove absolute build/dependency search paths after every non-system load
+# command has been rewritten. Relative loader paths remain available, but the
+# release bundle no longer records or depends on the build machine layout.
+for target in "$OFX_BINARY" "$BUNDLE_LIBRARIES"/*.dylib; do
+    [ -f "$target" ] || continue
+
+    otool -l "$target" | awk '
+        $1 == "cmd" && $2 == "LC_RPATH" { in_rpath=1; next }
+        in_rpath && $1 == "path" { print $2; in_rpath=0 }
+    ' | sort -u | while IFS= read -r rpath; do
+        case "$rpath" in
+            /*)
+                install_name_tool -delete_rpath "$rpath" "$target"
+                ;;
+        esac
+    done
+done
+
 if [ "$(uname -s)" = "Darwin" ]; then
     xattr -cr "$BUNDLE_DIR" 2>/dev/null || true
 fi

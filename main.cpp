@@ -5,6 +5,8 @@
 #include "imageprocessor.h"
 #include "inputtransform.h"
 #include "lut3d.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
 #include "threading.h"
 
 #include <OpenImageIO/argparse.h>
@@ -57,8 +59,10 @@ struct FilmVizTool
     std::string resources;
     std::string input = "awg3-logc3-ei800";
     std::string output = "ap0-linear";
-    std::string negative = "verita-200d";
-    std::string print = "kodak-2383";
+    std::string negative =
+        NegativeProfileCatalog::default_profile().identifier;
+    std::string print =
+        PrintProfileCatalog::default_profile().identifier;
     std::string output_cube = "filmviz.cube";
     std::string input_image;
     std::string output_image = "filmviz_output.tif";
@@ -161,11 +165,37 @@ print_profiles()
         << "  input:\n"
         << "    awg3-logc3-ei800   ARRI Wide Gamut 3 / LogC3 EI800\n"
         << "    ap0-linear         ACES2065-1 AP0 linear\n"
-        << "  negative:\n"
-        << "    verita-200d        Kodak Verita 200D\n"
-        << "    kodak-50d          Kodak VISION3 50D 5203/7203\n"
-        << "  print:\n"
-        << "    kodak-2383         Kodak Vision Color Print Film 2383\n"
+        << "  negative:\n";
+
+    for (const auto& profile : NegativeProfileCatalog::profiles()) {
+        std::cout
+            << "    "
+            << std::left
+            << std::setw(20)
+            << profile.identifier
+            << profile.display_name
+            << "\n";
+    }
+
+    std::cout
+        << "  print:\n";
+
+    for (const auto& profile : PrintProfileCatalog::profiles()) {
+        std::cout
+            << "    "
+            << std::left
+            << std::setw(20)
+            << profile.identifier
+            << profile.display_name
+            << "\n";
+    }
+
+    std::cout
+        << "    "
+        << std::left
+        << std::setw(20)
+        << "none"
+        << "View negative without print film\n"
         << "  output:\n"
         << "    ap0-linear         viewed print as ACES2065-1 AP0 linear\n"
         << "    rec709-gamma24     direct Rec.709/Gamma 2.4 preview (no ACES RRT)\n";
@@ -188,8 +218,7 @@ validate_profile_options(
         return false;
     }
 
-    if (tool.negative != "verita-200d"
-        && tool.negative != "kodak-50d") {
+    if (!NegativeProfileCatalog::find(tool.negative)) {
         print_error(
             "unknown negative profile: ",
             tool.negative);
@@ -197,7 +226,8 @@ validate_profile_options(
         return false;
     }
 
-    if (tool.print != "kodak-2383") {
+    if (!PrintProfileCatalog::find(tool.print)
+        && tool.print != "none") {
         print_error(
             "unknown print profile: ",
             tool.print);
@@ -363,10 +393,10 @@ main(
       .help("Input profile: awg3-logc3-ei800 (default), ap0-linear");
 
     ap.arg("--negative %s:PROFILE", &tool.negative)
-      .help("Negative profile: verita-200d (default), kodak-50d");
+      .help("Negative profile identifier; use --profiles to list choices");
 
     ap.arg("--print %s:PROFILE", &tool.print)
-      .help("Print profile: kodak-2383 (default)");
+      .help("Print profile identifier; use --profiles to list choices");
 
     ap.arg("--output %s:PROFILE", &tool.output)
       .help("Output: ap0-linear (default), rec709-gamma24");
@@ -410,7 +440,7 @@ main(
       .help("Measured negative-stock grain strength; 0 disables, 1 is measured RMS");
 
     ap.arg("--print-grain %f:STRENGTH", &tool.print_grain)
-      .help("Measured 2383 grain strength; 0 disables, 1 is measured RMS");
+      .help("Measured print-stock grain strength; 0 disables, 1 is measured RMS");
 
     ap.arg("--grain-size %f:PIXELS", &tool.grain_size)
       .help("Spatial grain correlation size in output pixels (default: 1)");
@@ -490,8 +520,16 @@ main(
 
     print_info("resources: ", tool.resources);
     print_info("input: ", tool.input);
-    print_info("negative: ", tool.negative);
-    print_info("print: ", tool.print);
+    print_info(
+        "negative: ",
+        NegativeProfileCatalog::find(
+            tool.negative)->display_name);
+    print_info(
+        "print: ",
+        tool.print == "none"
+            ? std::string("None — view negative")
+            : PrintProfileCatalog::find(
+                tool.print)->display_name);
     print_info("output: ", tool.output);
     print_info("LUT size: ", tool.lut_size);
     print_info("exposure stops: ", tool.exposure_stops);
@@ -503,7 +541,7 @@ main(
 
     if (std::abs(tool.printer_temperature - 3200.0f) > 0.01f) {
         print_warning(
-            "non-reference printer temperature; 2383 C/M/Y calibration was validated at 3200 K: ",
+            "non-reference printer temperature; print C/M/Y calibration was validated at 3200 K: ",
             tool.printer_temperature);
     }
 

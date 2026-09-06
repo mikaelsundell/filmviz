@@ -12,5 +12,7 @@
 #include "halationmodel.h"
 #include "inputtransform.h"
 #include "lut3d.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
 #include "statusmdensitometer.h"
 #include "threading.h"

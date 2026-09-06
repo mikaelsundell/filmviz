@@ -10,8 +10,6 @@
 
 option(FILMVIZ_OFX_PREBAKE_CACHE
     "Pre-generate common FilmViz OFX transform caches during the build" ON)
-set(FILMVIZ_OFX_PREBAKE_LUT_SIZE "33" CACHE STRING
-    "LUT edge length for bundled FilmViz OFX pre-generated caches")
 
 add_library(filmviz_ofx_processing STATIC
     filmvizofxprocessor.cpp
@@ -121,7 +119,7 @@ if(FILMVIZ_OFX_PREBAKE_CACHE AND EXISTS "${CMAKE_SOURCE_DIR}/resources")
             $<TARGET_FILE:filmviz_ofx_pregenerate>
             --resources "${CMAKE_SOURCE_DIR}/resources"
             --output "${FILMVIZ_OFX_PREBAKED_DIR}"
-            --lut-size "${FILMVIZ_OFX_PREBAKE_LUT_SIZE}"
+            --lut-size 33
         DEPENDS
             filmviz_ofx_pregenerate
             ${FILMVIZ_OFX_PREBAKE_RESOURCE_FILES}
@@ -159,6 +157,19 @@ set(FILMVIZ_OFX_BUNDLE_DIR
 set(FILMVIZ_OFX_BINARY_DIR
     "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/${FILMVIZ_OFX_ARCH_DIRECTORY}")
 
+if(APPLE)
+    set(FILMVIZ_OFX_PACKAGE_COMMAND
+        sh
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package_bundle.sh"
+        "${FILMVIZ_OFX_BUNDLE_DIR}"
+        "FilmViz")
+else()
+    # Dependency rewriting and code signing are macOS packaging operations.
+    # Other platforms retain the standard OFX bundle assembled below.
+    set(FILMVIZ_OFX_PACKAGE_COMMAND
+        "${CMAKE_COMMAND}" -E true)
+endif()
+
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
     "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
@@ -193,10 +204,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${FILMVIZ_OFX_PREBAKED_DIR}"
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz/cache/ofx"
-    COMMAND sh
-        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package_bundle.sh"
-        "${FILMVIZ_OFX_BUNDLE_DIR}"
-        "FilmViz"
+    COMMAND ${FILMVIZ_OFX_PACKAGE_COMMAND}
+    COMMAND_EXPAND_LISTS
     VERBATIM
 )
 

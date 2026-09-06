@@ -122,13 +122,14 @@ public:
         const FilmDyeModel& dye_model);
 
 
-    // Write validation plots directly from the five digitized Kodak 2383
-    // source datasets. No print simulation or inferred dye model is involved.
+    // Write validation plots directly from the five digitized Kodak Vision
+    // 2383/3383 source datasets. No print simulation or inferred dye model is
+    // involved.
     static bool write_print_stock_source_diagnostics(
         const std::string& output_image_filename,
         const PrintFilmStock& stock);
 
-    // Diagnostics for the first active Kodak 2383 print pipeline:
+    // Diagnostics for the first active Kodak Vision 2383/3383 print pipeline:
     // negative transmission -> printer light -> print exposure/development
     // -> measured 2383 C/M/Y spectral dye model.
     static bool write_print_pipeline_diagnostics(

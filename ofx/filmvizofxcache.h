@@ -11,6 +11,7 @@
 struct FilmVizOfxTransformKey
 {
     std::string negative_profile;
+    std::string print_profile;
     int input_profile = 0;
     int output_profile = 1;
     int lut_size = 33;

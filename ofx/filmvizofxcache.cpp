@@ -13,7 +13,10 @@ namespace
 {
 
 constexpr char kMagic[8] = {'F','V','O','F','X','C','H','E'};
-constexpr std::uint32_t kVersion = 3u;
+// Increment whenever a core pipeline change alters cached transform values,
+// even if the binary payload layout itself is unchanged. Version 4 adopts the
+// exposure-separated rgb2spec reconstruction used by FilmPipeline.
+constexpr std::uint32_t kVersion = 4u;
 constexpr std::uint32_t kHasNegativeExposure = 1u << 0u;
 
 void
@@ -82,6 +85,7 @@ FilmVizOfxTransformKey::operator==(
 {
     return
         negative_profile == other.negative_profile
+        && print_profile == other.print_profile
         && input_profile == other.input_profile
         && output_profile == other.output_profile
         && lut_size == other.lut_size
@@ -102,6 +106,7 @@ filmviz_ofx_transform_hash(
     std::uint64_t hash = 1469598103934665603ull;
 
     hash_string(hash, key.negative_profile);
+    hash_string(hash, key.print_profile);
     hash_value(hash, key.input_profile);
     hash_value(hash, key.output_profile);
     hash_value(hash, key.lut_size);
@@ -125,6 +130,7 @@ filmviz_ofx_transform_name(
     stream
         << "i" << key.input_profile
         << "_" << key.negative_profile
+        << "_" << key.print_profile
         << "_o" << key.output_profile
         << "_l" << key.lut_size
         << "_"

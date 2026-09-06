@@ -5,8 +5,8 @@ receives this directory through `FilmPipeline::Settings::resources_directory`.
 
 ```text
 profiles/
-  verita_200d/       Kodak Verita 200D measured CSV data
-  kodak_2383/        Kodak 2383 measured and corrected CSV data
+  verita_200d/       Kodak Verita 200D 5206/7206 measured CSV data
+  kodak_2383/        Kodak Vision 2383/3383 measured and corrected CSV data
 colorimetry/
   illuminants/       standard and measured illuminant spectra
   observers/         CIE observer data
@@ -24,7 +24,7 @@ Profile JSON files are neither required nor supported by the production
 pipeline. Editable artwork, digitization SVGs and table-generation inputs live
 under the project-level `working/` directory instead.
 
-The production Kodak 2383 dye file is explicitly named
+The production Kodak Vision 2383/3383 dye file is explicitly named
 `kodak_2383_corrected_spectral_dye_density_curves.csv`; the uncorrected measured
 curve remains beside it for comparison.
 

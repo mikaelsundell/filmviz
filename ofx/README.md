@@ -17,6 +17,9 @@ The **Processing** control selects the render backend:
 
 The CPU and Metal paths use the same cached FilmViz transform products. Color
 LUTs use tetrahedral interpolation; granularity sigma fields remain trilinear.
+The input-to-negative-exposure LUT uses the production exposure-separated
+rgb2spec reconstruction: AP0/D60 values above Y=0.18 are reconstructed at
+Y=0.18 and then spectrally rescaled.
 
 ## Interactive transform behavior
 
@@ -45,8 +48,17 @@ regeneration and Metal re-upload. Grain and halation spatial controls are also
 live parameters and do not invalidate the shared transform.
 
 Transform-changing controls such as negative stock, push/pull, bleach bypass,
-printer lights, printer temperature, input/output profile, and LUT size select
-or build a different shared transform cache.
+printer lights, middle gray, and input/output profile select or build a
+different shared transform cache.
+
+During an interactive parameter drag, Resolve's interactive/draft render hint
+selects a quantized 9^3 preview transform when the requested full-quality
+transform is not already resident. This substantially reduces spectral cache
+generation time while preserving the same physical pipeline. When interaction
+ends, FilmViz generates or loads the exact parameter value at the fixed
+production LUT size. Runtime-only Exposure, grain, and halation changes
+continue to reuse the resident full-quality transform without entering preview
+mode.
 
 ## Persistent and bundled caches
 
@@ -56,6 +68,9 @@ FilmViz checks transform caches in this order:
 2. pre-generated cache bundled in `Contents/Resources/filmviz/cache/ofx`;
 3. persistent user cache;
 4. generate the transform and save it to the persistent cache.
+
+The cache format carries a model revision. Caches produced before the current
+exposure-separated reconstruction are rejected automatically and regenerated.
 
 On macOS the persistent cache defaults to:
 
@@ -74,7 +89,8 @@ export FILMVIZ_OFX_CACHE_DIR=/path/to/cache
 A normal OFX build pre-generates the neutral/common FilmViz combinations at LUT
 size 33 when `FILMVIZ_OFX_PREBAKE_CACHE=ON` (default). The generated cache
 contains both negative stocks, both input profiles, and both output profiles,
-with Kodak 2383, 25/25/25 printer lights, 3200 K, zero push/pull, zero bleach
+with Kodak Vision 2383/3383, 25/25/25 printer lights, 3200 K, zero push/pull,
+zero bleach
 bypass, and middle gray 0.18. Each `.fvcache` contains the input-to-negative-
 exposure LUT, the log-exposure development domain, the developed/output LUT,
 and the granularity sigma field, so those common combinations are ready when
@@ -98,14 +114,8 @@ The cache is generated under:
 build/ofx/prebaked
 ```
 
-and copied automatically into the OFX bundle. Change the bundled pre-bake LUT
-size with:
-
-```bash
--DFILMVIZ_OFX_PREBAKE_LUT_SIZE=33
-```
-
-Disable build-time pre-generation with:
+and copied automatically into the OFX bundle. Disable build-time pre-generation
+with:
 
 ```bash
 -DFILMVIZ_OFX_PREBAKE_CACHE=OFF
@@ -173,17 +183,17 @@ export FILMVIZ_OFX_LOG_PATH=/path/to/filmviz_ofx.log
 
 Pipeline:
 
+- Enable
 - Processing backend
 - Input profile: ARRI AWG3 / LogC3 EI800, ACES2065-1 AP0 linear
-- Negative: Kodak Verita 200D, Kodak VISION3 50D 5203/7203
-- Print: Kodak 2383
+- Negative: Kodak Verita 200D 5206/7206, Kodak Vision3 50D 5203/7203
+- Print: Kodak Vision 2383/3383
 - Output profile: ACES2065-1 AP0 linear, Rec.709 Gamma 2.4
 - Exposure stops
 - Push/pull stops
 - Negative bleach bypass
 - Print bleach bypass
 - Printer R/G/B lights, neutral at 25/25/25
-- Printer temperature
 - Middle gray
 
 Grain:
@@ -204,10 +214,15 @@ Halation:
 
 Performance:
 
-- LUT size
 - Worker threads
 
 Grain and halation are disabled by default.
+The OFX production transform is fixed at 33^3 and the calibrated Kodak Vision
+2383/3383
+printer illuminant approximation is fixed at 3200 K. These are profile and
+quality constants rather than creative controls. The standalone cache
+pregenerator retains a LUT-size argument for development diagnostics, while
+bundled production caches are always generated at 33^3.
 
 ## OpenFX SDK
 
@@ -237,6 +252,7 @@ CMake automatically uses `external/openfx/include`.
 
 ```bash
 cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/Volumes/Projects/github/3rdparty/build/macosx/arm64.release \
   -DFILMVIZ_BUILD_OFX=ON
 
@@ -270,8 +286,9 @@ FilmViz.ofx.bundle/
 ```
 
 Runtime dependencies are copied into `Contents/Libraries`, rewritten to
-bundle-relative load paths, and signed during macOS packaging. For local
-experiments the profile/resource root can be overridden with:
+bundle-relative load paths, stripped of absolute build-machine `LC_RPATH`
+entries, and signed during macOS packaging. For local experiments the
+profile/resource root can be overridden with:
 
 ```bash
 export FILMVIZ_RESOURCES=/absolute/path/to/filmviz/resources

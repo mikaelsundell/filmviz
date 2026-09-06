@@ -4,6 +4,8 @@
 #pragma once
 
 #include "filmdata.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -30,7 +32,10 @@ struct FilmVizOfxFrame
 
 struct FilmVizOfxRenderSettings
 {
-    std::string negative_profile = "verita-200d";
+    std::string negative_profile =
+        NegativeProfileCatalog::default_profile().identifier;
+    std::string print_profile =
+        PrintProfileCatalog::default_profile().identifier;
 
     int input_profile = 0;
     int output_profile = 1;
@@ -106,6 +111,12 @@ public:
         const FilmVizOfxRenderSettings& settings,
         const std::string& resources_directory,
         std::string& error);
+
+    // True when this instance can use the requested immutable transform
+    // without a cache lookup or rebuild. Runtime-only controls are ignored.
+    bool has_transform(
+        const FilmVizOfxRenderSettings& settings,
+        const std::string& resources_directory) const;
 
     bool render(
         const FilmVizOfxFrame& source,

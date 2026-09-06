@@ -217,7 +217,7 @@ main()
     passed &= test::check(
         kodak_50d_pipeline.initialize(
             kodak_50d_settings),
-        std::string("Kodak VISION3 50D pipeline initializes: ")
+        std::string("Kodak Vision3 50D 5203/7203 pipeline initializes: ")
             + kodak_50d_pipeline.error());
 
     if (kodak_50d_pipeline.valid()) {
@@ -235,7 +235,7 @@ main()
             kodak_50d_shadow.valid
             && kodak_50d_middle.valid
             && kodak_50d_highlight.valid,
-            "Kodak VISION3 50D processes representative neutral exposures");
+            "Kodak Vision3 50D 5203/7203 processes representative neutral exposures");
 
         passed &= test::check(
             finite_density(kodak_50d_middle.negative_status_m_density)
@@ -243,14 +243,14 @@ main()
             && finite_density(kodak_50d_middle.negative_granularity_sigma)
             && finite_rgb(kodak_50d_middle.ap0)
             && finite_rgb(kodak_50d_middle.rec709_gamma24),
-            "Kodak VISION3 50D production stages return finite values");
+            "Kodak Vision3 50D 5203/7203 production stages return finite values");
 
         passed &= test::check(
             ap0_luminance(kodak_50d_shadow.ap0)
                 < ap0_luminance(kodak_50d_middle.ap0)
             && ap0_luminance(kodak_50d_middle.ap0)
                 < ap0_luminance(kodak_50d_highlight.ap0),
-            "Kodak VISION3 50D neutral exposure remains monotonic through print");
+            "Kodak Vision3 50D 5203/7203 neutral exposure remains monotonic through print");
     }
 
     return

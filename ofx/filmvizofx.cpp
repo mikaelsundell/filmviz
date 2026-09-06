@@ -7,6 +7,8 @@
 #include "ofxCore.h"
 #include "filmvizofxprocessor.h"
 #include "filmvizofxlog.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
 
 #if FILMVIZ_HAS_METAL
 #include "filmvizmetalprocessor.h"
@@ -18,6 +20,7 @@
 #include "ofxProperty.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -25,6 +28,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
 #  define NOMINMAX
@@ -53,9 +57,7 @@ constexpr const char* kParamPrintBleachBypass = "printBleachBypass";
 constexpr const char* kParamPrinterLightRed = "printerLightRed";
 constexpr const char* kParamPrinterLightGreen = "printerLightGreen";
 constexpr const char* kParamPrinterLightBlue = "printerLightBlue";
-constexpr const char* kParamPrinterTemperature = "printerTemperature";
 constexpr const char* kParamMiddleGray = "middleGray";
-constexpr const char* kParamLutSize = "lutSize";
 constexpr const char* kParamEnableGrain = "enableGrain";
 constexpr const char* kParamNegativeGrain = "negativeGrain";
 constexpr const char* kParamPrintGrain = "printGrain";
@@ -67,6 +69,48 @@ constexpr const char* kParamHalationStrength = "halationStrength";
 constexpr const char* kParamHalationRadius = "halationRadius";
 constexpr const char* kParamHalationThreshold = "halationThreshold";
 constexpr const char* kParamWorkerThreads = "workerThreads";
+
+constexpr int kInteractiveLutSize = 9;
+
+float
+quantize_interactive(
+    float value,
+    float step)
+{
+    return
+        step > 0.0f
+            ? std::round(value / step) * step
+            : value;
+}
+
+FilmVizOfxRenderSettings
+interactive_transform_settings(
+    const FilmVizOfxRenderSettings& settings)
+{
+    FilmVizOfxRenderSettings preview = settings;
+
+    // Coarse steps encourage reuse while Resolve emits the dense sequence of
+    // values produced by slider drags. The exact values and production LUT
+    // size are restored for the non-interactive render.
+    preview.push_pull_stops =
+        quantize_interactive(preview.push_pull_stops, 0.10f);
+    preview.negative_bleach_bypass =
+        quantize_interactive(preview.negative_bleach_bypass, 0.05f);
+    preview.print_bleach_bypass =
+        quantize_interactive(preview.print_bleach_bypass, 0.05f);
+    preview.printer_light_red =
+        quantize_interactive(preview.printer_light_red, 0.50f);
+    preview.printer_light_green =
+        quantize_interactive(preview.printer_light_green, 0.50f);
+    preview.printer_light_blue =
+        quantize_interactive(preview.printer_light_blue, 0.50f);
+    preview.middle_gray =
+        std::max(
+            0.01f,
+            quantize_interactive(preview.middle_gray, 0.01f));
+
+    return preview;
+}
 
 OfxHost* gHost = nullptr;
 const OfxImageEffectSuiteV1* gEffectSuite = nullptr;
@@ -91,9 +135,7 @@ struct InstanceData
     OfxParamHandle printer_r = nullptr;
     OfxParamHandle printer_g = nullptr;
     OfxParamHandle printer_b = nullptr;
-    OfxParamHandle printer_k = nullptr;
     OfxParamHandle middle_gray = nullptr;
-    OfxParamHandle lut_size = nullptr;
     OfxParamHandle threads = nullptr;
 
     OfxParamHandle grain_enabled = nullptr;
@@ -225,7 +267,6 @@ read_settings(
     int negative = 0;
     int print = 0;
     int output = 1;
-    int lut_size = 33;
     int threads = 0;
 
     int grain_enabled = 0;
@@ -239,7 +280,6 @@ read_settings(
     double printer_r = 25.0;
     double printer_g = 25.0;
     double printer_b = 25.0;
-    double printer_k = 3200.0;
     double middle_gray = 0.18;
 
     double negative_grain = 0.0;
@@ -265,9 +305,7 @@ read_settings(
         gParameterSuite->paramGetValueAtTime(instance.printer_r, time, &printer_r),
         gParameterSuite->paramGetValueAtTime(instance.printer_g, time, &printer_g),
         gParameterSuite->paramGetValueAtTime(instance.printer_b, time, &printer_b),
-        gParameterSuite->paramGetValueAtTime(instance.printer_k, time, &printer_k),
         gParameterSuite->paramGetValueAtTime(instance.middle_gray, time, &middle_gray),
-        gParameterSuite->paramGetValueAtTime(instance.lut_size, time, &lut_size),
         gParameterSuite->paramGetValueAtTime(instance.threads, time, &threads),
         gParameterSuite->paramGetValueAtTime(instance.grain_enabled, time, &grain_enabled),
         gParameterSuite->paramGetValueAtTime(instance.negative_grain, time, &negative_grain),
@@ -294,13 +332,24 @@ read_settings(
     backend = backend_value == 1 ? 2 : 0;
 #endif
 
+    const auto& negative_profiles =
+        NegativeProfileCatalog::profiles();
+    const auto& print_profiles =
+        PrintProfileCatalog::profiles();
+
+    if (negative < 0
+        || negative >= static_cast<int>(negative_profiles.size())
+        || print < 0
+        || print >= static_cast<int>(print_profiles.size())) {
+        return false;
+    }
+
     settings.input_profile = input;
     settings.negative_profile =
-        negative == 1
-            ? "kodak-50d"
-            : "verita-200d";
+        negative_profiles[static_cast<std::size_t>(negative)].identifier;
+    settings.print_profile =
+        print_profiles[static_cast<std::size_t>(print)].identifier;
     settings.output_profile = output;
-    settings.lut_size = lut_size;
     settings.threads = threads;
     settings.exposure_stops = static_cast<float>(exposure);
     settings.push_pull_stops = static_cast<float>(push_pull);
@@ -309,7 +358,6 @@ read_settings(
     settings.printer_light_red = static_cast<float>(printer_r);
     settings.printer_light_green = static_cast<float>(printer_g);
     settings.printer_light_blue = static_cast<float>(printer_b);
-    settings.printer_temperature = static_cast<float>(printer_k);
     settings.middle_gray = static_cast<float>(middle_gray);
 
     settings.grain_enabled = grain_enabled != 0;
@@ -328,7 +376,6 @@ read_settings(
     settings.halation_radius = static_cast<float>(halation_radius);
     settings.halation_threshold = static_cast<float>(halation_threshold);
 
-    (void)print;
     return true;
 }
 
@@ -382,9 +429,7 @@ create_instance(
         && fetch_param(parameter_set, kParamPrinterLightRed, instance->printer_r)
         && fetch_param(parameter_set, kParamPrinterLightGreen, instance->printer_g)
         && fetch_param(parameter_set, kParamPrinterLightBlue, instance->printer_b)
-        && fetch_param(parameter_set, kParamPrinterTemperature, instance->printer_k)
         && fetch_param(parameter_set, kParamMiddleGray, instance->middle_gray)
-        && fetch_param(parameter_set, kParamLutSize, instance->lut_size)
         && fetch_param(parameter_set, kParamWorkerThreads, instance->threads)
         && fetch_param(parameter_set, kParamEnableGrain, instance->grain_enabled)
         && fetch_param(parameter_set, kParamNegativeGrain, instance->negative_grain)
@@ -863,14 +908,25 @@ describe_in_context(
         "ACES2065-1 / AP0"
     };
 
-    static const char* negative_profiles[] = {
-        "Kodak Verita 200D",
-        "Kodak VISION3 50D 5203/7203"
-    };
+    const auto& supported_negatives =
+        NegativeProfileCatalog::profiles();
 
-    static const char* print_profiles[] = {
-        "Kodak 2383"
-    };
+    std::vector<const char*> negative_options;
+    negative_options.reserve(supported_negatives.size());
+
+    for (const auto& profile : supported_negatives) {
+        negative_options.push_back(profile.display_name.c_str());
+    }
+
+    const auto& supported_prints =
+        PrintProfileCatalog::profiles();
+
+    std::vector<const char*> print_options;
+    print_options.reserve(supported_prints.size());
+
+    for (const auto& profile : supported_prints) {
+        print_options.push_back(profile.display_name.c_str());
+    }
 
     static const char* output_profiles[] = {
         "ACES2065-1 / AP0",
@@ -880,8 +936,8 @@ describe_in_context(
     if (!define_boolean_parameter(parameter_set, kParamEnable, "Enable", 1)
         || !define_choice_parameter(parameter_set, kParamBackend, "Processing", backends, backend_count, 0)
         || !define_choice_parameter(parameter_set, kParamInputProfile, "Input", input_profiles, 2, 0)
-        || !define_choice_parameter(parameter_set, kParamNegativeProfile, "Negative", negative_profiles, 2, 0)
-        || !define_choice_parameter(parameter_set, kParamPrintProfile, "Print", print_profiles, 1, 0)
+        || !define_choice_parameter(parameter_set, kParamNegativeProfile, "Negative", negative_options.data(), static_cast<int>(negative_options.size()), 0)
+        || !define_choice_parameter(parameter_set, kParamPrintProfile, "Print", print_options.data(), static_cast<int>(print_options.size()), 0)
         || !define_choice_parameter(parameter_set, kParamOutputProfile, "Output", output_profiles, 2, 1)
         || !define_double_parameter(parameter_set, kParamExposure, "Exposure", 0.0, -8.0, 8.0)
         || !define_double_parameter(parameter_set, kParamPushPull, "Push / Pull", 0.0, -3.0, 3.0)
@@ -890,13 +946,11 @@ describe_in_context(
         || !define_double_parameter(parameter_set, kParamPrinterLightRed, "Printer Light Red", 25.0, 0.0, 50.0)
         || !define_double_parameter(parameter_set, kParamPrinterLightGreen, "Printer Light Green", 25.0, 0.0, 50.0)
         || !define_double_parameter(parameter_set, kParamPrinterLightBlue, "Printer Light Blue", 25.0, 0.0, 50.0)
-        || !define_double_parameter(parameter_set, kParamPrinterTemperature, "Printer Temperature", 3200.0, 1000.0, 10000.0)
         || !define_double_parameter(parameter_set, kParamMiddleGray, "Middle Gray", 0.18, 0.01, 1.0)
-        || !define_integer_parameter(parameter_set, kParamLutSize, "LUT Size", 33, 17, 65)
         || !define_boolean_parameter(parameter_set, kParamEnableGrain, "Enable Grain", 0)
         || !define_double_parameter(parameter_set, kParamNegativeGrain, "Negative Grain", 0.0, 0.0, 2.0)
         || !define_double_parameter(parameter_set, kParamPrintGrain, "Print Grain", 0.0, 0.0, 2.0)
-        || !define_double_parameter(parameter_set, kParamGrainSize, "Grain Size", 1.0, 0.1, 5.0)
+        || !define_double_parameter(parameter_set, kParamGrainSize, "Grain Size", 1.0, 1.0, 5.0)
         || !define_double_parameter(parameter_set, kParamGrainChroma, "Grain Chroma", 1.0, 0.0, 2.0)
         || !define_integer_parameter(parameter_set, kParamGrainSeed, "Grain Seed", 1, 0, 1000000)
         || !define_boolean_parameter(parameter_set, kParamEnableHalation, "Enable Halation", 0)
@@ -933,6 +987,8 @@ render(
 
     double time = 0.0;
     int render_window[4] = {0, 0, 0, 0};
+    int interactive_render = 0;
+    int draft_render = 0;
 
     if (gPropertySuite->propGetDouble(
             in_args,
@@ -947,6 +1003,20 @@ render(
 
         return kOfxStatFailed;
     }
+
+    // These are optional host hints. Resolve supplies the interactive flag
+    // while a parameter is actively being adjusted.
+    gPropertySuite->propGetInt(
+        in_args,
+        kOfxImageEffectPropInteractiveRenderStatus,
+        0,
+        &interactive_render);
+
+    gPropertySuite->propGetInt(
+        in_args,
+        kOfxImageEffectPropRenderQualityDraft,
+        0,
+        &draft_render);
 
     OfxPropertySetHandle source_image = nullptr;
     OfxPropertySetHandle output_image = nullptr;
@@ -1117,6 +1187,32 @@ render(
         return kOfxStatFailed;
     }
 
+    const bool interactive =
+        interactive_render != 0
+        || draft_render != 0;
+
+    if (interactive
+        && !instance->processor.has_transform(
+            settings,
+            instance->resources_directory)) {
+        FilmVizOfxRenderSettings preview =
+            interactive_transform_settings(settings);
+
+        // Runtime-only edits such as Exposure retain the resident full-quality
+        // transform. Transform-changing edits get a small temporary LUT, then
+        // settle at the requested size after the drag.
+        if (!instance->processor.has_transform(
+                preview,
+                instance->resources_directory)) {
+            preview.lut_size =
+                std::min(
+                    preview.lut_size,
+                    kInteractiveLutSize);
+        }
+
+        settings = preview;
+    }
+
     std::ostringstream render_details;
     render_details
         << "node=" << instance
@@ -1124,7 +1220,10 @@ render(
         << " backend_request=" << backend
         << " enabled=" << (enabled ? 1 : 0)
         << " negative=" << settings.negative_profile
+        << " print=" << settings.print_profile
         << " exposure=" << settings.exposure_stops
+        << " lut=" << settings.lut_size
+        << " interactive=" << (interactive ? 1 : 0)
         << " grain=" << (settings.grain_enabled ? 1 : 0)
         << " halation=" << (settings.halation_enabled ? 1 : 0);
 

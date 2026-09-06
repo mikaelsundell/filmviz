@@ -19,9 +19,10 @@ requested Kodak Status-M density to `FilmDyeModel` spectral coordinates:
 
 Both accept the resources directory as their optional first argument.
 
-`example_profile_diagrams` loads the current Verita 200D and corrected Kodak
-2383 profiles and writes their measured sensitivities, characteristic curves,
-dye-density data and related diagnostics as PNG files:
+`example_profile_diagrams` loads the current Kodak Verita 200D 5206/7206 and
+corrected Kodak Vision 2383/3383 profiles and writes their measured
+sensitivities, characteristic curves, dye-density data and related diagnostics
+as PNG files:
 
 ```bash
 ./build/Debug/example_profile_diagrams resources build/profile_diagrams

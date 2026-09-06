@@ -32,7 +32,20 @@ future workflows.
 ### `SpectralReconstructor`
 
 Uses the rgb2spec table to reconstruct an approximate scene spectral factor
-from AP0 RGB.
+from AP0 RGB. `FilmPipeline` separates scene exposure before reconstruction:
+AP0 values above D60 luminance 0.18 are reconstructed at Y=0.18, then the
+resulting spectrum is scaled back to the original scene exposure. This keeps
+spectral shape homogeneous through highlights and allows scene spectral power
+to exceed the bounded-reflectance range without forcing rgb2spec to select a
+different metamer.
+
+### `NegativeProfileCatalog`
+
+Owns the canonical identifiers, display names and resource locations for every
+camera-negative profile supported by `FilmPipeline`. CLI, Python and OpenFX
+adapters read this catalog rather than maintaining interface-specific stock
+names. It contains profile metadata only; loading and spectral processing stay
+within their existing model classes.
 
 ### `FilmProcessor`
 
@@ -86,9 +99,15 @@ least-squares spectral state rather than failing LUT generation.
 
 ### `PrintFilmProcessor`
 
-Exposes Kodak 2383 through the negative transmittance and evaluates the print
-characteristic curves. The current printer source is a 3200 K Planckian
-approximation.
+Exposes Kodak Vision 2383/3383 through the negative transmittance and evaluates
+the print characteristic curves. The current printer source is a 3200 K
+Planckian approximation.
+
+### `PrintProfileCatalog`
+
+Owns the stable identifiers, display names and resource filenames for supported
+print stocks. The pipeline, CLI, Python interface, OFX interface and examples
+all consume this metadata rather than maintaining independent labels or paths.
 
 ### `PrintViewer`
 
@@ -113,9 +132,10 @@ setting while retaining deterministic LUT ordering.
 
 ### `GranularityModel`
 
-Loads the digitized diffuse-RMS granularity curves for Verita 200D and Kodak
-2383 and maps each stage's developed density to an RGB density standard
-deviation. Random sampling is deterministic for a seed and pixel coordinate.
+Loads the digitized diffuse-RMS granularity curves for Kodak Verita 200D
+5206/7206 and Kodak Vision 2383/3383, then maps each stage's developed density
+to an RGB density standard deviation. Random sampling is deterministic for a
+seed and pixel coordinate.
 
 ### `ImageProcessor`
 
@@ -158,7 +178,7 @@ FilmPipeline::Result result = pipeline.process(ap0_linear);
 
 ## Fixed production calibration
 
-The current Kodak 2383 spectral dye amplitudes are:
+The current Kodak Vision 2383/3383 spectral dye amplitudes are:
 
 ```text
 C = 1.10093

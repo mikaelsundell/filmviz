@@ -2,6 +2,8 @@
 // Copyright (c) 2025 - present Mikael Sundell.
 
 #include "filmvizofxprocessor.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
 
 #include <filesystem>
 #include <fstream>
@@ -91,73 +93,73 @@ main(
         return 1;
     }
 
-    const char* negatives[] = {
-        "verita-200d",
-        "kodak-50d"
-    };
-
     int generated = 0;
 
     for (int input = 0; input < 2; ++input) {
-        for (const char* negative : negatives) {
-            for (int output = 0; output < 2; ++output) {
-                FilmVizOfxRenderSettings settings;
-                settings.input_profile = input;
-                settings.negative_profile = negative;
-                settings.output_profile = output;
-                settings.lut_size = options.lut_size;
-                settings.exposure_stops = 0.0f;
-                settings.push_pull_stops = 0.0f;
-                settings.middle_gray = 0.18f;
-                settings.printer_temperature = 3200.0f;
-                settings.negative_bleach_bypass = 0.0f;
-                settings.print_bleach_bypass = 0.0f;
-                settings.printer_light_red = 25.0f;
-                settings.printer_light_green = 25.0f;
-                settings.printer_light_blue = 25.0f;
-                settings.grain_enabled = false;
-                settings.halation_enabled = false;
+        for (const auto& negative : NegativeProfileCatalog::profiles()) {
+            for (const auto& print : PrintProfileCatalog::profiles()) {
+                for (int output = 0; output < 2; ++output) {
+                    FilmVizOfxRenderSettings settings;
+                    settings.input_profile = input;
+                    settings.negative_profile = negative.identifier;
+                    settings.print_profile = print.identifier;
+                    settings.output_profile = output;
+                    settings.lut_size = options.lut_size;
+                    settings.exposure_stops = 0.0f;
+                    settings.push_pull_stops = 0.0f;
+                    settings.middle_gray = 0.18f;
+                    settings.printer_temperature = 3200.0f;
+                    settings.negative_bleach_bypass = 0.0f;
+                    settings.print_bleach_bypass = 0.0f;
+                    settings.printer_light_red = 25.0f;
+                    settings.printer_light_green = 25.0f;
+                    settings.printer_light_blue = 25.0f;
+                    settings.grain_enabled = false;
+                    settings.halation_enabled = false;
 
-                FilmVizOfxProcessor processor;
-                std::string error;
+                    FilmVizOfxProcessor processor;
+                    std::string error;
 
-                std::cout
-                    << "prebake input=" << input
-                    << " negative=" << negative
-                    << " output=" << output
-                    << " lut=" << options.lut_size
-                    << " ... "
-                    << std::flush;
+                    std::cout
+                        << "prebake input=" << input
+                        << " negative=" << negative.identifier
+                        << " print=" << print.identifier
+                        << " output=" << output
+                        << " lut=" << options.lut_size
+                        << " ... "
+                        << std::flush;
 
-                if (!processor.configure(
-                        settings,
-                        options.resources,
-                        error)) {
-                    std::cerr << "FAILED\n" << error << "\n";
-                    return 1;
+                    if (!processor.configure(
+                            settings,
+                            options.resources,
+                            error)) {
+                        std::cerr << "FAILED\n" << error << "\n";
+                        return 1;
+                    }
+
+                    if (!processor.write_prebaked_cache(
+                            options.output,
+                            true,
+                            error)) {
+                        std::cerr << "FAILED\n" << error << "\n";
+                        return 1;
+                    }
+
+                    const std::string name =
+                        processor.transform_cache_name();
+
+                    manifest
+                        << name
+                        << " input=" << input
+                        << " negative=" << negative.identifier
+                        << " print=" << print.identifier
+                        << " output=" << output
+                        << " lut=" << options.lut_size
+                        << "\n";
+
+                    ++generated;
+                    std::cout << "OK\n";
                 }
-
-                if (!processor.write_prebaked_cache(
-                        options.output,
-                        true,
-                        error)) {
-                    std::cerr << "FAILED\n" << error << "\n";
-                    return 1;
-                }
-
-                const std::string name =
-                    processor.transform_cache_name();
-
-                manifest
-                    << name
-                    << " input=" << input
-                    << " negative=" << negative
-                    << " output=" << output
-                    << " lut=" << options.lut_size
-                    << "\n";
-
-                ++generated;
-                std::cout << "OK\n";
             }
         }
     }

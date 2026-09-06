@@ -5,6 +5,8 @@
 #include "filmdyemodel.h"
 #include "filmprocessor.h"
 #include "filmstock.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
 #include "printfilmstock.h"
 #include "spectralilluminant.h"
 
@@ -57,18 +59,30 @@ main(
         return EXIT_FAILURE;
     }
 
+    const auto& negative_profile =
+        NegativeProfileCatalog::default_profile();
+
     FilmStock negative(
-        "Kodak Verita 200D");
+        negative_profile.display_name);
 
     if (!negative.load(
             resource_path(
                 resources,
-                "profiles/verita_200d/kodak_verita_200d_spectral_sensitivity_curves.csv"),
+                negative_profile.resource_directory
+                    + "/"
+                    + negative_profile.resource_prefix
+                    + "_spectral_sensitivity_curves.csv"),
             resource_path(
                 resources,
-                "profiles/verita_200d/kodak_verita_200d_sensitometric_curves.csv"))) {
+                negative_profile.resource_directory
+                    + "/"
+                    + negative_profile.resource_prefix
+                    + "_sensitometric_curves.csv"))) {
 
-        std::cerr << "Could not load the Kodak Verita 200D profile.\n";
+        std::cerr
+            << "Could not load the "
+            << negative_profile.display_name
+            << " profile.\n";
         return EXIT_FAILURE;
     }
 
@@ -88,38 +102,60 @@ main(
     if (!negative_dye_model.load_and_estimate(
             resource_path(
                 resources,
-                "profiles/verita_200d/kodak_verita_200d_spectral_dye_density_curves.csv"),
+                negative_profile.resource_directory
+                    + "/"
+                    + negative_profile.resource_prefix
+                    + "_spectral_dye_density_curves.csv"),
             negative,
             negative_settings.wavelength_min_nm,
             negative_settings.wavelength_max_nm,
             negative_settings.wavelength_step_nm,
             -0.515f)) {
 
-        std::cerr << "Could not build the Kodak Verita 200D dye model.\n";
+        std::cerr
+            << "Could not build the "
+            << negative_profile.display_name
+            << " dye model.\n";
         return EXIT_FAILURE;
     }
 
+    const auto& print_profile =
+        PrintProfileCatalog::default_profile();
+
     PrintFilmStock print(
-        "Kodak 2383 corrected production profile");
+        print_profile.display_name);
 
     if (!print.load(
             resource_path(
                 resources,
-                "profiles/kodak_2383/kodak_2383_spectral_sensitivity_curves.csv"),
+                print_profile.resource_directory
+                    + "/"
+                    + print_profile.sensitivity_filename),
             resource_path(
                 resources,
-                "profiles/kodak_2383/kodak_2383_sensitometric_curves.csv"),
+                print_profile.resource_directory
+                    + "/"
+                    + print_profile.characteristic_filename),
             resource_path(
                 resources,
-                "profiles/kodak_2383/kodak_2383_corrected_spectral_dye_density_curves.csv"),
+                print_profile.resource_directory
+                    + "/"
+                    + print_profile.dye_density_filename),
             resource_path(
                 resources,
-                "profiles/kodak_2383/kodak_2383_modulation_transfer_function_curves.csv"),
+                print_profile.resource_directory
+                    + "/"
+                    + print_profile.mtf_filename),
             resource_path(
                 resources,
-                "profiles/kodak_2383/kodak_2383_diffuse_rms_granularity_curves.csv"))) {
+                print_profile.resource_directory
+                    + "/"
+                    + print_profile.granularity_filename))) {
 
-        std::cerr << "Could not load the Kodak 2383 profile.\n";
+        std::cerr
+            << "Could not load the "
+            << print_profile.display_name
+            << " profile.\n";
         return EXIT_FAILURE;
     }
 

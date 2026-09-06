@@ -136,7 +136,7 @@ main()
         "ACES APD scanner resource loads");
 
     FilmStock stock(
-        "Kodak Verita 200D");
+        "Kodak Verita 200D 5206/7206");
 
     passed &= test::check(
         stock.load(
@@ -144,7 +144,7 @@ main()
                 + "/profiles/verita_200d/kodak_verita_200d_spectral_sensitivity_curves.csv",
             resources
                 + "/profiles/verita_200d/kodak_verita_200d_sensitometric_curves.csv"),
-        "Kodak Verita 200D stock loads");
+        "Kodak Verita 200D 5206/7206 stock loads");
 
     FilmDyeModel dye_model;
 
@@ -157,7 +157,7 @@ main()
             700.0f,
             5.0f,
             -0.515f),
-        "Kodak Verita 200D spectral dye model loads");
+        "Kodak Verita 200D 5206/7206 spectral dye model loads");
 
     FilmPipeline::Settings settings;
     settings.resources_directory = resources;

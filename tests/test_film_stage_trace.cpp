@@ -6,6 +6,7 @@
 #include "filmstock.h"
 #include "printfilmprocessor.h"
 #include "printfilmstock.h"
+#include "printprofile.h"
 #include "printviewer.h"
 #include "test_common.h"
 
@@ -41,7 +42,7 @@ struct AuditContext
     explicit AuditContext(
         const std::string& negative_name)
         : negative_stock(negative_name)
-        , print_stock("Kodak 2383 corrected")
+        , print_stock(PrintProfileCatalog::default_profile().display_name)
     {
     }
 };
@@ -770,13 +771,13 @@ main()
     passed &=
         run_stock(
             "verita-200d",
-            "Kodak Verita 200D",
+            "Kodak Verita 200D 5206/7206",
             output_directory);
 
     passed &=
         run_stock(
             "kodak-50d",
-            "Kodak VISION3 50D 5203/7203",
+            "Kodak Vision3 50D 5203/7203",
             output_directory);
 
     return

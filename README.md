@@ -7,16 +7,26 @@ uses measured stock data to make each stage inspectable: spectral exposure,
 densitometric development, dye-density synthesis, print exposure, viewing,
 LUT generation and image-grain rendering.
 
+FilmViz grew from a few late-night experiments into a useful working tool.
+Codex was used throughout as an AI development collaborator for implementation,
+investigation and documentation. The underlying model is based on established
+colour-science mathematics, published references and measured film data rather
+than AI-generated colour recipes. Careful testing, visual inspection, learning,
+hands-on training and iteration have all been part of the process, but the
+project remains experimental and its results should be evaluated accordingly.
+
 The current pipeline is derived from documented Status-M validation work and is
 split into reusable C++ classes, a command-line application and a Python GUI.
 
-The current production profile is:
+The default production profile is:
 
 - input: ARRI Wide Gamut 3 / LogC3 EI800, or linear ACES2065-1
-- negative: Kodak Verita 200D
+- negative: Kodak Verita 200D 5206/7206
+- alternate supported negative: Kodak Vision3 50D 5203/7203
 - negative densitometry: ISO Status-M
-- print: corrected Kodak 2383
-- printer-light approximation: 3200 K
+- print: corrected Kodak Vision 2383/3383
+- printer illuminant approximation: 3200 K
+- neutral printer-light controls: R/G/B 25/25/25
 - print viewing: D55, adapted to ACES D60
 - production output: linear ACES2065-1 (AP0)
 - optional preview output: Rec.709 / Gamma 2.4, **without an ACES RRT/ODT**
@@ -32,6 +42,7 @@ optional Python application additionally uses pybind11 and PySide6.
 
 ```bash
 cmake -S . -B build \
+    -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_PREFIX_PATH=/Volumes/Projects/github/3rdparty/build/macosx/arm64.debug
 cmake --build build -j
 ```
@@ -41,13 +52,21 @@ On macOS, select exactly one matching dependency tree per build directory:
 uses that configured prefix and sets `DYLD_IMAGE_SUFFIX=_debug` when launching
 against the debug Qt frameworks.
 
-By default the CTest regression suite and `rgb2spec_opt` are also built. For a
-production-only build:
+With a single-config generator, executables and the Python launcher are written
+to `build/bin/`. Multi-config generators such as Xcode instead use the selected
+configuration directory, for example `build/Debug/` or `build/Release/`.
+
+The CTest regression suite, examples, Python application, OpenFX plug-in and
+`rgb2spec_opt` are enabled by default. Components whose dependencies are not
+available are disabled during configuration where supported. For a CLI-only
+build:
 
 ```bash
 cmake -S . -B build \
     -DBUILD_TESTING=OFF \
     -DFILMVIZ_BUILD_EXAMPLES=OFF \
+    -DFILMVIZ_BUILD_PYTHON_APP=OFF \
+    -DFILMVIZ_BUILD_OFX=OFF \
     -DFILMVIZ_BUILD_RGB2SPEC_OPT=OFF
 cmake --build build -j
 ```
@@ -63,26 +82,27 @@ ctest --test-dir build -C Debug --output-on-failure
 Process one AWG3/LogC3 value through every production stage:
 
 ```bash
-./build/Debug/example_process_pixel resources
+./build/bin/example_process_pixel resources
 ```
 
 Inspect a nonlinear Status-M closure solve:
 
 ```bash
-./build/Debug/example_density_calibration resources
+./build/bin/example_density_calibration resources
 ```
 
-Write diagrams for the current Verita 200D and corrected Kodak 2383 profiles:
+Write diagrams for the current Kodak Verita 200D 5206/7206 and corrected Kodak
+Vision 2383/3383 profiles:
 
 ```bash
-./build/Debug/example_profile_diagrams resources build/profile_diagrams
+./build/bin/example_profile_diagrams resources build/profile_diagrams
 ```
 
 Convert the bundled ARRI AWG3/LogC3 reference image to a 16-bit Rec.709/Gamma
 2.4 TIFF through a production 33^3 LUT, with measured Verita and 2383 grain:
 
 ```bash
-./build/Debug/filmviz \
+./build/bin/filmviz \
     -v \
     --resources resources \
     --input awg3-logc3-ei800 \
@@ -181,7 +201,9 @@ ARRI AWG3 / LogC3 EI800
 linear ACES2065-1 / AP0
         |
         v
-rgb2spec spectral reconstruction
+exposure-separated rgb2spec reconstruction
+(AP0/D60 luminance above Y=0.18 is reconstructed at Y=0.18,
+then exposure is restored by spectral rescaling; scene values may exceed 1)
         |
         v
 CIE D60 scene illumination
@@ -207,7 +229,7 @@ negative transmittance
 3200 K printer exposure
         |
         v
-Kodak 2383 development + dye synthesis
+Kodak Vision 2383/3383 development + dye synthesis
         |
         v
 D55 print viewing / CIE 1931
@@ -229,15 +251,19 @@ There is no empirical `1.5x` contrast multiplier in the production path.
 
 ## Python application
 
-The PySide6 application exposes the same supported profiles and controls as the
-main command-line tool. It converts images and writes `.cube` LUTs through the
-`filmviz_python` pybind11 module, without launching a subprocess. Build its
-target and use the generated environment-aware launcher:
+The PySide6 application uses the same C++ spectral pipeline as the command-line
+tool. In addition to image and LUT processing controls, it provides interactive
+display selection, direct/no-print processing, pixel probes and diagnostic
+scopes. It calls the `filmviz_python` pybind11 module directly without launching
+a subprocess. Build its target and use the generated environment-aware launcher:
 
 ```bash
 cmake --build build --config Debug --target python_filmviz_app
-./build/Debug/python_filmviz_app.sh
+./build/bin/python_filmviz_app.sh
 ```
+
+For a multi-config build, the corresponding launcher is under the selected
+configuration directory, such as `build/Debug/python_filmviz_app.sh`.
 
 The launcher uses the Python executable, dependency prefix, module path and
 macOS Qt framework suffix selected during CMake configuration. The worker-count
@@ -251,11 +277,14 @@ field controls the same global C++ thread setting as `filmviz --threads`. See
 - `filmdensitycalibration.*` — nonlinear Status-M -> spectral coordinate solve
 - `statusmdensitometer.*` — ISO Status-M measurement implementation
 - `inputtransform.*` — camera/input encoding to AP0
+- `negativeprofile.*` — canonical negative-profile names and resource metadata
+- `printprofile.*` — canonical print-profile names and resource metadata
 - `lut3d.*` — LUT generation, interpolation, validation and `.cube` output
 - `granularitymodel.*` — measured negative/print diffuse-RMS lookup and seeded noise
 - `imageprocessor.*` — image I/O, LUT application and two-stage grain rendering
 - `threading.*` — process-wide worker configuration
 - `python/` — pybind11 module and PySide6 image/LUT application
+- `ofx/` — OpenFX front end, shared transform cache and Metal renderer
 - `filmprocessor.*` — negative spectral exposure + characteristic development
 - `filmdyemodel.*` — negative spectral-density synthesis
 - `printfilmprocessor.*` — print exposure/development

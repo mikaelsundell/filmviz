@@ -78,7 +78,7 @@ PrintDyeModel::build(
         || reference_status_a_density <= 0.0f) {
 
         std::cerr
-            << "error: invalid Kodak 2383 dye-model settings"
+            << "error: invalid print-film dye-model settings"
             << std::endl;
         return false;
     }

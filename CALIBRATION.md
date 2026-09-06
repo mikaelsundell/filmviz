@@ -123,6 +123,25 @@ magenta suppression based only on the visual expectation that film shoulders
 are usually warm. Any future hue-model change must be supported by stock data
 or a clearly separated creative-look layer.
 
+## Scene-exposure spectral reconstruction
+
+Bright saturated AP0 reds exposed a bounded-reflectance failure in the direct
+rgb2spec path. A problematic pixel with input AP0 approximately
+`0.838 / 0.252 / 0.116` reconstructed to unity at both 400..420 nm and
+600..680 nm, with an almost-zero mid-spectrum. Its negative blue/green
+exposure ratio was about 4.06 and the viewed result turned magenta. A nearby
+healthy red at AP0 approximately `0.275 / 0.084 / 0.048` reconstructed as a
+normal rising red edge and had a blue/green exposure ratio around 1.35.
+
+Production therefore separates scene exposure from spectral shape above
+AP0/D60 Y=0.18. The lower-exposure AP0 value is passed to rgb2spec and its
+reconstructed spectrum is scaled back by the same exposure factor. This
+preserves AP0 chromatic ratios while allowing scene spectral power above one.
+Image probes confirmed that the red/violet metamer branch collapses into the
+healthy red branch, while bright skin samples retain smooth rising spectra and
+balanced film-layer exposures. This is reconstruction semantics, not a
+red-specific hue correction.
+
 ## Reference profile
 
 An independently derived Verita reference profile produced a
@@ -133,7 +152,7 @@ Kodak data and ISO Status-M closure described above.
 
 ## Grain and push/pull scope
 
-The Verita and Kodak 2383 diffuse-RMS curves provide density-domain standard
+The Verita and Kodak Vision 2383/3383 diffuse-RMS curves provide density-domain
 deviations for the negative and print stages. FilmViz samples the two stages
 independently and propagates them as a first-order image-domain approximation.
 This preserves their distinct density dependence and opposite effects on final

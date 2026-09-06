@@ -114,8 +114,16 @@ _ensure_macos_qt_runtime(DEPENDENCY_PREFIXES, CONFIGURED_PYTHON)
 try:
     import filmviz_python as filmviz
 
-    print(f"FilmViz binding: {filmviz.__file__}")
-    print(f"FilmViz process_image: {filmviz.process_image.__doc__}")
+    try:
+        import OpenImageIO as oiio
+    except ImportError:
+        oiio = None
+
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+
     from PySide6.QtCore import QObject, QPointF, QRectF, QThread, QTimer, QUrl, Qt, Signal, Slot
     from PySide6.QtGui import (
         QColor,
@@ -161,19 +169,96 @@ except ImportError as error:
 
 
 
-def _rec709_gamma24_color_space():
+def _rec709_gamma_color_space(gamma: float):
     # Rec.709 and sRGB use the same RGB primaries / D65 white point.
-    # Do not use QColorSpace.NamedColorSpace.SRgb here because that carries
-    # the sRGB transfer function. FilmViz output is explicitly Gamma 2.4.
+    # Use an explicit gamma transfer function here because the FilmViz
+    # display selector intentionally distinguishes Gamma 2.2 and 2.4.
     color_space = QColorSpace(
         QColorSpace.Primaries.SRgb,
         QColorSpace.TransferFunction.Gamma,
-        2.4)
-    color_space.setDescription("Rec.709 Gamma 2.4")
+        gamma)
+    color_space.setDescription(f"Rec.709 Gamma {gamma:g}")
     return color_space
 
 
-APP_COLOR_SPACE = _rec709_gamma24_color_space()
+def _display_color_space(name: str):
+    if name == "rec709-gamma22":
+        return _rec709_gamma_color_space(2.2)
+    if name == "srgb":
+        return QColorSpace(QColorSpace.NamedColorSpace.SRgb)
+    return _rec709_gamma_color_space(2.4)
+
+
+APP_COLOR_SPACE = _display_color_space("rec709-gamma24")
+
+
+def _read_scope_rgb(filename: str):
+    # Scope analysis must use the original output pixels, not the resized
+    # RGB888 preview. Prefer a native FilmViz float reader if the binding
+    # exposes one; otherwise use the OpenImageIO Python bindings from the
+    # configured FilmViz dependency prefix.
+    native_reader = getattr(filmviz, "read_image_scope", None)
+    if native_reader is not None:
+        image = native_reader(filename)
+        width = int(image["width"])
+        height = int(image["height"])
+        rgb = image["rgb"]
+        return width, height, rgb
+
+    if oiio is None:
+        raise RuntimeError(
+            "High-precision scope analysis requires either "
+            "filmviz.read_image_scope() or the OpenImageIO Python bindings. "
+            "The scopes will not fall back to the 8-bit preview.")
+
+    image = oiio.ImageBuf(filename)
+    if image.has_error:
+        raise RuntimeError(image.geterror())
+
+    spec = image.spec()
+    if spec.nchannels < 3:
+        raise RuntimeError(
+            f"Scope source must contain at least 3 channels: {filename}")
+
+    roi = oiio.ROI(
+        0, spec.width,
+        0, spec.height,
+        0, 1,
+        0, 3)
+    pixels = image.get_pixels(oiio.FLOAT, roi)
+    if pixels is None:
+        error = image.geterror()
+        raise RuntimeError(
+            error or f"Could not read high-precision scope pixels: {filename}")
+
+    # OIIO normally returns an HxWx3 numpy array here. Keep it as a flat
+    # float sequence without quantizing so the scope widgets see the actual
+    # output values, including values below 0 or above 1.
+    try:
+        rgb = pixels.reshape(-1)
+    except AttributeError:
+        rgb = [
+            component
+            for row in pixels
+            for pixel in row
+            for component in pixel
+        ]
+
+    return int(spec.width), int(spec.height), rgb
+
+
+def _scope_rgb_at(width: int, height: int, rgb, u: float, v: float):
+    if width <= 0 or height <= 0 or rgb is None:
+        return None
+
+    x = min(width - 1, max(0, int(u * width)))
+    y = min(height - 1, max(0, int(v * height)))
+    offset = (y * width + x) * 3
+    return (
+        float(rgb[offset]),
+        float(rgb[offset + 1]),
+        float(rgb[offset + 2]),
+    )
 
 
 class OperationWorker(QObject):
@@ -557,6 +642,7 @@ class ImagePreviewWidget(QWidget):
         self._image = QImage()
         self._message = "Convert an image to preview the result"
         self._probe = None
+        self._color_space = APP_COLOR_SPACE
         self.setMinimumSize(520, 320)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -569,9 +655,16 @@ class ImagePreviewWidget(QWidget):
             height,
             width * 3,
             QImage.Format.Format_RGB888)
-        image.setColorSpace(APP_COLOR_SPACE)
+        image.setColorSpace(self._color_space)
         self._image = image.copy()
         self._message = ""
+        self._probe = None
+        self.update()
+
+    def set_color_space(self, color_space):
+        self._color_space = color_space
+        if not self._image.isNull():
+            self._image.setColorSpace(color_space)
         self.update()
 
     def set_error(self, message: str):
@@ -579,6 +672,19 @@ class ImagePreviewWidget(QWidget):
         self._message = message
         self._probe = None
         self.update()
+
+    def rgb_at(self, u: float, v: float):
+        if self._image.isNull():
+            return None
+
+        x = min(
+            self._image.width() - 1,
+            max(0, int(u * self._image.width())))
+        y = min(
+            self._image.height() - 1,
+            max(0, int(v * self._image.height())))
+        color = self._image.pixelColor(x, y)
+        return (color.redF(), color.greenF(), color.blueF())
 
     def _image_rect(self):
         if self._image.isNull():
@@ -645,6 +751,7 @@ class VectorScopeWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._samples = []
+        self._probe_rgb = None
         self._zoom2 = False
         self.setMinimumSize(300, 250)
         self.setSizePolicy(
@@ -661,21 +768,29 @@ class VectorScopeWidget(QWidget):
         cr = (r - y) / 1.5748
         return y, cb, cr
 
-    def set_rgb(self, width: int, height: int, rgb: bytes):
+    def set_rgb(self, width: int, height: int, rgb):
         pixel_count = width * height
         stride = max(1, pixel_count // 70000)
         samples = []
 
         for pixel in range(0, pixel_count, stride):
             offset = pixel * 3
-            r = rgb[offset] / 255.0
-            g = rgb[offset + 1] / 255.0
-            b = rgb[offset + 2] / 255.0
+            r = float(rgb[offset])
+            g = float(rgb[offset + 1])
+            b = float(rgb[offset + 2])
 
             _, cb, cr = self._ycbcr(r, g, b)
             samples.append((cb, cr, r, g, b))
 
         self._samples = samples
+        self.update()
+
+    def set_probe(self, u: float, v: float, rgb):
+        self._probe_rgb = rgb
+        self.update()
+
+    def clear_probe(self):
+        self._probe_rgb = None
         self.update()
 
     def set_zoom2(self, enabled: bool):
@@ -806,9 +921,6 @@ class VectorScopeWidget(QWidget):
         painter.setBrush(QColor(230, 230, 230, 220))
         painter.drawEllipse(center, 2.0, 2.0)
 
-        if not self._samples:
-            return
-
         zoom = 2.0 if self._zoom2 else 1.0
 
         # Use small translucent points with a second faint halo pass. Dense
@@ -823,51 +935,183 @@ class VectorScopeWidget(QWidget):
                 cr,
                 zoom)
 
-            if ((point.x() - center.x()) ** 2
-                    + (point.y() - center.y()) ** 2) > radius ** 2:
-                continue
-
-            color = QColor.fromRgbF(r, g, b, 0.055)
+            # Do not clip chroma to the nominal reference circle. Real
+            # floating-point output can legitimately exceed the 0..1 display
+            # gamut and should remain visible outside the vectorscope ring.
+            color = QColor.fromRgbF(
+                max(0.0, min(1.0, r)),
+                max(0.0, min(1.0, g)),
+                max(0.0, min(1.0, b)),
+                0.055)
             painter.setBrush(color)
             painter.drawEllipse(point, 1.5, 1.5)
 
-            halo = QColor.fromRgbF(r, g, b, 0.018)
+            halo = QColor.fromRgbF(
+                max(0.0, min(1.0, r)),
+                max(0.0, min(1.0, g)),
+                max(0.0, min(1.0, b)),
+                0.018)
             painter.setBrush(halo)
             painter.drawEllipse(point, 2.8, 2.8)
+
+        if self._probe_rgb is not None:
+            _, cb, cr = self._ycbcr(*self._probe_rgb)
+            point = self._scope_point(
+                center,
+                radius,
+                cb,
+                cr,
+                zoom)
+            probe_pen = QPen(QColor(245, 210, 70), 1.8)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(probe_pen)
+            painter.drawEllipse(point, 7.0, 7.0)
+            painter.drawLine(
+                QPointF(point.x() - 10.0, point.y()),
+                QPointF(point.x() + 10.0, point.y()))
+            painter.drawLine(
+                QPointF(point.x(), point.y() - 10.0),
+                QPointF(point.x(), point.y() + 10.0))
 
 
 class HistogramWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._histograms = None
+        self._probe_rgb = None
+        self._range_min = 0.0
+        self._range_max = 1.0
+        self._bins = 512
         self.setMinimumSize(260, 220)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
 
-    def set_rgb(self, width: int, height: int, rgb: bytes):
-        histograms = [[0] * 256 for _ in range(3)]
+    def set_rgb(self, width: int, height: int, rgb):
+        # Analyze the complete floating-point output. Use NumPy when available
+        # so the result is identical to the scalar implementation without
+        # spending Python time on every pixel.
         pixel_count = width * height
+
+        if np is not None:
+            values = np.asarray(rgb, dtype=np.float32).reshape(-1, 3)
+
+            minimum = min(0.0, float(np.min(values)))
+            maximum = max(1.0, float(np.max(values)))
+
+            padding = max(0.01, (maximum - minimum) * 0.01)
+            self._range_min = minimum - padding if minimum < 0.0 else 0.0
+            self._range_max = maximum + padding if maximum > 1.0 else 1.0
+
+            histograms = []
+            histogram_range = (self._range_min, self._range_max)
+            for channel in range(3):
+                counts, _ = np.histogram(
+                    values[:, channel],
+                    bins=self._bins,
+                    range=histogram_range)
+                histograms.append(counts.tolist())
+
+            self._histograms = histograms
+            self.update()
+            return
+
+        minimum = 0.0
+        maximum = 1.0
+        for pixel in range(pixel_count):
+            offset = pixel * 3
+            minimum = min(
+                minimum,
+                float(rgb[offset]),
+                float(rgb[offset + 1]),
+                float(rgb[offset + 2]))
+            maximum = max(
+                maximum,
+                float(rgb[offset]),
+                float(rgb[offset + 1]),
+                float(rgb[offset + 2]))
+
+        padding = max(0.01, (maximum - minimum) * 0.01)
+        self._range_min = minimum - padding if minimum < 0.0 else 0.0
+        self._range_max = maximum + padding if maximum > 1.0 else 1.0
+
+        histograms = [[0] * self._bins for _ in range(3)]
+        span = max(1e-12, self._range_max - self._range_min)
 
         for pixel in range(pixel_count):
             offset = pixel * 3
-            histograms[0][rgb[offset]] += 1
-            histograms[1][rgb[offset + 1]] += 1
-            histograms[2][rgb[offset + 2]] += 1
+            for channel in range(3):
+                value = float(rgb[offset + channel])
+                normalized = (value - self._range_min) / span
+                index = min(
+                    self._bins - 1,
+                    max(0, int(normalized * self._bins)))
+                histograms[channel][index] += 1
 
         self._histograms = histograms
         self.update()
 
+    def set_probe(self, u: float, v: float, rgb):
+        self._probe_rgb = rgb
+        self.update()
+
+    def clear_probe(self):
+        self._probe_rgb = None
+        self.update()
+
     def paintEvent(self, event):
+        import math
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.fillRect(self.rect(), QColor("#0b0d0f"))
 
-        plot = self.rect().adjusted(14, 14, -14, -20)
-        painter.setPen(QPen(QColor(90, 90, 90), 1.0))
+        left_margin = 42
+        right_margin = 12
+        top_margin = 12
+        label_height = 18
+        bottom_margin = 12 + label_height
+
+        plot = self.rect().adjusted(
+            left_margin,
+            top_margin,
+            -right_margin,
+            -bottom_margin)
+
+        grid_color = QColor(75, 75, 75)
+        minor_grid_color = QColor(42, 42, 42)
+        label_color = QColor(185, 154, 36)
+
+        painter.setPen(QPen(grid_color, 1.0))
         painter.drawRect(plot)
 
-        if not self._histograms:
+        span = max(1e-12, self._range_max - self._range_min)
+
+        # Reference lines are always anchored to the normal encoded 0..1
+        # range, even when the float histogram expands beyond it.
+        for percent in range(0, 101, 20):
+            value = percent / 100.0
+            if value < self._range_min or value > self._range_max:
+                continue
+            x = (
+                plot.left()
+                + (value - self._range_min) / span
+                * plot.width())
+            painter.setPen(
+                QPen(
+                    grid_color if percent in (0, 100)
+                    else minor_grid_color,
+                    1.0))
+            painter.drawLine(
+                QPointF(x, plot.top()),
+                QPointF(x, plot.bottom()))
+            painter.setPen(label_color)
+            painter.drawText(
+                QRectF(x - 18, plot.bottom() + 2, 36, label_height),
+                Qt.AlignmentFlag.AlignCenter,
+                str(percent))
+
+        if self._histograms is None:
             painter.setPen(self.palette().color(self.foregroundRole()))
             painter.drawText(
                 plot,
@@ -875,16 +1119,31 @@ class HistogramWidget(QWidget):
                 "RGB histogram")
             return
 
-        maximum = max(max(values) for values in self._histograms)
-        if maximum <= 0:
+        # Logarithmic population scaling prevents a dominant black/background
+        # bin from flattening all useful midtone and highlight information.
+        log_maximum = max(
+            math.log1p(max(values))
+            for values in self._histograms)
+        if log_maximum <= 0.0:
             return
 
-        colors = (QColor("#ef5555"), QColor("#55c477"), QColor("#5b8def"))
+        colors = (
+            QColor("#ef5555"),
+            QColor("#55c477"),
+            QColor("#5b8def"),
+        )
+
         for channel, values in enumerate(self._histograms):
             path = QPainterPath()
-            for index, value in enumerate(values):
-                x = plot.left() + index / 255.0 * plot.width()
-                y = plot.bottom() - value / maximum * plot.height()
+            for index, count in enumerate(values):
+                x = (
+                    plot.left()
+                    + index / max(1, len(values) - 1)
+                    * plot.width())
+                y = (
+                    plot.bottom()
+                    - math.log1p(count) / log_maximum
+                    * plot.height())
                 if index == 0:
                     path.moveTo(x, y)
                 else:
@@ -892,35 +1151,86 @@ class HistogramWidget(QWidget):
             painter.setPen(QPen(colors[channel], 1.3))
             painter.drawPath(path)
 
+        if self._probe_rgb is not None:
+            painter.setPen(QPen(QColor(245, 210, 70), 1.3))
+            for value in self._probe_rgb:
+                value = float(value)
+                if value < self._range_min or value > self._range_max:
+                    continue
+                x = (
+                    plot.left()
+                    + (value - self._range_min) / span
+                    * plot.width())
+                painter.drawLine(
+                    QPointF(x, plot.top()),
+                    QPointF(x, plot.bottom()))
+
         painter.setPen(self.palette().color(self.foregroundRole()))
+        range_text = "RGB histogram — log population"
+        if self._range_min < 0.0 or self._range_max > 1.0:
+            range_text += (
+                f"  [{self._range_min:.3g}, "
+                f"{self._range_max:.3g}]")
         painter.drawText(
-            QRectF(plot.left(), plot.bottom() + 2, plot.width(), 18),
+            QRectF(
+                plot.left(),
+                plot.bottom() + 2,
+                plot.width(),
+                label_height),
             Qt.AlignmentFlag.AlignCenter,
-            "RGB histogram")
+            range_text)
 
 
 class ParadeWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._samples = None
+        self._probe = None
         self.setMinimumSize(240, 200)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
 
-    def set_rgb(self, width: int, height: int, rgb: bytes):
-        # Build a lightweight RGB parade from horizontal image position.
-        # Each channel stores a 256-bin vertical distribution for 256
-        # horizontal columns. Sampling is capped so large images remain cheap.
+    def set_rgb(self, width: int, height: int, rgb):
+        # Build the parade directly from floating-point output pixels.
         columns = 256
-        bins = 256
+        bins = 512
+        pixel_count = width * height
+        stride = max(1, pixel_count // 180000)
+
+        if np is not None:
+            values = np.asarray(rgb, dtype=np.float32).reshape(-1, 3)
+            indices = np.arange(0, pixel_count, stride, dtype=np.int64)
+            sampled = values[indices]
+
+            x = indices % width
+            column_indices = np.minimum(
+                columns - 1,
+                (x * columns // max(1, width)).astype(np.int64))
+
+            bin_indices = np.clip(
+                (sampled * (bins - 1)).astype(np.int64),
+                0,
+                bins - 1)
+
+            parade = np.zeros(
+                (3, columns, bins),
+                dtype=np.int32)
+
+            for channel in range(3):
+                np.add.at(
+                    parade[channel],
+                    (column_indices, bin_indices[:, channel]),
+                    1)
+
+            self._samples = parade
+            self.update()
+            return
+
         parade = [
             [[0] * bins for _ in range(columns)]
             for _ in range(3)
         ]
-
-        pixel_count = width * height
-        stride = max(1, pixel_count // 180000)
 
         for pixel in range(0, pixel_count, stride):
             x = pixel % width
@@ -929,11 +1239,22 @@ class ParadeWidget(QWidget):
                 int(x * columns / max(1, width)))
             offset = pixel * 3
 
-            parade[0][column][rgb[offset]] += 1
-            parade[1][column][rgb[offset + 1]] += 1
-            parade[2][column][rgb[offset + 2]] += 1
+            for channel in range(3):
+                value = float(rgb[offset + channel])
+                bin_index = min(
+                    bins - 1,
+                    max(0, int(value * (bins - 1))))
+                parade[channel][column][bin_index] += 1
 
         self._samples = parade
+        self.update()
+
+    def set_probe(self, u: float, v: float, rgb):
+        self._probe = (u, rgb)
+        self.update()
+
+    def clear_probe(self):
+        self._probe = None
         self.update()
 
     def paintEvent(self, event):
@@ -1004,7 +1325,7 @@ class ParadeWidget(QWidget):
                 QPointF(rect.left() - gap * 0.5, plot.top()),
                 QPointF(rect.left() - gap * 0.5, plot.bottom()))
 
-        if not self._samples:
+        if self._samples is None:
             painter.setPen(self.palette().color(self.foregroundRole()))
             painter.drawText(
                 plot,
@@ -1021,7 +1342,7 @@ class ParadeWidget(QWidget):
         for channel, rect in enumerate(channel_rects):
             data = self._samples[channel]
             maximum = max(
-                max(column)
+                int(max(column))
                 for column in data)
 
             if maximum <= 0:
@@ -1052,10 +1373,21 @@ class ParadeWidget(QWidget):
 
                     py = (
                         rect.bottom()
-                        - value / 255.0 * rect.height())
+                        - value / max(1, len(column) - 1)
+                        * rect.height())
 
                     painter.drawRect(
                         QRectF(px, py, 1.2, 1.2))
+
+        if self._probe is not None:
+            u, rgb = self._probe
+            probe_pen = QPen(QColor(245, 210, 70), 1.8)
+            painter.setBrush(QColor(245, 210, 70))
+            painter.setPen(probe_pen)
+            for channel, rect in enumerate(channel_rects):
+                px = rect.left() + u * rect.width()
+                py = rect.bottom() - rgb[channel] * rect.height()
+                painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
 
         painter.setPen(self.palette().color(self.foregroundRole()))
         painter.drawText(
@@ -1072,22 +1404,51 @@ class WaveformWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._waveform = None
+        self._probe = None
         self.setMinimumSize(240, 200)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
 
-    def set_rgb(self, width: int, height: int, rgb: bytes):
+    def set_rgb(self, width: int, height: int, rgb):
         columns = 384
-        bins = 256
+        bins = 512
+        pixel_count = width * height
+        stride = max(1, pixel_count // 220000)
+
+        if np is not None:
+            values = np.asarray(rgb, dtype=np.float32).reshape(-1, 3)
+            indices = np.arange(0, pixel_count, stride, dtype=np.int64)
+            sampled = values[indices]
+
+            x = indices % width
+            column_indices = np.minimum(
+                columns - 1,
+                (x * columns // max(1, width)).astype(np.int64))
+
+            bin_indices = np.clip(
+                (sampled * (bins - 1)).astype(np.int64),
+                0,
+                bins - 1)
+
+            waveform = np.zeros(
+                (3, columns, bins),
+                dtype=np.int32)
+
+            for channel in range(3):
+                np.add.at(
+                    waveform[channel],
+                    (column_indices, bin_indices[:, channel]),
+                    1)
+
+            self._waveform = waveform
+            self.update()
+            return
 
         waveform = [
             [[0] * bins for _ in range(columns)]
             for _ in range(3)
         ]
-
-        pixel_count = width * height
-        stride = max(1, pixel_count // 220000)
 
         for pixel in range(0, pixel_count, stride):
             x = pixel % width
@@ -1096,11 +1457,22 @@ class WaveformWidget(QWidget):
                 int(x * columns / max(1, width)))
             offset = pixel * 3
 
-            waveform[0][column][rgb[offset]] += 1
-            waveform[1][column][rgb[offset + 1]] += 1
-            waveform[2][column][rgb[offset + 2]] += 1
+            for channel in range(3):
+                value = float(rgb[offset + channel])
+                bin_index = min(
+                    bins - 1,
+                    max(0, int(value * (bins - 1))))
+                waveform[channel][column][bin_index] += 1
 
         self._waveform = waveform
+        self.update()
+
+    def set_probe(self, u: float, v: float, rgb):
+        self._probe = (u, rgb)
+        self.update()
+
+    def clear_probe(self):
+        self._probe = None
         self.update()
 
     def paintEvent(self, event):
@@ -1156,7 +1528,7 @@ class WaveformWidget(QWidget):
                 | Qt.AlignmentFlag.AlignVCenter,
                 str(percent))
 
-        if not self._waveform:
+        if self._waveform is None:
             painter.setPen(self.palette().color(self.foregroundRole()))
             painter.drawText(
                 plot,
@@ -1171,7 +1543,7 @@ class WaveformWidget(QWidget):
         )
 
         maxima = [
-            max(max(column) for column in channel)
+            max(int(max(column)) for column in channel)
             for channel in self._waveform
         ]
         maximum = max(maxima)
@@ -1204,11 +1576,20 @@ class WaveformWidget(QWidget):
 
                     py = (
                         plot.bottom()
-                        - value / 255.0
+                        - value / max(1, len(column) - 1)
                         * plot.height())
 
                     painter.drawRect(
                         QRectF(px, py, 1.2, 1.2))
+
+        if self._probe is not None:
+            u, rgb = self._probe
+            px = plot.left() + u * plot.width()
+            painter.setBrush(QColor(245, 210, 70))
+            painter.setPen(QPen(QColor(245, 210, 70), 1.8))
+            for value in rgb:
+                py = plot.bottom() - value * plot.height()
+                painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
 
         painter.setPen(self.palette().color(self.foregroundRole()))
         painter.drawText(
@@ -1287,12 +1668,24 @@ class ScopePane(QWidget):
         self.stack.setCurrentIndex(index)
         self.zoom2.setVisible(index == 0)
 
-    def set_rgb(self, width: int, height: int, rgb: bytes):
+    def set_rgb(self, width: int, height: int, rgb):
         # Populate every scope once so changing the dropdown is instantaneous.
         self.vector_scope.set_rgb(width, height, rgb)
         self.histogram.set_rgb(width, height, rgb)
         self.parade.set_rgb(width, height, rgb)
         self.waveform.set_rgb(width, height, rgb)
+
+    def set_probe(self, u: float, v: float, rgb):
+        self.vector_scope.set_probe(u, v, rgb)
+        self.histogram.set_probe(u, v, rgb)
+        self.parade.set_probe(u, v, rgb)
+        self.waveform.set_probe(u, v, rgb)
+
+    def clear_probe(self):
+        self.vector_scope.clear_probe()
+        self.histogram.clear_probe()
+        self.parade.clear_probe()
+        self.waveform.clear_probe()
 
 
 class FilmVizWindow(QMainWindow):
@@ -1300,7 +1693,7 @@ class FilmVizWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("FilmViz — Experimental Spectral Film Processor")
         self.resize(1500, 860)
-        self.setMinimumSize(1050, 680)
+        self.setMinimumSize(1320, 720)
         self._thread = None
         self._worker = None
         self._pending_output_image = None
@@ -1311,6 +1704,9 @@ class FilmVizWindow(QMainWindow):
         self._stage_start_time = None
         self._last_logged_percent = -1
         self._log_path = PROJECT_ROOT / "build" / "filmviz_timings.log"
+        self._scope_width = 0
+        self._scope_height = 0
+        self._scope_rgb = None
 
         central = QWidget()
         central_layout = QHBoxLayout(central)
@@ -1323,6 +1719,18 @@ class FilmVizWindow(QMainWindow):
         diagnostics = QWidget()
         diagnostics_layout = QVBoxLayout(diagnostics)
         diagnostics_layout.setContentsMargins(0, 0, 0, 0)
+
+        display_toolbar = QWidget()
+        display_toolbar_layout = QHBoxLayout(display_toolbar)
+        display_toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        display_toolbar_layout.setSpacing(6)
+        display_toolbar_layout.addStretch(1)
+        display_label = QLabel("Display: Rec.709 Gamma 2.4")
+        display_label.setToolTip(
+            "FilmViz preview and application surface are configured for "
+            "Rec.709 Gamma 2.4.")
+        display_toolbar_layout.addWidget(display_label)
+        diagnostics_layout.addWidget(display_toolbar, 0)
 
         self.image_preview = ImagePreviewWidget()
         self.image_preview.probeRequested.connect(
@@ -1348,7 +1756,7 @@ class FilmVizWindow(QMainWindow):
         diagnostics_layout.addWidget(scopes, 2)
 
         panel = QWidget()
-        panel.setMinimumWidth(300)
+        panel.setMinimumWidth(540)
         panel.setSizePolicy(
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Expanding)
@@ -1360,14 +1768,33 @@ class FilmVizWindow(QMainWindow):
         workspace.setChildrenCollapsible(False)
         workspace.setStretchFactor(0, 5)
         workspace.setStretchFactor(1, 1)
-        workspace.setSizes([1120, 360])
+        workspace.setSizes([1120, 540])
 
         profiles = filmviz.profiles()
+        self.negative_profiles = [
+            dict(profile)
+            for profile in profiles["negative_details"]
+        ]
+        self.negative_profiles_by_id = {
+            profile["identifier"]: profile
+            for profile in self.negative_profiles
+        }
+        self.print_profiles = [
+            dict(profile)
+            for profile in profiles["print_details"]
+        ]
+        self.print_profiles_by_id = {
+            profile["identifier"]: profile
+            for profile in self.print_profiles
+        }
         common = QGroupBox("Pipeline")
         common_form = QFormLayout(common)
         common_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.resources = PathRow("directory", str(PROJECT_ROOT / "resources"))
+        self.resources = PathRow(
+            "directory",
+            str(PROJECT_ROOT / "resources"),
+            minimum_width=260)
         common_form.addRow("Resource directory", self.resources)
 
         self.input_profile = QComboBox()
@@ -1375,46 +1802,24 @@ class FilmVizWindow(QMainWindow):
         common_form.addRow("Input profile", self.input_profile)
 
         self.negative_profile = QComboBox()
-        self.negative_profile.addItems(profiles["negative"])
+        for profile in self.negative_profiles:
+            self.negative_profile.addItem(
+                profile["display_name"],
+                profile["identifier"])
         common_form.addRow("Negative", self.negative_profile)
 
         self.print_profile = QComboBox()
-        for profile in profiles["print"]:
-            if profile == "none":
-                self.print_profile.addItem("None — view negative", "none")
-            else:
-                self.print_profile.addItem(profile, profile)
-        if self.print_profile.findData("none") < 0:
-            self.print_profile.addItem("None — view negative", "none")
+        for profile in self.print_profiles:
+            self.print_profile.addItem(
+                profile["display_name"],
+                profile["identifier"])
+        self.print_profile.addItem("None — view negative", "none")
         common_form.addRow("Print", self.print_profile)
 
         self.output_profile = QComboBox()
         self.output_profile.addItems(profiles["output"])
         self.output_profile.setCurrentText("rec709-gamma24")
         common_form.addRow("Output profile", self.output_profile)
-
-        self.spectral_reconstruction = QComboBox()
-        self.spectral_reconstruction.addItem(
-            "rgb2spec (reference/original)",
-            "rgb2spec")
-        self.spectral_reconstruction.addItem(
-            "FilmViz sampled (experimental)",
-            "filmviz-sampled")
-        common_form.addRow(
-            "Spectral reconstruction",
-            self.spectral_reconstruction)
-
-        self.sampled_smoothness = _double(
-            0.0001,
-            0.0,
-            0.01,
-            0.00001,
-            6)
-        self.sampled_smoothness.setToolTip(
-            "Experimental FilmViz sampled-spectrum curvature regularization.")
-        common_form.addRow(
-            "Sampled smoothness",
-            self.sampled_smoothness)
 
         self.exposure = _double(0.0, -10.0, 10.0, 0.25)
         self.push_pull = _double(0.0, -5.0, 5.0, 0.25)
@@ -1445,7 +1850,23 @@ class FilmVizWindow(QMainWindow):
         self.threads.setSpecialValueText("Auto")
         self.threads.setValue(0)
 
+        for widget in (
+            self.exposure,
+            self.push_pull,
+            self.negative_bleach_bypass,
+            self.print_bleach_bypass,
+            self.printer_light_red,
+            self.printer_light_green,
+            self.printer_light_blue,
+            self.middle_gray,
+            self.printer_temperature,
+            self.lut_size,
+            self.threads,
+        ):
+            widget.setMinimumWidth(88)
+
         controls = QWidget()
+        controls.setMinimumWidth(500)
         controls_layout = QGridLayout(controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         for row, (label, widget) in enumerate((
@@ -1479,10 +1900,14 @@ class FilmVizWindow(QMainWindow):
         image_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         default_image = PROJECT_ROOT / "resources" / "references" / "images" / "ARRI_Helen_John_ALEXA_Mini_LF_AWG3_LogC3.tif"
-        self.input_image = PathRow("input", str(default_image))
+        self.input_image = PathRow(
+            "input",
+            str(default_image),
+            minimum_width=260)
         self.output_image = PathRow(
             "output",
-            str(PROJECT_ROOT / "build" / "filmviz_output.tif"))
+            str(PROJECT_ROOT / "build" / "filmviz_output.tif"),
+            minimum_width=260)
         image_form.addRow("Input image", self.input_image)
         image_form.addRow("Output image", self.output_image)
         self.negative_grain = _double(0.0, 0.0, 10.0)
@@ -1521,7 +1946,10 @@ class FilmVizWindow(QMainWindow):
         lut_form = QFormLayout(lut_tab)
         lut_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.output_lut = PathRow("lut", str(PROJECT_ROOT / "build" / "filmviz.cube"))
+        self.output_lut = PathRow(
+            "lut",
+            str(PROJECT_ROOT / "build" / "filmviz.cube"),
+            minimum_width=260)
         lut_form.addRow("Output LUT", self.output_lut)
         note = QLabel("LUTs are deterministic and do not contain image grain.")
         note.setWordWrap(True)
@@ -1540,11 +1968,14 @@ class FilmVizWindow(QMainWindow):
         profile_controls_layout.setContentsMargins(0, 0, 0, 0)
 
         self.profile_family = QComboBox()
-        self.profile_family.addItems((
-            "Negative — Verita 200D",
-            "Negative — Kodak VISION3 50D",
-            "Print — Kodak 2383",
-        ))
+        for profile in self.negative_profiles:
+            self.profile_family.addItem(
+                f"Negative — {profile['display_name']}",
+                ("negative", profile["identifier"]))
+        for profile in self.print_profiles:
+            self.profile_family.addItem(
+                f"Print — {profile['display_name']}",
+                ("print", profile["identifier"]))
         self.profile_curve_type = QComboBox()
 
         profile_controls_layout.addWidget(QLabel("Profile"))
@@ -1615,21 +2046,65 @@ class FilmVizWindow(QMainWindow):
     def _load_diagnostics(self, filename: str):
         try:
             preview = filmviz.read_image_preview(filename, 1600)
-            width = int(preview["width"])
-            height = int(preview["height"])
-            rgb = bytes(preview["rgb"])
+            preview_width = int(preview["width"])
+            preview_height = int(preview["height"])
+            preview_rgb = bytes(preview["rgb"])
         except Exception as error:
             self.image_preview.set_error(
                 f"Could not load converted image:\n{error}")
             return
 
-        self.image_preview.set_rgb(width, height, rgb)
-        self.left_scope.set_rgb(width, height, rgb)
-        self.right_scope.set_rgb(width, height, rgb)
+        try:
+            scope_width, scope_height, scope_rgb = _read_scope_rgb(filename)
+        except Exception as error:
+            self.image_preview.set_rgb(
+                preview_width,
+                preview_height,
+                preview_rgb)
+            self._scope_width = 0
+            self._scope_height = 0
+            self._scope_rgb = None
+            self.left_scope.clear_probe()
+            self.right_scope.clear_probe()
+            QMessageBox.warning(
+                self,
+                "High-precision scopes unavailable",
+                str(error))
+            return
+
+        self.image_preview.set_rgb(
+            preview_width,
+            preview_height,
+            preview_rgb)
+
+        self._scope_width = scope_width
+        self._scope_height = scope_height
+        self._scope_rgb = scope_rgb
+
+        self.left_scope.set_rgb(
+            scope_width,
+            scope_height,
+            scope_rgb)
+        self.right_scope.set_rgb(
+            scope_width,
+            scope_height,
+            scope_rgb)
+        self.left_scope.clear_probe()
+        self.right_scope.clear_probe()
 
 
     @Slot(float, float)
     def _probe_image_pixel(self, u: float, v: float):
+        scope_rgb = _scope_rgb_at(
+            self._scope_width,
+            self._scope_height,
+            self._scope_rgb,
+            u,
+            v)
+        if scope_rgb is not None:
+            self.left_scope.set_probe(u, v, scope_rgb)
+            self.right_scope.set_probe(u, v, scope_rgb)
+
         try:
             arguments = self._common()
             probe = filmviz.probe_image_pixel(
@@ -1638,10 +2113,6 @@ class FilmVizWindow(QMainWindow):
                 input=arguments["input"],
                 negative=arguments["negative"],
                 print=arguments["print"],
-                spectral_reconstruction=
-                    arguments["spectral_reconstruction"],
-                sampled_smoothness=
-                    arguments["sampled_smoothness"],
                 exposure=arguments["exposure"],
                 push_pull=arguments["push_pull"],
                 negative_bleach_bypass=
@@ -1703,28 +2174,34 @@ class FilmVizWindow(QMainWindow):
         self.profile_curve_type.blockSignals(True)
         self.profile_curve_type.clear()
 
-        if self.profile_family.currentIndex() == 0:
-            entries = (
-                ("Spectral sensitivity", "kodak_verita_200d_spectral_sensitivity_curves.csv"),
-                ("Sensitometric curves", "kodak_verita_200d_sensitometric_curves.csv"),
-                ("Spectral dye density", "kodak_verita_200d_spectral_dye_density_curves.csv"),
-                ("Diffuse RMS granularity", "kodak_verita_200d_diffuse_rms_granularity_curves.csv"),
+        family, identifier = self.profile_family.currentData()
+
+        if family == "negative":
+            profile = self.negative_profiles_by_id[identifier]
+            prefix = profile["resource_prefix"]
+            entries = [
+                ("Spectral sensitivity", f"{prefix}_spectral_sensitivity_curves.csv"),
+                ("Sensitometric curves", f"{prefix}_sensitometric_curves.csv"),
+                ("Spectral dye density", f"{prefix}_spectral_dye_density_curves.csv"),
+                ("Diffuse RMS granularity", f"{prefix}_diffuse_rms_granularity_curves.csv"),
+            ]
+
+            mtf_filename = f"{prefix}_modulation_transfer_function_curves.csv"
+            mtf_path = (
+                Path(self.resources.value())
+                / profile["resource_directory"]
+                / mtf_filename
             )
-        elif self.profile_family.currentIndex() == 1:
-            entries = (
-                ("Spectral sensitivity", "kodak_50d_spectral_sensitivity_curves.csv"),
-                ("Sensitometric curves", "kodak_50d_sensitometric_curves.csv"),
-                ("Spectral dye density", "kodak_50d_spectral_dye_density_curves.csv"),
-                ("MTF", "kodak_50d_modulation_transfer_function_curves.csv"),
-                ("Diffuse RMS granularity", "kodak_50d_diffuse_rms_granularity_curves.csv"),
-            )
+            if mtf_path.exists():
+                entries.insert(3, ("MTF", mtf_filename))
         else:
+            profile = self.print_profiles_by_id[identifier]
             entries = (
-                ("Spectral sensitivity", "kodak_2383_spectral_sensitivity_curves.csv"),
-                ("Sensitometric curves", "kodak_2383_sensitometric_curves.csv"),
-                ("Spectral dye density", "kodak_2383_corrected_spectral_dye_density_curves.csv"),
-                ("MTF", "kodak_2383_modulation_transfer_function_curves.csv"),
-                ("Diffuse RMS granularity", "kodak_2383_diffuse_rms_granularity_curves.csv"),
+                ("Spectral sensitivity", profile["sensitivity_filename"]),
+                ("Sensitometric curves", profile["characteristic_filename"]),
+                ("Spectral dye density", profile["dye_density_filename"]),
+                ("MTF", profile["mtf_filename"]),
+                ("Diffuse RMS granularity", profile["granularity_filename"]),
             )
 
         for label, filename in entries:
@@ -1747,17 +2224,16 @@ class FilmVizWindow(QMainWindow):
             self.profile_plot.set_error("No profile curve selected.")
             return
 
-        profile_directory = (
-            "verita_200d"
-            if self.profile_family.currentIndex() == 0
-            else "kodak_50d"
-            if self.profile_family.currentIndex() == 1
-            else "kodak_2383"
-        )
+        family, identifier = self.profile_family.currentData()
+        if family == "negative":
+            profile_directory = self.negative_profiles_by_id[
+                identifier]["resource_directory"]
+        else:
+            profile_directory = self.print_profiles_by_id[
+                identifier]["resource_directory"]
 
         path = (
             Path(self.resources.value())
-            / "profiles"
             / profile_directory
             / filename
         )
@@ -1769,7 +2245,7 @@ class FilmVizWindow(QMainWindow):
         if filename.endswith("_spectral_dye_density_curves.csv"):
             x_column = "wavelength_nm"
 
-            if self.profile_family.currentIndex() in (0, 1):
+            if family == "negative":
                 # Camera-negative dye CSVs also contain scalar metadata such
                 # as source_spacing_nm and working_spacing_nm. Those are file
                 # metadata, not wavelength-varying curves; plotting them
@@ -1790,7 +2266,7 @@ class FilmVizWindow(QMainWindow):
                 )
 
         elif filename.endswith("_sensitometric_curves.csv"):
-            if self.profile_family.currentIndex() in (0, 1):
+            if family == "negative":
                 x_column = "log_exposure_lux_seconds"
                 y_columns = (
                     "curve_high_density",
@@ -1801,7 +2277,7 @@ class FilmVizWindow(QMainWindow):
                 # and LogE together with stop 0 anchored at -0.515 LogE.
                 stop_axis = (-8.0, 8.0, -0.515)
             else:
-                # Kodak 2383 sensitometry already uses log exposure as its
+                # Print sensitometry already uses log exposure as its
                 # first column. Keep the file's native axis and plot all
                 # remaining density channels. No photographic stop axis is
                 # shown because there is no single calibrated 0-stop anchor
@@ -1835,13 +2311,13 @@ class FilmVizWindow(QMainWindow):
         return dict(
             resources=self.resources.value(),
             input=self.input_profile.currentText(),
-            negative=self.negative_profile.currentText(),
+            negative=(
+                self.negative_profile.currentData()
+                or self.negative_profile.currentText()),
             print=self.print_profile.currentData() or self.print_profile.currentText(),
             output=self.output_profile.currentText(),
             lut_size=self.lut_size.value(),
             use_lut_acceleration=self.use_lut_acceleration.isChecked(),
-            spectral_reconstruction=self.spectral_reconstruction.currentData(),
-            sampled_smoothness=self.sampled_smoothness.value(),
             exposure=self.exposure.value(),
             push_pull=self.push_pull.value(),
             negative_bleach_bypass=self.negative_bleach_bypass.value(),
@@ -2131,7 +2607,7 @@ def main() -> int:
         print("FilmViz Python application smoke test passed")
         return 0
 
-    window.show()
+    window.showMaximized()
     return application.exec()
 
 

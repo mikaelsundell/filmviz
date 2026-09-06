@@ -4,6 +4,8 @@
 #pragma once
 
 #include "filmdata.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
 
 #include <array>
 #include <memory>
@@ -20,7 +22,6 @@ class PrintFilmStock;
 class PrintViewer;
 class SpectralIlluminant;
 class SpectralReconstructor;
-class SampledSpectralReconstructor;
 
 // Production end-to-end spectral film pipeline derived from validated production.
 //
@@ -34,25 +35,13 @@ class SampledSpectralReconstructor;
 class FilmPipeline
 {
 public:
-    enum class SpectralReconstruction
-    {
-        Rgb2Spec,
-        FilmVizSampled
-    };
-
     struct Settings
     {
         std::string resources_directory = "resources";
-        std::string negative_profile = "verita-200d";
-        std::string print_profile = "kodak-2383";
-
-        SpectralReconstruction spectral_reconstruction =
-            SpectralReconstruction::Rgb2Spec;
-
-        // Experimental sampled-spectrum reconstruction control. Ignored by
-        // the rgb2spec path.
-        double sampled_reconstruction_smoothness = 1e-4;
-        int sampled_reconstruction_iterations = 512;
+        std::string negative_profile =
+            NegativeProfileCatalog::default_profile().identifier;
+        std::string print_profile =
+            PrintProfileCatalog::default_profile().identifier;
 
         float middle_gray = 0.18f;
         float negative_zero_stop_log_exposure = -0.515f;
@@ -86,7 +75,8 @@ public:
         float wavelength_max_nm = 700.0f;
         float wavelength_step_nm = 5.0f;
 
-        // Kodak 2383 dye-amplitude calibration selected in JIS/D55 calibration.
+        // Kodak Vision 2383/3383 dye-amplitude calibration selected in
+        // JIS/D55 calibration.
         double print_cyan_amplitude = 1.10093;
         double print_magenta_amplitude = 1.09650;
         double print_yellow_amplitude = 1.14626;
@@ -138,9 +128,8 @@ public:
         const std::array<float, 3>& ap0_linear,
         FilmExposure& exposure) const;
 
-    // Diagnostic access to the reconstructed scene factor used immediately
-    // before D60 illumination. This follows the currently selected spectral
-    // reconstruction mode and does not alter the production processing path.
+    // Diagnostic access to the exposure-separated rgb2spec scene factor used
+    // immediately before D60 illumination.
     bool scene_factor(
         const std::array<float, 3>& ap0_linear,
         SampledCurve& factor) const;
@@ -180,7 +169,6 @@ private:
     bool valid_ = false;
 
     std::unique_ptr<SpectralReconstructor> reconstructor_;
-    std::unique_ptr<SampledSpectralReconstructor> sampled_reconstructor_;
     std::unique_ptr<SpectralIlluminant> scene_illuminant_;
     std::unique_ptr<FilmStock> negative_stock_;
     std::unique_ptr<GranularityModel> granularity_model_;

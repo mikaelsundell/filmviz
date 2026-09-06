@@ -4,6 +4,7 @@
 #include "filmpipeline.h"
 
 #include "bleachbypass.h"
+#include "colorimetry.h"
 #include "colortransform.h"
 #include "filmdensitycalibration.h"
 #include "filmdyemodel.h"
@@ -15,7 +16,6 @@
 #include "printviewer.h"
 #include "spectralilluminant.h"
 #include "spectralreconstructor.h"
-#include "sampledspectralreconstructor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,6 +23,13 @@
 #include <fstream>
 #include <limits>
 #include <sstream>
+
+namespace {
+
+constexpr double kRgb2SpecReferenceLuminance =
+    0.18;
+
+} // namespace
 
 FilmPipeline::FilmPipeline() = default;
 FilmPipeline::~FilmPipeline() = default;
@@ -57,7 +64,7 @@ FilmPipeline::initialize(
                 && value <= 50.0f;
         };
 
-    if ((settings_.print_profile != "kodak-2383"
+    if ((!PrintProfileCatalog::find(settings_.print_profile)
             && settings_.print_profile != "none")
         || !valid_unit_control(settings_.negative_bleach_bypass)
         || !valid_unit_control(settings_.print_bleach_bypass)
@@ -72,21 +79,11 @@ FilmPipeline::initialize(
     const std::string rgb2spec_file =
         resource_path("spectral/reconstruction/ACES2065_1.spec");
 
-    std::string negative_name;
-    std::string negative_directory;
-    std::string negative_prefix;
+    const NegativeProfileCatalog::Profile* negative_profile =
+        NegativeProfileCatalog::find(
+            settings_.negative_profile);
 
-    if (settings_.negative_profile == "verita-200d") {
-        negative_name = "Kodak Verita 200D";
-        negative_directory = "profiles/verita_200d";
-        negative_prefix = "kodak_verita_200d";
-    }
-    else if (settings_.negative_profile == "kodak-50d") {
-        negative_name = "Kodak VISION3 50D 5203/7203";
-        negative_directory = "profiles/kodak_50d";
-        negative_prefix = "kodak_50d";
-    }
-    else {
+    if (!negative_profile) {
         error_ =
             "unknown negative profile: "
             + settings_.negative_profile;
@@ -94,48 +91,68 @@ FilmPipeline::initialize(
         return false;
     }
 
+    const PrintProfileCatalog::Profile* print_profile =
+        settings_.print_profile == "none"
+            ? &PrintProfileCatalog::default_profile()
+            : PrintProfileCatalog::find(settings_.print_profile);
+
     const std::string negative_sensitivity_file =
         resource_path(
-            negative_directory
+            negative_profile->resource_directory
             + "/"
-            + negative_prefix
+            + negative_profile->resource_prefix
             + "_spectral_sensitivity_curves.csv");
 
     const std::string negative_characteristic_file =
         resource_path(
-            negative_directory
+            negative_profile->resource_directory
             + "/"
-            + negative_prefix
+            + negative_profile->resource_prefix
             + "_sensitometric_curves.csv");
 
     const std::string negative_dye_file =
         resource_path(
-            negative_directory
+            negative_profile->resource_directory
             + "/"
-            + negative_prefix
+            + negative_profile->resource_prefix
             + "_spectral_dye_density_curves.csv");
 
     const std::string negative_granularity_file =
         resource_path(
-            negative_directory
+            negative_profile->resource_directory
             + "/"
-            + negative_prefix
+            + negative_profile->resource_prefix
             + "_diffuse_rms_granularity_curves.csv");
 
     const std::string print_sensitivity_file =
-        resource_path("profiles/kodak_2383/kodak_2383_spectral_sensitivity_curves.csv");
+        resource_path(
+            print_profile->resource_directory
+            + "/"
+            + print_profile->sensitivity_filename);
 
     const std::string print_characteristic_file =
-        resource_path("profiles/kodak_2383/kodak_2383_sensitometric_curves.csv");
+        resource_path(
+            print_profile->resource_directory
+            + "/"
+            + print_profile->characteristic_filename);
 
     const std::string print_dye_file =
-        resource_path("profiles/kodak_2383/kodak_2383_corrected_spectral_dye_density_curves.csv");
+        resource_path(
+            print_profile->resource_directory
+            + "/"
+            + print_profile->dye_density_filename);
 
     const std::string print_mtf_file =
-        resource_path("profiles/kodak_2383/kodak_2383_modulation_transfer_function_curves.csv");
+        resource_path(
+            print_profile->resource_directory
+            + "/"
+            + print_profile->mtf_filename);
 
     const std::string print_granularity_file =
-        resource_path("profiles/kodak_2383/kodak_2383_diffuse_rms_granularity_curves.csv");
+        resource_path(
+            print_profile->resource_directory
+            + "/"
+            + print_profile->granularity_filename);
 
     granularity_model_ =
         std::make_unique<GranularityModel>();
@@ -164,44 +181,11 @@ FilmPipeline::initialize(
         std::make_unique<SpectralIlluminant>(
             SpectralIlluminant::Standard::D60);
 
-    sampled_reconstructor_.reset();
-
-    if (settings_.spectral_reconstruction
-        == SpectralReconstruction::FilmVizSampled) {
-
-        SampledSpectralReconstructor::Settings sampled_settings;
-
-        sampled_settings.wavelength_min_nm = 360.0f;
-        sampled_settings.wavelength_max_nm = 830.0f;
-        sampled_settings.wavelength_step_nm = 5.0f;
-        sampled_settings.smoothness =
-            settings_.sampled_reconstruction_smoothness;
-        sampled_settings.max_iterations =
-            settings_.sampled_reconstruction_iterations;
-
-        sampled_reconstructor_ =
-            std::make_unique<SampledSpectralReconstructor>();
-
-        if (!sampled_reconstructor_->initialize(
-                observer_file,
-                *scene_illuminant_,
-                sampled_settings)) {
-
-            error_ =
-                "could not initialize experimental FilmViz sampled reconstructor: "
-                + sampled_reconstructor_->error();
-
-            return false;
-        }
-    }
-
     negative_stock_ =
         std::make_unique<FilmStock>(
-            negative_name);
+            negative_profile->display_name);
 
-    if ((settings_.spectral_reconstruction
-            == SpectralReconstruction::Rgb2Spec
-            && !reconstructor_->valid())
+    if (!reconstructor_->valid()
         || !scene_illuminant_->valid()
         || !negative_stock_->load(
             negative_sensitivity_file,
@@ -209,7 +193,7 @@ FilmPipeline::initialize(
 
         error_ =
             "could not initialize "
-            + negative_name
+            + negative_profile->display_name
             + " negative resources";
 
         return false;
@@ -244,7 +228,7 @@ FilmPipeline::initialize(
 
         error_ =
             "could not initialize "
-            + negative_name
+            + negative_profile->display_name
             + " spectral dye model";
 
         return false;
@@ -252,7 +236,7 @@ FilmPipeline::initialize(
 
     print_stock_ =
         std::make_unique<PrintFilmStock>(
-            "Kodak 2383 corrected");
+            print_profile->display_name);
 
     if (!print_stock_->load(
             print_sensitivity_file,
@@ -262,7 +246,9 @@ FilmPipeline::initialize(
             print_granularity_file)) {
 
         error_ =
-            "could not initialize Kodak 2383 print-film resources";
+            "could not initialize "
+            + print_profile->display_name
+            + " print-film resources";
 
         return false;
     }
@@ -317,7 +303,7 @@ FilmPipeline::initialize(
 
         error_ =
             "could not initialize "
-            + negative_name
+            + negative_profile->display_name
             + " Status-M density calibration";
 
         return false;
@@ -355,7 +341,9 @@ FilmPipeline::initialize(
 
     if (!print_processor_->valid()) {
         error_ =
-            "could not initialize Kodak 2383 print processor";
+            "could not initialize "
+            + print_profile->display_name
+            + " print processor";
 
         return false;
     }
@@ -864,55 +852,50 @@ SampledCurve
 FilmPipeline::reconstruct_scene_factor(
     const std::array<float, 3>& ap0_linear) const
 {
-    if (settings_.spectral_reconstruction
-        == SpectralReconstruction::FilmVizSampled) {
-
-        if (!sampled_reconstructor_
-            || !sampled_reconstructor_->valid()) {
-
-            return SampledCurve();
-        }
-
-        const SampledCurve full =
-            sampled_reconstructor_->reconstruct(
-                ap0_linear);
-
-        SampledCurve result;
-
-        if (!full.valid()) {
-            return result;
-        }
-
-        for (float wavelength =
-                 settings_.wavelength_min_nm;
-             wavelength <=
-                 settings_.wavelength_max_nm
-                 + 0.001f;
-             wavelength +=
-                 settings_.wavelength_step_nm) {
-
-            result.x.push_back(
-                wavelength);
-
-            result.y.push_back(
-                full.sample(
-                    wavelength,
-                    0.0f));
-        }
-
-        return result;
-    }
-
     if (!reconstructor_
         || !reconstructor_->valid()) {
 
         return SampledCurve();
     }
 
-    const auto spectrum =
+    std::array<float, 3> reconstruction_ap0 =
+        ap0_linear;
+
+    float scene_exposure_scale =
+        1.0f;
+
+    const std::array<double, 3> ap0 = {{
+        static_cast<double>(ap0_linear[0]),
+        static_cast<double>(ap0_linear[1]),
+        static_cast<double>(ap0_linear[2])
+    }};
+
+    const double luminance =
+        Colorimetry::ap0_to_xyz_d60(
+            ap0).y;
+
+    if (std::isfinite(luminance)
+        && luminance
+            > kRgb2SpecReferenceLuminance) {
+
+        scene_exposure_scale =
+            static_cast<float>(
+                luminance
+                / kRgb2SpecReferenceLuminance);
+
+        for (float& component : reconstruction_ap0) {
+            component /=
+                scene_exposure_scale;
+        }
+    }
+
+    auto spectrum =
         reconstructor_->reconstruct(
-            ap0_linear,
+            reconstruction_ap0,
             SpectralReconstructor::Method::Optimized);
+
+    spectrum.scale *=
+        scene_exposure_scale;
 
     return
         reconstructor_->sample(

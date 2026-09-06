@@ -9,7 +9,7 @@
 #include <cstddef>
 #include <vector>
 
-// Spectral dye model for Kodak 2383 print film.
+// Spectral dye model for Kodak Vision 2383/3383 print film.
 //
 // The production implementation uses a qualified nonlinear dye-growth mapping
 // and chroma-aware neutral correction. Kodak's published C/M/Y curves remain

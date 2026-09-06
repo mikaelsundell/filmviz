@@ -264,6 +264,7 @@ transform_key(
 {
     FilmVizOfxTransformKey key;
     key.negative_profile = settings.negative_profile;
+    key.print_profile = settings.print_profile;
     key.input_profile = settings.input_profile;
     key.output_profile = settings.output_profile;
     key.lut_size = settings.lut_size;
@@ -285,6 +286,7 @@ settings_summary(
     std::ostringstream stream;
     stream
         << "negative=" << settings.negative_profile
+        << " print=" << settings.print_profile
         << " input=" << settings.input_profile
         << " output=" << settings.output_profile
         << " lut=" << settings.lut_size
@@ -391,6 +393,7 @@ FilmVizOfxRenderSettings::operator==(
 {
     return
         negative_profile == other.negative_profile
+        && print_profile == other.print_profile
         && input_profile == other.input_profile
         && output_profile == other.output_profile
         && lut_size == other.lut_size
@@ -418,6 +421,22 @@ FilmVizOfxRenderSettings::operator==(
 
 FilmVizOfxProcessor::FilmVizOfxProcessor() = default;
 FilmVizOfxProcessor::~FilmVizOfxProcessor() = default;
+
+bool
+FilmVizOfxProcessor::has_transform(
+    const FilmVizOfxRenderSettings& settings,
+    const std::string& resources_directory) const
+{
+    const FilmVizOfxTransformKey key =
+        transform_key(settings);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    return
+        cache_
+        && cache_->resources_directory == resources_directory
+        && cache_->key == key;
+}
 
 bool
 FilmVizOfxProcessor::configure(
@@ -653,6 +672,7 @@ FilmVizOfxProcessor::configure(
             FilmPipeline::Settings pipeline_settings;
             pipeline_settings.resources_directory = resources_directory;
             pipeline_settings.negative_profile = settings.negative_profile;
+            pipeline_settings.print_profile = settings.print_profile;
 
             // Exposure is intentionally NOT baked into the transform. The
             // first LUT ends at raw negative exposure; runtime exposure

@@ -5,6 +5,8 @@
 #include "imageprocessor.h"
 #include "inputtransform.h"
 #include "lut3d.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
 #include "threading.h"
 
 #include <OpenImageIO/imagebuf.h>
@@ -61,13 +63,12 @@ validate_stock_profiles(
     const std::string& negative,
     const std::string& print)
 {
-    if (negative != "verita-200d"
-        && negative != "kodak-50d") {
+    if (!NegativeProfileCatalog::find(negative)) {
         throw std::invalid_argument(
             "unknown negative profile: " + negative);
     }
 
-    if (print != "kodak-2383"
+    if (!PrintProfileCatalog::find(print)
         && print != "none") {
         throw std::invalid_argument(
             "unknown print profile: " + print);
@@ -79,8 +80,6 @@ pipeline_settings(
     const std::string& resources,
     const std::string& negative,
     const std::string& print,
-    const std::string& spectral_reconstruction,
-    double sampled_smoothness,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -95,23 +94,6 @@ pipeline_settings(
     settings.resources_directory = resources;
     settings.negative_profile = negative;
     settings.print_profile = print;
-
-    if (spectral_reconstruction == "rgb2spec") {
-        settings.spectral_reconstruction =
-            FilmPipeline::SpectralReconstruction::Rgb2Spec;
-    }
-    else if (spectral_reconstruction == "filmviz-sampled") {
-        settings.spectral_reconstruction =
-            FilmPipeline::SpectralReconstruction::FilmVizSampled;
-    }
-    else {
-        throw std::invalid_argument(
-            "unknown spectral reconstruction: "
-            + spectral_reconstruction);
-    }
-
-    settings.sampled_reconstruction_smoothness =
-        sampled_smoothness;
     settings.exposure_stops = exposure;
     settings.push_pull_stops = push_pull;
     settings.negative_bleach_bypass = negative_bleach_bypass;
@@ -175,8 +157,6 @@ generate_lut(
     const std::string& print,
     const std::string& output,
     int lut_size,
-    const std::string& spectral_reconstruction,
-    double sampled_smoothness,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -208,8 +188,6 @@ generate_lut(
                 resources,
                 negative,
                 print,
-                spectral_reconstruction,
-                sampled_smoothness,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -334,8 +312,6 @@ process_image(
     const std::string& output,
     int lut_size,
     bool use_lut_acceleration,
-    const std::string& spectral_reconstruction,
-    double sampled_smoothness,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -369,8 +345,6 @@ process_image(
                 resources,
                 negative,
                 print,
-                spectral_reconstruction,
-                sampled_smoothness,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -568,8 +542,6 @@ probe_image_pixel(
     const std::string& input,
     const std::string& negative,
     const std::string& print,
-    const std::string& spectral_reconstruction,
-    double sampled_smoothness,
     float exposure,
     float push_pull,
     float negative_bleach_bypass,
@@ -675,8 +647,6 @@ probe_image_pixel(
                 resources,
                 negative,
                 print,
-                spectral_reconstruction,
-                sampled_smoothness,
                 exposure,
                 push_pull,
                 negative_bleach_bypass,
@@ -845,12 +815,47 @@ PYBIND11_MODULE(filmviz_python, module)
             result["input"] = py::make_tuple(
                 "awg3-logc3-ei800",
                 "ap0-linear");
-            result["negative"] = py::make_tuple(
-                "verita-200d",
-                "kodak-50d");
-            result["print"] = py::make_tuple(
-                "kodak-2383",
-                "none");
+            py::list negative_identifiers;
+            py::list negative_details;
+
+            for (const auto& profile : NegativeProfileCatalog::profiles()) {
+                negative_identifiers.append(profile.identifier);
+
+                py::dict detail;
+                detail["identifier"] = profile.identifier;
+                detail["display_name"] = profile.display_name;
+                detail["resource_directory"] = profile.resource_directory;
+                detail["resource_prefix"] = profile.resource_prefix;
+                negative_details.append(detail);
+            }
+
+            result["negative"] = negative_identifiers;
+            result["negative_details"] = negative_details;
+            py::list print_identifiers;
+            py::list print_details;
+
+            for (const auto& profile : PrintProfileCatalog::profiles()) {
+                print_identifiers.append(profile.identifier);
+
+                py::dict detail;
+                detail["identifier"] = profile.identifier;
+                detail["display_name"] = profile.display_name;
+                detail["resource_directory"] = profile.resource_directory;
+                detail["sensitivity_filename"] =
+                    profile.sensitivity_filename;
+                detail["characteristic_filename"] =
+                    profile.characteristic_filename;
+                detail["dye_density_filename"] =
+                    profile.dye_density_filename;
+                detail["mtf_filename"] = profile.mtf_filename;
+                detail["granularity_filename"] =
+                    profile.granularity_filename;
+                print_details.append(detail);
+            }
+
+            print_identifiers.append("none");
+            result["print"] = print_identifiers;
+            result["print_details"] = print_details;
             result["output"] = py::make_tuple(
                 "ap0-linear",
                 "rec709-gamma24");
@@ -863,12 +868,12 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("resources") = "resources",
         py::arg("output_filename") = "filmviz.cube",
         py::arg("input") = "awg3-logc3-ei800",
-        py::arg("negative") = "verita-200d",
-        py::arg("print") = "kodak-2383",
+        py::arg("negative") =
+            NegativeProfileCatalog::default_profile().identifier,
+        py::arg("print") =
+            PrintProfileCatalog::default_profile().identifier,
         py::arg("output") = "ap0-linear",
         py::arg("lut_size") = 33,
-        py::arg("spectral_reconstruction") = "rgb2spec",
-        py::arg("sampled_smoothness") = 1e-4,
         py::arg("exposure") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
@@ -889,13 +894,13 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("input_filename") = "",
         py::arg("output_filename") = "filmviz_output.tif",
         py::arg("input") = "awg3-logc3-ei800",
-        py::arg("negative") = "verita-200d",
-        py::arg("print") = "kodak-2383",
+        py::arg("negative") =
+            NegativeProfileCatalog::default_profile().identifier,
+        py::arg("print") =
+            PrintProfileCatalog::default_profile().identifier,
         py::arg("output") = "rec709-gamma24",
         py::arg("lut_size") = 33,
         py::arg("use_lut_acceleration") = true,
-        py::arg("spectral_reconstruction") = "rgb2spec",
-        py::arg("sampled_smoothness") = 1e-4,
         py::arg("exposure") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,
@@ -922,10 +927,10 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("resources") = "resources",
         py::arg("input_filename") = "",
         py::arg("input") = "awg3-logc3-ei800",
-        py::arg("negative") = "verita-200d",
-        py::arg("print") = "kodak-2383",
-        py::arg("spectral_reconstruction") = "rgb2spec",
-        py::arg("sampled_smoothness") = 1e-4,
+        py::arg("negative") =
+            NegativeProfileCatalog::default_profile().identifier,
+        py::arg("print") =
+            PrintProfileCatalog::default_profile().identifier,
         py::arg("exposure") = 0.0f,
         py::arg("push_pull") = 0.0f,
         py::arg("negative_bleach_bypass") = 0.0f,

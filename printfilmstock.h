@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-// Source-data container for Kodak 2383 print film.
+// Source-data container for Kodak Vision 2383/3383 print film.
 //
 // This class deliberately does no simulation. It owns the five digitized
 // Kodak source datasets so they can be validated and plotted independently

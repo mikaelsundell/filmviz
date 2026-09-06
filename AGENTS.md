@@ -16,13 +16,13 @@ Treat these as the current architecture:
 encoded RGB
  -> InputTransform
  -> AP0 linear
- -> spectral reconstruction + D60
+ -> exposure-separated rgb2spec reconstruction + D60
  -> FilmProcessor (Verita exposure/development)
  -> Kodak Status-M density
  -> FilmDensityCalibration
  -> FilmDyeModel spectral coordinates
  -> negative D(lambda) / transmittance
- -> PrintFilmProcessor (Kodak 2383)
+ -> PrintFilmProcessor (Kodak Vision 2383/3383)
  -> print dye D(lambda) / transmittance
  -> PrintViewer (D55, CIE XYZ, Bradford D60)
  -> AP0 linear
@@ -47,11 +47,12 @@ by the Status-M closure method.
 
 ## Current fixed profile values
 
-- negative: Kodak Verita 200D
+- negative: Kodak Verita 200D 5206/7206
 - negative zero-stop log exposure: -0.515
 - middle gray: AP0 0.18
 - scene illuminant: CIE D60
-- print: corrected Kodak 2383
+- rgb2spec reconstruction reference luminance: AP0/D60 Y = 0.18
+- print: corrected Kodak Vision 2383/3383
 - printer blackbody approximation: 3200 K
 - print dye amplitudes C/M/Y: 1.10093 / 1.09650 / 1.14626
 - viewing illuminant: D55
@@ -77,6 +78,8 @@ the measured per-channel result and `0` producing neutral grain.
 - `printfilmprocessor.*`: print exposure + characteristic curves only.
 - `printviewer.*`: viewed spectrum -> XYZ -> D60/AP0 only.
 - `inputtransform.*`: encoded input -> AP0 only.
+- `negativeprofile.*`: supported negative identifiers, display names and resource layout only.
+- `printprofile.*`: supported print identifiers, display names and resource layout only.
 - `lut3d.*`: generic LUT storage/generation/validation only.
 - `granularitymodel.*`: measured density-to-RMS curves and deterministic noise only.
 - `imageprocessor.*`: image I/O, LUT application and two-stage grain rendering.

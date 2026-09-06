@@ -360,7 +360,7 @@ PrintFilmProcessor::derive_balance(
         || reference.blue <= 0.0f) {
 
         std::cerr
-            << "error: Kodak 2383 neutral printer reference produced "
+            << "error: print-film neutral printer reference produced "
                "non-positive exposure"
             << std::endl;
         return false;
