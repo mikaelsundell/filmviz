@@ -58,16 +58,15 @@ public:
         // middle-gray density.
         float push_pull_stops = 0.0f;
 
-        // Signed empirical density-domain colour trim. Zero selects the
-        // accepted standard response, -4 is calibrated bypass, and positive
-        // values progressively calm and deepen chromatic regions.
+        // Signed empirical colour-separation trim. Zero selects the accepted
+        // standard response, -4 is calibrated bypass, and positive values
+        // progressively calm chromatic regions.
         float color_density = 0.0f;
 
-        // Empirical warm-record separation within FilmColorResponse. One is
-        // the standard protection, zero restores uniform hue compression and
-        // two maximally preserves the warm mid-density branch.
-        float warm_tone_separation =
-            FilmColorResponse::standard_warm_tone_separation;
+        // Independent chroma-weighted negative-density depth. One preserves
+        // the accepted response, zero removes chromatic darkening, and
+        // negative values provide a controlled chromatic lift.
+        float color_depth = FilmColorResponse::standard_color_depth;
 
         // Profile-independent bleach-bypass look controls. Zero is normal
         // processing; one is the full modeled process look. The current
@@ -125,6 +124,7 @@ public:
         float print_bleach_mean_density_delta = 0.0f;
 
         std::array<float, 3> ap0 = {{0.0f, 0.0f, 0.0f}};
+        std::array<float, 3> rec709_linear_unclamped = {{0.0f, 0.0f, 0.0f}};
         std::array<float, 3> rec709_gamma24 = {{0.0f, 0.0f, 0.0f}};
 
         bool valid = false;

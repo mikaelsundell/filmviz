@@ -46,6 +46,7 @@ set(FILMVIZ_CORE_SOURCES
     cieobserver.cpp
     colorimetry.cpp
     colortransform.cpp
+    displaygamutcompressor.cpp
     diagramwriter.cpp
     filmdensitycalibration.cpp
     filmcolorresponse.cpp
@@ -146,10 +147,12 @@ if(BUILD_TESTING)
         tests/test_bleach_bypass.cpp
         tests/test_film_color_response.cpp
         tests/test_density_calibration.cpp
+        tests/test_display_gamut_compressor.cpp
         tests/test_exposure_boundary.cpp
         tests/test_granularity.cpp
         tests/test_halation_model.cpp
         tests/test_input_transform.cpp
+        tests/test_kodak_50d_sensitivity.cpp
         tests/test_lut3d.cpp
         tests/test_negative_profile.cpp
         tests/test_pipeline.cpp
@@ -206,10 +209,12 @@ if(BUILD_TESTING)
     set_tests_properties(
         test_apd_resource
         test_bleach_bypass
+        test_display_gamut_compressor
         test_film_color_response
         test_granularity
         test_halation_model
         test_input_transform
+        test_kodak_50d_sensitivity
         test_lut3d
         PROPERTIES LABELS "unit"
     )

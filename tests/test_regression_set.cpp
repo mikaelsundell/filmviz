@@ -273,16 +273,6 @@ main(
         return test::finish(false, "checked-in regression set: " + error);
     }
 
-    FilmPipeline::Settings uniform_warm_compression = baseline;
-    uniform_warm_compression.warm_tone_separation = 0.0f;
-    if (!run_pipeline_set(
-            "uniform_warm_compression",
-            uniform_warm_compression,
-            actual,
-            error)) {
-        return test::finish(false, "checked-in regression set: " + error);
-    }
-
     FilmPipeline::Settings shaped = baseline;
     shaped.negative_profile = "kodak-50d";
     shaped.negative_flash_percent = 2.0f;
@@ -290,7 +280,6 @@ main(
     shaped.printer_light_master = 0.5f;
     shaped.push_pull_stops = 0.35f;
     shaped.color_density = 1.0f;
-    shaped.warm_tone_separation = 1.5f;
     if (!run_pipeline_set("shaped", shaped, actual, error)) {
         return test::finish(false, "checked-in regression set: " + error);
     }

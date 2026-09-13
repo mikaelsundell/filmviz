@@ -49,8 +49,7 @@ struct FilmVizOfxRenderSettings
     float print_flash_percent = 0.0f;
     float push_pull_stops = 0.0f;
     float color_density = 0.0f;
-    float warm_tone_separation =
-        FilmColorResponse::standard_warm_tone_separation;
+    float color_depth = FilmColorResponse::standard_color_depth;
     float middle_gray = 0.18f;
     float printer_temperature = 3200.0f;
 

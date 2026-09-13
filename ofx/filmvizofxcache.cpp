@@ -20,8 +20,10 @@ constexpr char kMagic[8] = {'F','V','O','F','X','C','H','E'};
 // added the initial negative-density colour-response transform. Version 7
 // adopted its calmer chroma-compression and density-depth response. Version 8
 // makes the accepted response the zero-centred standard trim. Version 9 adds
-// warm mid-density separation to the negative colour-response transform.
-constexpr std::uint32_t kVersion = 9u;
+// bakes warm mid-density separation into the negative colour-response transform.
+// Version 10 fixes that warm response and separates chromatic depth from the
+// public colour-separation trim.
+constexpr std::uint32_t kVersion = 10u;
 constexpr std::uint32_t kHasNegativeExposure = 1u << 0u;
 
 void
@@ -96,7 +98,7 @@ FilmVizOfxTransformKey::operator==(
         && lut_size == other.lut_size
         && push_pull_stops == other.push_pull_stops
         && color_density == other.color_density
-        && warm_tone_separation == other.warm_tone_separation
+        && color_depth == other.color_depth
         && negative_flash_percent == other.negative_flash_percent
         && print_flash_percent == other.print_flash_percent
         && middle_gray == other.middle_gray
@@ -122,7 +124,7 @@ filmviz_ofx_transform_hash(
     hash_value(hash, key.lut_size);
     hash_value(hash, key.push_pull_stops);
     hash_value(hash, key.color_density);
-    hash_value(hash, key.warm_tone_separation);
+    hash_value(hash, key.color_depth);
     hash_value(hash, key.negative_flash_percent);
     hash_value(hash, key.print_flash_percent);
     hash_value(hash, key.middle_gray);

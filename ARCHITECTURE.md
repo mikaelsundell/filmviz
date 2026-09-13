@@ -113,15 +113,14 @@ This is an explicitly empirical look control, not a reconstruction of measured
 interimage chemistry. The public trim is centred at zero on the accepted
 standard response, corresponding to the earlier experimental amount 1.5.
 Trim -4 is a strict calibrated bypass and +4 applies twice the standard amount.
-Within that response, Warm-Tone Separation smoothly reduces chroma compression
-along the red-plus-green/low-blue dye-coordinate direction through ordinary
-midscale densities. The protection fades near neutral, outside the mid-density
-range and at extreme chroma, retaining the outer red roll-off. Zero selects
-uniform compression, one is the accepted standard and two is maximum warm
-protection. A small direction-preserving radial stage is followed by gentle
-guidance of near-warm trajectories toward the yellow/orange axis, preventing
-the protected branch from curling toward magenta. This is empirical and does
-not classify people or claim a measured interimage mechanism.
+Within that response, fixed warm-direction shaping smoothly reduces chroma
+compression along the red-plus-green/low-blue dye-coordinate direction through
+ordinary midscale densities. The protection fades near neutral, outside the
+mid-density range and at extreme chroma, retaining the outer red roll-off. A
+small direction-preserving radial stage is followed by gentle guidance of
+near-warm trajectories toward the yellow/orange axis, preventing the protected
+branch from curling toward magenta. This is empirical and does not classify
+people or claim a measured interimage mechanism.
 
 ### `PrintFilmProcessor`
 
@@ -148,6 +147,14 @@ scene-referred signal awaiting an ACES RRT.
 Performs colour-space matrices and transfer functions only. It does not contain
 an ACES RRT or ODT. In FilmViz it is used to make the optional Rec.709/Gamma 2.4
 preview.
+
+### `DisplayGamutCompressor`
+
+Compresses only Rec.709 colours near or beyond the display boundary toward
+their luminance before Gamma 2.4 encoding. It preserves luminance, neutral
+colours and linear-RGB hue direction. Viewed AP0 and the measured film stages
+remain unchanged, and the unclamped linear Rec.709 value remains available to
+diagnostics.
 
 ### `Lut3D`
 
@@ -251,17 +258,18 @@ The linked master printer timing adds the same printer-light point offset to all
 three records; one point remains 0.025 LogE. These are explicit look controls
 and default to zero, leaving the calibrated production baseline unchanged.
 
-Color Density shapes calibrated negative spectral-dye coordinates around their
-stock-relative neutral axis. Increasing it progressively calms chroma and adds
-chroma-weighted density depth through the print stage. It is separate from
-exposure, characteristic-curve contrast, printer timing and display saturation.
+Color Separation shapes calibrated negative spectral-dye coordinates around
+their stock-relative neutral axis. Increasing it progressively calms chroma.
 Zero is the accepted standard response, -4 restores the calibrated bypass and
-+4 applies twice the standard amount.
-Warm-Tone Separation controls the directional protection inside Color Density:
-zero is uniform compression, one is standard and two maximally protects the
-warm mid-density branch. It does not alter the common density-depth term.
-Inside that branch it gently guides near-warm hue trajectories toward the
-yellow/orange dye-coordinate axis.
++4 applies twice the standard amount. Color Depth independently scales the
+chroma-weighted common-density term: one preserves the accepted response, zero
+removes chromatic darkening and negative values provide a controlled lift.
+Both are separate from exposure, characteristic-curve contrast, printer timing
+and display saturation.
+The standard Color Response includes fixed directional protection for the warm
+mid-density branch without altering the common density-depth term. Inside that
+branch it gently guides near-warm hue trajectories toward the yellow/orange
+dye-coordinate axis.
 
 ## Display output
 
@@ -270,7 +278,7 @@ The production LUT output should normally be `ap0-linear`.
 `rec709-gamma24` is provided as a convenient preview path:
 
 ```text
-viewed AP0 -> AP0/Rec709 matrix -> Gamma 2.4
+viewed AP0 -> AP0/Rec709 matrix -> boundary gamut compression -> Gamma 2.4
 ```
 
 No ACES RRT/ODT is applied. If FilmViz is integrated into an ACES colour

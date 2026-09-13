@@ -2956,10 +2956,14 @@ class FilmVizWindow(QMainWindow):
         self.print_flash = _double(0.0, 0.0, 25.0, 0.1, 2)
         self.push_pull = _double(0.0, -5.0, 5.0, 0.25)
         self.color_density = _double(0.0, -4.0, 4.0, 0.1, 2)
-        self.warm_tone_separation = _double(1.0, 0.0, 2.0, 0.05, 2)
-        self.warm_tone_separation.setToolTip(
-            "Preserves warm mid-density separation inside Color Density. "
-            "Zero uses uniform compression; one is standard.")
+        self.color_density.setToolTip(
+            "Controls neutral-preserving chroma separation. "
+            "Minus four bypasses Color Response; zero is standard.")
+        self.color_depth = _double(1.0, -1.0, 2.0, 0.05, 2)
+        self.color_depth.setToolTip(
+            "Controls chroma-weighted density independently. "
+            "One is the current response, zero removes color darkening, "
+            "and negative values lift chromatic regions.")
         self.negative_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
         self.print_bleach_bypass = _double(0.0, 0.0, 1.0, 0.05)
         self.printer_light_red = _double(25.0, 0.0, 50.0, 0.1, 1)
@@ -2987,8 +2991,7 @@ class FilmVizWindow(QMainWindow):
         self.print_flash_control = SliderSpinRow(self.print_flash)
         self.push_pull_control = SliderSpinRow(self.push_pull)
         self.color_density_control = SliderSpinRow(self.color_density)
-        self.warm_tone_separation_control = SliderSpinRow(
-            self.warm_tone_separation)
+        self.color_depth_control = SliderSpinRow(self.color_depth)
         self.negative_bleach_bypass_control = SliderSpinRow(
             self.negative_bleach_bypass)
         self.print_bleach_bypass_control = SliderSpinRow(
@@ -3008,7 +3011,7 @@ class FilmVizWindow(QMainWindow):
             self.print_flash,
             self.push_pull,
             self.color_density,
-            self.warm_tone_separation,
+            self.color_depth,
             self.negative_bleach_bypass,
             self.print_bleach_bypass,
             self.printer_light_red,
@@ -3037,8 +3040,8 @@ class FilmVizWindow(QMainWindow):
             ("Negative flash (%)", self.negative_flash_control),
             ("Print flash (%)", self.print_flash_control),
             ("Push/pull stops", self.push_pull_control),
-            ("Color density trim", self.color_density_control),
-            ("Warm-tone separation", self.warm_tone_separation_control),
+            ("Color separation", self.color_density_control),
+            ("Color depth", self.color_depth_control),
             ("Negative bypass", self.negative_bleach_bypass_control),
             ("Print bypass", self.print_bleach_bypass_control),
             ("Printer R light", self.printer_light_red_control),
@@ -3387,7 +3390,7 @@ class FilmVizWindow(QMainWindow):
         self.print_flash.setValue(0.0)
         self.push_pull.setValue(0.0)
         self.color_density.setValue(0.0)
-        self.warm_tone_separation.setValue(1.0)
+        self.color_depth.setValue(1.0)
         self.negative_bleach_bypass.setValue(0.0)
         self.print_bleach_bypass.setValue(0.0)
         self.printer_light_red.setValue(25.0)
@@ -3607,7 +3610,7 @@ class FilmVizWindow(QMainWindow):
             print_flash=arguments["print_flash"],
             push_pull=arguments["push_pull"],
             color_density=arguments["color_density"],
-            warm_tone_separation=arguments["warm_tone_separation"],
+            color_depth=arguments["color_depth"],
             negative_bleach_bypass=arguments["negative_bleach_bypass"],
             print_bleach_bypass=arguments["print_bleach_bypass"],
             printer_light_red=arguments["printer_light_red"],
@@ -3641,12 +3644,14 @@ class FilmVizWindow(QMainWindow):
             field("negative H R/G/B", triplet("negative_exposure")),
             field("Status-M D R/G/B", triplet("negative_status_m")),
             field("calibrated D", triplet("negative_calibrated")),
+            "",
         ]
         right = [
             field("color response D", triplet("negative_color_response")),
             field("print H R/G/B", triplet("print_exposure")),
             field("print D R/G/B", triplet("print_density")),
             field("output AP0", triplet("output_ap0")),
+            field("Rec709 linear raw", triplet("output_rec709_linear_unclamped")),
             field("output Rec709", triplet("output_rec709_gamma24")),
         ]
 
@@ -3832,8 +3837,8 @@ class FilmVizWindow(QMainWindow):
             f"Negative flash (%): {common['negative_flash']:g}",
             f"Print flash (%): {common['print_flash']:g}",
             f"Push/pull stops: {common['push_pull']:g}",
-            f"Color density trim: {common['color_density']:g}",
-            f"Warm-tone separation: {common['warm_tone_separation']:g}",
+            f"Color separation: {common['color_density']:g}",
+            f"Color depth: {common['color_depth']:g}",
             f"Negative bypass: {common['negative_bleach_bypass']:g}",
             f"Print bypass: {common['print_bleach_bypass']:g}",
             f"Printer R light: {common['printer_light_red']:g}",
@@ -3883,9 +3888,14 @@ class FilmVizWindow(QMainWindow):
                 QImage.Format.Format_ARGB32_Premultiplied)
             image.fill(QColor("#0b0d0f"))
             painter = QPainter(image)
-            widget.render(painter)
-            painter.end()
-            widget.resize(old_size)
+            try:
+                # PySide6 requires the target offset when rendering through
+                # an existing QPainter. Passing only the painter matches no
+                # overload and can leave the paint device active on failure.
+                widget.render(painter, QPoint(0, 0))
+            finally:
+                painter.end()
+                widget.resize(old_size)
             return image
 
         result = render(result_widget)
@@ -4262,7 +4272,7 @@ class FilmVizWindow(QMainWindow):
             print_flash=self.print_flash.value(),
             push_pull=self.push_pull.value(),
             color_density=self.color_density.value(),
-            warm_tone_separation=self.warm_tone_separation.value(),
+            color_depth=self.color_depth.value(),
             negative_bleach_bypass=self.negative_bleach_bypass.value(),
             print_bleach_bypass=self.print_bleach_bypass.value(),
             printer_light_red=self.printer_light_red.value(),

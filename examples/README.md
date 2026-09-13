@@ -58,16 +58,17 @@ The supported command-line application also exposes the new stage controls:
     --negative-flash 2 \
     --print-flash 1 \
     --color-density 0 \
-    --warm-tone-separation 1 \
+    --color-depth 1 \
     --printer-light-master 0.5 \
     --film-format super-35 \
     --negative-mtf 1 \
     --print-mtf 1
 ```
 
-Flash, Color Density and printer timing are part of the spectral transform.
-Color Density shapes calibrated negative dye coordinates around the neutral
-axis; zero is standard and -4 is calibrated bypass. Warm-tone separation keeps
+Flash, Color Separation, Color Depth and printer timing are part of the
+spectral transform. Color Separation shapes calibrated negative dye coordinates
+around the neutral axis; zero is standard and -4 is calibrated bypass. Color
+Depth independently controls chroma-weighted depth. Fixed warm shaping keeps
 more of the warm mid-density branch while allowing extreme reds to rejoin the
 outer compression; zero is uniform compression and one is standard. MTF is
 image-only; the format maps measured cycles/mm to pixels. Use `--film-format

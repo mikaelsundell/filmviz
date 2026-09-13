@@ -1,7 +1,82 @@
 # AGENTS.md — FilmViz coding context
 
 This file is the entry point for Codex/agent-assisted work on FilmViz.
+
 Read `ARCHITECTURE.md` and `CALIBRATION.md` before changing the spectral model.
+
+## Agent working discipline
+
+For every requested change, use the following workflow.
+
+### 1. Analyze first
+
+Before editing code, briefly determine:
+
+- what the request requires,
+- which files/functions are actually involved,
+- the smallest change needed,
+- what existing behaviour must remain unchanged.
+
+Inspect the relevant existing implementation before proposing changes. Do not
+assume a subsystem needs redesign simply because a local change is requested.
+
+### 2. Keep the scope narrow
+
+Make the smallest change that satisfies the request.
+
+Do not:
+
+- refactor unrelated code,
+- rename or reorganize existing code unless required,
+- introduce new abstractions, helpers, classes, or dependencies without a clear need,
+- add speculative features or future-proofing,
+- fix unrelated issues discovered during the task,
+- rewrite complete subsystems to solve localized problems,
+- change formatting or whitespace outside the affected code,
+- add excessive comments, logging, validation, or defensive code.
+
+Treat existing architecture and behaviour as intentional unless the task or
+evidence clearly shows otherwise.
+
+If an unrelated issue is discovered, mention it rather than changing it.
+
+### 3. Preserve existing patterns
+
+Follow the existing implementation, naming, formatting, ownership boundaries,
+and coding style.
+
+Prefer surgical patches to broad rewrites.
+
+Reuse existing mechanisms before creating new ones.
+
+Do not duplicate functionality that already exists elsewhere in the project.
+
+### 4. Implement and verify
+
+After the analysis, implement the change without repeatedly restating the plan.
+
+Run only the tests/build steps relevant to the affected area unless broader
+verification is explicitly requested or the change clearly requires it.
+
+Do not create additional tests, documentation, diagnostics, or experimental
+programs unless they are required by the change or by the project rules below.
+
+### 5. Keep responses concise
+
+Before implementation, provide only a short analysis and plan.
+
+After implementation, summarize:
+
+- what changed,
+- which files were changed,
+- what verification was performed,
+- any important caveat.
+
+Avoid long explanations of code that was not changed.
+
+When the request is ambiguous, prefer the interpretation requiring the smallest
+change consistent with the existing codebase. Ask before making a substantially
+larger architectural change.
 
 ## Project purpose
 
@@ -64,14 +139,17 @@ Treat these as profile calibration values, not arbitrary knobs.
 Optional image controls do not alter the fixed baseline: grain is rendered only
 in image output and never baked into a `.cube`; push/pull is the documented
 `2^(0.2 * stops)` approximation until alternate-development curves exist.
+
 Grain chroma is a luminance-preserving rendering control, with `1` retaining
 the measured per-channel result and `0` producing neutral grain.
-Color Density is an empirical negative dye-coordinate look control, not a
+
+Color Separation is an empirical negative dye-coordinate look control, not a
 measured interimage-effect model. Its signed trim is centred at zero on the
 accepted standard response; -4 retains the strict calibrated bypass.
-Warm-Tone Separation is part of the same empirical layer: 0 uses uniform
-compression, 1 is the standard warm mid-density protection and 2 is maximum.
-It is not a skin detector or measured interimage-effect model.
+
+Fixed warm-direction shaping is part of the same empirical layer. It protects
+warm mid-density separation and is not a skin detector or measured
+interimage-effect model.
 
 ## Code ownership
 
@@ -108,6 +186,7 @@ convention, and are registered with CTest. Each must make deterministic
 assertions and return a failing exit status when an invariant is broken.
 
 The forensic conclusions behind the model are recorded in `CALIBRATION.md`.
+
 Examples under `examples/` must use the current production API, have descriptive
 names, and must not depend on external profile JSON files.
 

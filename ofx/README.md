@@ -192,8 +192,8 @@ Negative:
 
 - Stock: Kodak Verita 200D 5206/7206 or Kodak Vision3 50D 5203/7203
 - Exposure, flash and push/pull
-- Color Density
-- Warm Separation
+- Color Separation
+- Color Depth
 - Bleach bypass
 
 Print:
@@ -235,18 +235,15 @@ MTF, grain and halation are disabled by default. Enabling MTF uses the measured
 cycles/mm response and the selected active-image width. Because the current
 Metal kernel is pointwise, measured MTF automatically uses the CPU spatial
 bridge while retaining the cached colour transform.
-Color Density operates in calibrated negative dye-coordinate space before
-spectral density synthesis. Increasing it progressively calms chroma and adds
-chroma-weighted depth through print exposure. Zero is the accepted standard
-response, -4 is calibrated bypass, and +4 is twice the standard response. It
-changes the spectral transform and therefore selects or generates a distinct
-cached LUT.
-Warm Separation retains more of the warm mid-density dye-coordinate branch
-without disabling Color Density's density depth. Zero uses uniform compression,
-one is the standard response and two gives maximum protection; neutral and
-extreme chroma remain governed by the general response. It also participates
-in the cached spectral transform and gently guides near-warm trajectories
-toward yellow/orange rather than magenta.
+Color Separation operates in calibrated negative dye-coordinate space before
+spectral density synthesis. Increasing it progressively calms chroma. Zero is
+the accepted standard response, -4 is calibrated bypass, and +4 is twice the
+standard response. Color Depth independently scales chroma-weighted depth
+through print exposure; one is standard, zero removes chromatic darkening and
+negative values provide a controlled lift. Both change the spectral transform
+and therefore select or generate a distinct cached LUT. Fixed warm shaping
+retains more of the warm mid-density dye-coordinate branch and gently guides
+near-warm trajectories toward yellow/orange rather than magenta.
 The OFX production transform is fixed at 33^3 and the calibrated Kodak Vision
 2383/3383
 printer illuminant approximation is fixed at 3200 K. These are profile and

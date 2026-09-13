@@ -274,7 +274,7 @@ transform_key(
     key.lut_size = settings.lut_size;
     key.push_pull_stops = settings.push_pull_stops;
     key.color_density = settings.color_density;
-    key.warm_tone_separation = settings.warm_tone_separation;
+    key.color_depth = settings.color_depth;
     key.negative_flash_percent = settings.negative_flash_percent;
     key.print_flash_percent = settings.print_flash_percent;
     key.middle_gray = settings.middle_gray;
@@ -304,7 +304,7 @@ settings_summary(
         << " print_flash=" << settings.print_flash_percent
         << " push_pull=" << settings.push_pull_stops
         << " color_density=" << settings.color_density
-        << " warm_separation=" << settings.warm_tone_separation
+        << " color_depth=" << settings.color_depth
         << " lights="
         << settings.printer_light_red << ','
         << settings.printer_light_green << ','
@@ -418,7 +418,7 @@ FilmVizOfxRenderSettings::operator==(
         && print_flash_percent == other.print_flash_percent
         && push_pull_stops == other.push_pull_stops
         && color_density == other.color_density
-        && warm_tone_separation == other.warm_tone_separation
+        && color_depth == other.color_depth
         && middle_gray == other.middle_gray
         && printer_temperature == other.printer_temperature
         && negative_bleach_bypass == other.negative_bleach_bypass
@@ -477,11 +477,9 @@ FilmVizOfxProcessor::configure(
         || !finite_setting(settings.color_density)
         || settings.color_density < FilmColorResponse::minimum_trim
         || settings.color_density > FilmColorResponse::maximum_trim
-        || !finite_setting(settings.warm_tone_separation)
-        || settings.warm_tone_separation
-            < FilmColorResponse::minimum_warm_tone_separation
-        || settings.warm_tone_separation
-            > FilmColorResponse::maximum_warm_tone_separation
+        || !finite_setting(settings.color_depth)
+        || settings.color_depth < FilmColorResponse::minimum_color_depth
+        || settings.color_depth > FilmColorResponse::maximum_color_depth
         || !finite_setting(settings.negative_flash_percent)
         || settings.negative_flash_percent < 0.0f
         || settings.negative_flash_percent > 25.0f
@@ -768,8 +766,7 @@ FilmVizOfxProcessor::configure(
             pipeline_settings.exposure_stops = 0.0f;
             pipeline_settings.push_pull_stops = settings.push_pull_stops;
             pipeline_settings.color_density = settings.color_density;
-            pipeline_settings.warm_tone_separation =
-                settings.warm_tone_separation;
+            pipeline_settings.color_depth = settings.color_depth;
             pipeline_settings.middle_gray = settings.middle_gray;
             pipeline_settings.printer_temperature_kelvin = settings.printer_temperature;
             pipeline_settings.negative_bleach_bypass = settings.negative_bleach_bypass;

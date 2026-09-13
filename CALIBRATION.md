@@ -22,6 +22,15 @@ The source-data validation established the current Verita digitization:
 These checks are why the Status-M/spectral mismatch is treated as a modelling
 coordinate issue rather than a CSV/parser issue.
 
+The Kodak Vision3 50D sensitivity resource was re-derived from the retained
+SVG trace after an overlay against Kodak publication H-1-5203 exposed a
+compressed vertical digitization. The SVG's 1.0, 2.0 and 3.0 label baselines
+define a linear `-34.56 SVG units / log-sensitivity unit`; the enlarged
+annotation band above 3.0 is not part of that scale. Sampling the corrected
+trace at 5 nm gives yellow/magenta/cyan-forming peaks of 2.677431 at 465 nm,
+2.456505 at 545 nm and 2.410890 at 645 nm respectively. The curve supports and
+wavelength positions are unchanged.
+
 ## Kodak spectral vs sensitometric coordinates
 
 Measured Verita spectral midscale, remeasured with Status M:
@@ -143,20 +152,24 @@ narrowly gated warm guidance described below changes direction. Neither stage
 is a display-space saturation or general hue correction.
 
 Reference review selected the earlier amount 1.5 as the standard creative
-response. The public control is therefore a signed -4..+4 trim: zero maps to
+response. Color Separation retains the signed -4..+4 mapping: zero maps to
 that standard, -4 maps to the strict calibrated bypass, and +4 maps to twice
-the standard response. Warm-Tone Separation then reduces that compression in a
-broad red-plus-green/low-blue dye-coordinate lobe through ordinary midscale
-densities. Its protection fades around neutral, toward highlights and shadows,
-and at extreme chroma so saturated reds remain controlled. Zero restores the
-uniform response, one is the accepted standard and two is maximum protection;
-the common density-depth term remains active at every setting. A small
-directional blend within the same smooth lobe guides near-warm trajectories
-toward the yellow/orange dye-coordinate axis. It is deliberately too narrow
-and too density-limited to convert true magenta objects into skin-like hues.
+the standard response. Color Depth independently scales the common-coordinate
+term from -1 through 2: one reproduces the accepted response, zero leaves only
+the separation shaping and negative values lift chromatic regions. This split
+avoids coupling desired outer-chroma compression to unwanted colour darkening.
+The standard response reduces compression in a broad red-plus-green/low-blue
+dye-coordinate lobe through ordinary midscale densities. Its protection fades
+around neutral, toward highlights and shadows, and at extreme chroma so
+saturated reds remain controlled; the common density-depth term remains active.
+A small directional blend within the same smooth lobe guides near-warm
+trajectories toward the yellow/orange dye-coordinate axis. It is deliberately
+too narrow and too density-limited to convert true magenta objects into
+skin-like hues.
 
-The regression set records the standard baseline, explicit calibrated bypass,
-uniform warm compression and a stronger shaped setting. These remain empirical
+The regression set records the standard baseline, explicit calibrated bypass
+and a stronger shaped setting. Focused unit coverage also verifies that zero
+depth preserves the common coordinate while separation remains active. These remain empirical
 rendering decisions rather than new measured stock calibration or a claim that
 the warm lobe reconstructs interimage chemistry.
 

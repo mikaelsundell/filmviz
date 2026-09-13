@@ -118,6 +118,36 @@ main()
         shaped_neutral_value < input_neutral,
         "chromatic colour receives negative-density depth compensation");
 
+    FilmColorResponse::Settings separation_only = enabled;
+    separation_only.color_depth = 0.0f;
+    const FilmDensity separated = response.apply(colour, separation_only);
+    const double separated_neutral_value =
+        ((separated.red - minimum.red)
+         + (separated.green - minimum.green)
+         + (separated.blue - minimum.blue))
+        / 3.0;
+    passed &= test::near(
+        separated_neutral_value,
+        input_neutral,
+        1e-7,
+        "zero color depth preserves the neutral coordinate");
+    passed &= test::check(
+        normalized_chroma(separated, minimum)
+            < normalized_chroma(colour, minimum),
+        "zero color depth retains chroma separation shaping");
+
+    FilmColorResponse::Settings lifted = enabled;
+    lifted.color_depth = -1.0f;
+    const FilmDensity lifted_colour = response.apply(colour, lifted);
+    const double lifted_neutral_value =
+        ((lifted_colour.red - minimum.red)
+         + (lifted_colour.green - minimum.green)
+         + (lifted_colour.blue - minimum.blue))
+        / 3.0;
+    passed &= test::check(
+        lifted_neutral_value > input_neutral,
+        "negative color depth lifts the neutral coordinate of chromatic colour");
+
     const FilmDensity extreme = {3.1f, 0.2f, 0.3f};
     const FilmDensity shaped_extreme = response.apply(extreme, enabled);
     passed &= test::check(
@@ -125,78 +155,28 @@ main()
             < normalized_chroma(extreme, minimum),
         "extreme colour is compressed");
 
-    FilmColorResponse::Settings uniform = enabled;
-    uniform.warm_tone_separation = 0.0f;
     const FilmDensity warm = {1.15f, 1.25f, 0.95f};
-    const FilmDensity uniform_warm = response.apply(warm, uniform);
     const FilmDensity protected_warm = response.apply(warm, enabled);
     passed &= test::check(
         normalized_chroma(protected_warm, minimum)
-            > normalized_chroma(uniform_warm, minimum),
-        "standard warm separation retains more mid-density chroma");
-    passed &= test::check(
-        normalized_chroma(protected_warm, minimum)
             < normalized_chroma(warm, minimum),
-        "standard warm separation remains inside calibrated separation");
+        "built-in warm shaping remains inside calibrated separation");
 
     const FilmDensity bent_warm = {1.30f, 1.00f, 0.90f};
-    const FilmDensity uniform_bent_warm =
-        response.apply(bent_warm, uniform);
     const FilmDensity guided_bent_warm =
         response.apply(bent_warm, enabled);
     passed &= test::check(
         warm_alignment(guided_bent_warm, minimum)
-            > warm_alignment(uniform_bent_warm, minimum),
-        "standard warm separation guides a near-warm hue toward yellow");
-
-    const FilmDensity cool = {0.5f, 0.6f, 1.7f};
-    const FilmDensity uniform_cool = response.apply(cool, uniform);
-    const FilmDensity protected_cool = response.apply(cool, enabled);
-    passed &= test::near(
-        protected_cool.red,
-        uniform_cool.red,
-        1e-7,
-        "cool red coordinate is not protected");
-    passed &= test::near(
-        protected_cool.green,
-        uniform_cool.green,
-        1e-7,
-        "cool green coordinate is not protected");
-    passed &= test::near(
-        protected_cool.blue,
-        uniform_cool.blue,
-        1e-7,
-        "cool blue coordinate is not protected");
-
-    FilmColorResponse::Settings maximum_warm = enabled;
-    maximum_warm.warm_tone_separation = 2.0f;
-    const FilmDensity fully_protected_warm =
-        response.apply(warm, maximum_warm);
-    passed &= test::check(
-        normalized_chroma(fully_protected_warm, minimum)
-            > normalized_chroma(protected_warm, minimum),
-        "maximum warm separation retains more than standard");
+            > warm_alignment(bent_warm, minimum),
+        "built-in warm shaping guides a near-warm hue toward yellow");
 
     const FilmDensity extreme_warm = {2.5f, 2.6f, 0.3f};
-    const FilmDensity uniform_extreme_warm =
-        response.apply(extreme_warm, uniform);
     const FilmDensity protected_extreme_warm =
-        response.apply(extreme_warm, maximum_warm);
-    passed &= test::near(
-        protected_extreme_warm.red,
-        uniform_extreme_warm.red,
-        1e-7,
-        "extreme warm red rejoins outer compression");
-    passed &= test::near(
-        protected_extreme_warm.green,
-        uniform_extreme_warm.green,
-        1e-7,
-        "extreme warm green rejoins outer compression");
-    passed &= test::near(
-        protected_extreme_warm.blue,
-        uniform_extreme_warm.blue,
-        1e-7,
-        "extreme warm blue rejoins outer compression");
+        response.apply(extreme_warm, enabled);
+    passed &= test::check(
+        normalized_chroma(protected_extreme_warm, minimum)
+            < normalized_chroma(extreme_warm, minimum),
+        "extreme warm colour rejoins outer compression");
 
     return test::finish(passed, "film colour response");
 }

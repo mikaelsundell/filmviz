@@ -74,12 +74,10 @@ FilmColorResponse::apply(
         || settings.amount <= 0.0f
         || !std::isfinite(settings.chroma_compression)
         || !std::isfinite(settings.density_depth)
+        || !std::isfinite(settings.color_depth)
+        || settings.color_depth < minimum_color_depth
+        || settings.color_depth > maximum_color_depth
         || !std::isfinite(settings.chroma_knee)
-        || !std::isfinite(settings.warm_tone_separation)
-        || settings.warm_tone_separation
-            < minimum_warm_tone_separation
-        || settings.warm_tone_separation
-            > maximum_warm_tone_separation
         || settings.chroma_knee <= 1e-6f) {
         return coordinate;
     }
@@ -121,7 +119,7 @@ FilmColorResponse::apply(
     // normalized dye-coordinate plane: red and green rise together relative
     // to blue. Protect that direction through ordinary midscale densities,
     // then taper the protection at neutral and extreme chroma. This retains a
-    // continuous warm-tone branch without exempting saturated reds from the
+    // continuous warm-colour branch without exempting saturated reds from the
     // outer colour-density roll-off. It is an empirical colour-separation
     // control, not a face detector or a claim of measured interimage chemistry.
     const float chroma_length =
@@ -148,10 +146,7 @@ FilmColorResponse::apply(
         smoothstep(0.02f, 0.08f, magnitude)
         * (1.0f - smoothstep(0.35f, 0.75f, magnitude));
     const float warm_protection =
-        std::clamp(
-            0.5f * settings.warm_tone_separation,
-            0.0f,
-            1.0f)
+        0.5f
         * warm_hue
         * warm_density
         * warm_chroma;
@@ -165,6 +160,7 @@ FilmColorResponse::apply(
         / (1.0f + compression * knee_ratio);
     const float depth =
         std::max(0.0f, settings.density_depth)
+        * settings.color_depth
         * settings.amount
         * density_envelope
         * magnitude
@@ -176,10 +172,7 @@ FilmColorResponse::apply(
     // radial compression above: it prevents a near-skin trajectory from
     // curling toward magenta without turning true magenta objects into skin.
     const float warm_guidance =
-        std::clamp(
-            0.15f * settings.warm_tone_separation,
-            0.0f,
-            0.30f)
+        0.15f
         * warm_hue
         * warm_density
         * warm_chroma;

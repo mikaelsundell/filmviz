@@ -6,6 +6,7 @@
 #include "bleachbypass.h"
 #include "colorimetry.h"
 #include "colortransform.h"
+#include "displaygamutcompressor.h"
 #include "filmdensitycalibration.h"
 #include "filmcolorresponse.h"
 #include "filmdyemodel.h"
@@ -79,11 +80,9 @@ FilmPipeline::initialize(
         || !std::isfinite(settings_.color_density)
         || settings_.color_density < FilmColorResponse::minimum_trim
         || settings_.color_density > FilmColorResponse::maximum_trim
-        || !std::isfinite(settings_.warm_tone_separation)
-        || settings_.warm_tone_separation
-            < FilmColorResponse::minimum_warm_tone_separation
-        || settings_.warm_tone_separation
-            > FilmColorResponse::maximum_warm_tone_separation
+        || !std::isfinite(settings_.color_depth)
+        || settings_.color_depth < FilmColorResponse::minimum_color_depth
+        || settings_.color_depth > FilmColorResponse::maximum_color_depth
         || !valid_printer_light(
             settings_.printer_light_red
             + settings_.printer_light_master)
@@ -573,8 +572,7 @@ FilmPipeline::process_negative_exposure(
     color_settings.amount =
         FilmColorResponse::amount_from_trim(
             settings_.color_density);
-    color_settings.warm_tone_separation =
-        settings_.warm_tone_separation;
+    color_settings.color_depth = settings_.color_depth;
     result.color_response_negative_density =
         color_response_->apply(
             result.calibrated_negative_density,
@@ -648,9 +646,14 @@ FilmPipeline::process_negative_exposure(
                 reference_calibrated_negative_density_.blue)
         }};
 
-        result.rec709_gamma24 =
-            ap0_to_rec709_->transform(
+        result.rec709_linear_unclamped =
+            ap0_to_rec709_->transform_linear(
                 result.ap0);
+
+        result.rec709_gamma24 =
+            ap0_to_rec709_->encode_transfer(
+                DisplayGamutCompressor::compress_rec709(
+                    result.rec709_linear_unclamped));
 
         result.valid =
             finite_rgb(result.ap0)
@@ -738,9 +741,14 @@ FilmPipeline::process_negative_exposure(
     result.ap0 =
         viewed.aces2065_1;
 
-    result.rec709_gamma24 =
-        ap0_to_rec709_->transform(
+    result.rec709_linear_unclamped =
+        ap0_to_rec709_->transform_linear(
             result.ap0);
+
+    result.rec709_gamma24 =
+        ap0_to_rec709_->encode_transfer(
+            DisplayGamutCompressor::compress_rec709(
+                result.rec709_linear_unclamped));
 
     result.valid =
         finite_rgb(result.ap0)

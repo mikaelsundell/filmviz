@@ -47,8 +47,7 @@ struct FilmVizTool
     float print_flash = 0.0f;
     float push_pull_stops = 0.0f;
     float color_density = 0.0f;
-    float warm_tone_separation =
-        FilmColorResponse::standard_warm_tone_separation;
+    float color_depth = FilmColorResponse::standard_color_depth;
     float negative_bleach_bypass = 0.0f;
     float print_bleach_bypass = 0.0f;
     float printer_light_red = 25.0f;
@@ -318,18 +317,16 @@ validate_profile_options(
     if (tool.color_density < FilmColorResponse::minimum_trim
         || tool.color_density > FilmColorResponse::maximum_trim) {
         print_error(
-            "color density must be in [-4,4]: ",
+            "color separation must be in [-4,4]: ",
             tool.color_density);
         return false;
     }
 
-    if (tool.warm_tone_separation
-            < FilmColorResponse::minimum_warm_tone_separation
-        || tool.warm_tone_separation
-            > FilmColorResponse::maximum_warm_tone_separation) {
+    if (tool.color_depth < FilmColorResponse::minimum_color_depth
+        || tool.color_depth > FilmColorResponse::maximum_color_depth) {
         print_error(
-            "warm-tone separation must be in [0,2]: ",
-            tool.warm_tone_separation);
+            "color depth must be in [-1,2]: ",
+            tool.color_depth);
         return false;
     }
 
@@ -504,10 +501,10 @@ main(
       .help("Approximate negative-development push (+) or pull (-) (default: 0)");
 
     ap.arg("--color-density %f:AMOUNT", &tool.color_density)
-      .help("Film colour-density trim; -4 bypass, 0 standard, +4 strongest");
+      .help("Film colour-separation trim; -4 bypass, 0 standard, +4 strongest");
 
-    ap.arg("--warm-tone-separation %f:AMOUNT", &tool.warm_tone_separation)
-      .help("Warm mid-density separation; 0 uniform, 1 standard, 2 strongest");
+    ap.arg("--color-depth %f:AMOUNT", &tool.color_depth)
+      .help("Chromatic depth; -1 lift, 0 none, 1 standard, 2 strongest");
 
     ap.arg("--negative-bleach-bypass %f:AMOUNT", &tool.negative_bleach_bypass)
       .help("Negative bleach bypass; 0 normal, 1 full modeled bypass (default: 0)");
@@ -645,8 +642,8 @@ main(
     print_info("LUT size: ", tool.lut_size);
     print_info("exposure stops: ", tool.exposure_stops);
     print_info("push/pull stops: ", tool.push_pull_stops);
-    print_info("color density trim: ", tool.color_density);
-    print_info("warm-tone separation: ", tool.warm_tone_separation);
+    print_info("color separation trim: ", tool.color_density);
+    print_info("color depth: ", tool.color_depth);
     print_info(
         "threads: ",
         FilmVizThreading::effective_thread_count(
@@ -696,8 +693,8 @@ main(
     pipeline_settings.color_density =
         tool.color_density;
 
-    pipeline_settings.warm_tone_separation =
-        tool.warm_tone_separation;
+    pipeline_settings.color_depth =
+        tool.color_depth;
 
     pipeline_settings.negative_bleach_bypass =
         tool.negative_bleach_bypass;

@@ -92,6 +92,7 @@ main()
             && finite_density(result.negative_granularity_sigma)
             && finite_density(result.print_granularity_sigma)
             && finite_rgb(result.ap0)
+            && finite_rgb(result.rec709_linear_unclamped)
             && finite_rgb(result.rec709_gamma24),
             "every production stage returns finite values");
 
@@ -242,6 +243,7 @@ main()
             && finite_density(kodak_50d_middle.calibrated_negative_density)
             && finite_density(kodak_50d_middle.negative_granularity_sigma)
             && finite_rgb(kodak_50d_middle.ap0)
+            && finite_rgb(kodak_50d_middle.rec709_linear_unclamped)
             && finite_rgb(kodak_50d_middle.rec709_gamma24),
             "Kodak Vision3 50D 5203/7203 production stages return finite values");
 
