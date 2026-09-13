@@ -124,16 +124,20 @@ try:
     except ImportError:
         np = None
 
-    from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QThread, QTimer, QUrl, Qt, Signal, Slot
+    from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, QPointF, QRect, QRectF, QSize, QThread, QTimer, QUrl, Qt, Signal, Slot
     from PySide6.QtGui import (
         QColor,
         QColorSpace,
+        QAction,
         QDesktopServices,
+        QIcon,
         QImage,
+        QFontDatabase,
         QPainter,
         QPainterPath,
         QPen,
         QPixmap,
+        QRegion,
         QSurfaceFormat,
     )
     from PySide6.QtWidgets import (
@@ -149,6 +153,7 @@ try:
         QLabel,
         QLineEdit,
         QMainWindow,
+        QMenu,
         QMessageBox,
         QProgressBar,
         QPushButton,
@@ -359,6 +364,118 @@ def _reset_button():
     button.setFixedWidth(64)
     button.setToolTip("Reset this group to its defaults")
     return button
+
+
+
+
+def _reference_image_icon(size: int = 18):
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor(190, 190, 190), 1.4)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    frame = QRectF(2.0, 3.0, size - 4.0, size - 6.0)
+    painter.drawRoundedRect(frame, 2.0, 2.0)
+
+    painter.drawEllipse(QPointF(size * 0.68, size * 0.35), 1.5, 1.5)
+    painter.drawLine(
+        QPointF(size * 0.22, size * 0.72),
+        QPointF(size * 0.43, size * 0.50))
+    painter.drawLine(
+        QPointF(size * 0.43, size * 0.50),
+        QPointF(size * 0.57, size * 0.63))
+    painter.drawLine(
+        QPointF(size * 0.57, size * 0.63),
+        QPointF(size * 0.74, size * 0.46))
+    painter.drawLine(
+        QPointF(size * 0.74, size * 0.46),
+        QPointF(size * 0.86, size * 0.60))
+    painter.end()
+
+    return QIcon(pixmap)
+
+
+def _trash_icon(size: int = 18):
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(QPen(QColor(190, 190, 190), 1.4))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    left = size * 0.30
+    right = size * 0.70
+    top = size * 0.34
+    bottom = size * 0.82
+    painter.drawRoundedRect(
+        QRectF(left, top, right - left, bottom - top),
+        1.5,
+        1.5)
+    painter.drawLine(
+        QPointF(size * 0.24, size * 0.28),
+        QPointF(size * 0.76, size * 0.28))
+    painter.drawLine(
+        QPointF(size * 0.42, size * 0.20),
+        QPointF(size * 0.58, size * 0.20))
+    painter.drawLine(
+        QPointF(size * 0.44, size * 0.43),
+        QPointF(size * 0.44, size * 0.72))
+    painter.drawLine(
+        QPointF(size * 0.56, size * 0.43),
+        QPointF(size * 0.56, size * 0.72))
+    painter.end()
+
+    return QIcon(pixmap)
+
+def _copy_icon(size: int = 18):
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(QPen(QColor(190, 190, 190), 1.4))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    offset = max(2.0, size * 0.18)
+    box = max(6.0, size * 0.55)
+    painter.drawRoundedRect(
+        QRectF(offset + 2.0, offset, box, box),
+        1.5,
+        1.5)
+    painter.drawRoundedRect(
+        QRectF(offset, offset + 2.0, box, box),
+        1.5,
+        1.5)
+    painter.end()
+
+    return QIcon(pixmap)
+
+
+def _probe_marker_icon(size: int = 14):
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(QPen(QColor(245, 210, 70), 1.0))
+
+    center = QPointF(size * 0.5, size * 0.5)
+    radius = max(2.0, size * 0.22)
+    painter.drawEllipse(center, radius, radius)
+    painter.drawLine(
+        QPointF(center.x() - radius - 2.0, center.y()),
+        QPointF(center.x() + radius + 2.0, center.y()))
+    painter.drawLine(
+        QPointF(center.x(), center.y() - radius - 2.0),
+        QPointF(center.x(), center.y() + radius + 2.0))
+    painter.end()
+
+    return QIcon(pixmap)
 
 
 class SliderSpinRow(QWidget):
@@ -713,14 +830,18 @@ class ImagePreviewWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._image = QImage()
+        self._reference_image = QImage()
+        self._reference_wipe = 0.5
         self._message = "Convert an image to preview the result"
-        self._probe = None
+        self._probes = []
         self._color_space = APP_COLOR_SPACE
 
         self._fit_to_view = True
         self._zoom = 1.0
         self._pan = QPointF(0.0, 0.0)
         self._image_identity = None
+        self._middle_panning = False
+        self._last_pan_position = QPointF()
 
         self.setMinimumSize(520, 320)
         self.setSizePolicy(
@@ -728,6 +849,49 @@ class ImagePreviewWidget(QWidget):
             QSizePolicy.Policy.Expanding)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        self.setAcceptDrops(True)
+
+        # Pixel probing is opt-in. The picker lives directly over the image
+        # view so normal clicks remain available for navigation and do not
+        # accidentally replace the current probe.
+        self.picker_button = QPushButton(self)
+        self.picker_button.setIcon(_probe_marker_icon(22))
+        self.picker_button.setIconSize(QSize(22, 22))
+        self.picker_button.setFixedSize(36, 36)
+        self.picker_button.setCheckable(True)
+        self.picker_button.setEnabled(False)
+        self.picker_button.setToolTip(
+            "Pick a color from the converted image and inspect that source "
+            "pixel through the current FilmViz pipeline.")
+        self.picker_button.toggled.connect(self._picker_toggled)
+        self.picker_button.raise_()
+
+        # Agent snapshot copy lives beside the color picker. A normal click
+        # copies the complete diagnostic board; right-click exposes focused
+        # copy variants without adding more permanent controls to the view.
+        self.copy_button = QPushButton(self)
+        self.copy_button.setIcon(_copy_icon(22))
+        self.copy_button.setIconSize(QSize(22, 22))
+        self.copy_button.setFixedSize(36, 36)
+        self.copy_button.setEnabled(False)
+        self.copy_button.setToolTip(
+            "Copy an agent snapshot: converted image, FilmViz settings, "
+            "probe data, and all scopes.")
+        self.copy_button.clicked.connect(self._copy_agent_snapshot)
+        self.copy_button.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.copy_button.customContextMenuRequested.connect(
+            self._show_copy_menu)
+        self.copy_button.raise_()
+
+        self.clear_probe_button = QPushButton(self)
+        self.clear_probe_button.setIcon(_trash_icon(22))
+        self.clear_probe_button.setIconSize(QSize(22, 22))
+        self.clear_probe_button.setFixedSize(36, 36)
+        self.clear_probe_button.setEnabled(False)
+        self.clear_probe_button.setToolTip("Clear all picked color markers")
+        self.clear_probe_button.clicked.connect(self._clear_probes)
+        self.clear_probe_button.raise_()
 
     def set_rgb(
         self,
@@ -758,7 +922,8 @@ class ImagePreviewWidget(QWidget):
         self._image = image.copy()
         self._image_identity = image_identity
         self._message = ""
-        self._probe = None
+        self.picker_button.setEnabled(True)
+        self.copy_button.setEnabled(True)
 
         if preserve_view:
             self._fit_to_view = fit_to_view
@@ -768,20 +933,52 @@ class ImagePreviewWidget(QWidget):
         else:
             self.fit_to_view()
 
+    def has_image(self):
+        return not self._image.isNull()
+
+    def has_reference(self):
+        return not self._reference_image.isNull()
+
+    def set_reference_rgb(self, width: int, height: int, rgb: bytes):
+        image = QImage(
+            rgb,
+            width,
+            height,
+            width * 3,
+            QImage.Format.Format_RGB888)
+        image.setColorSpace(self._color_space)
+        self._reference_image = image.copy()
+        self.update()
+
+    def clear_reference(self):
+        self._reference_image = QImage()
+        self.update()
+
+    def set_reference_wipe(self, value: int):
+        self._reference_wipe = min(1.0, max(0.0, float(value) / 100.0))
+        self.update()
+
     def set_color_space(self, color_space):
         self._color_space = color_space
         if not self._image.isNull():
             self._image.setColorSpace(color_space)
+        if not self._reference_image.isNull():
+            self._reference_image.setColorSpace(color_space)
         self.update()
 
     def set_error(self, message: str):
         self._image = QImage()
+        self._reference_image = QImage()
         self._message = message
-        self._probe = None
+        self._probes = []
         self._image_identity = None
         self._fit_to_view = True
         self._zoom = 1.0
         self._pan = QPointF(0.0, 0.0)
+        self.picker_button.setChecked(False)
+        self.picker_button.setEnabled(False)
+        self.copy_button.setEnabled(False)
+        self.clear_probe_button.setEnabled(False)
         self.update()
 
     def fit_to_view(self):
@@ -879,6 +1076,126 @@ class ImagePreviewWidget(QWidget):
         self._pan = new_center - widget_center
         self.update()
 
+    @Slot(bool)
+    def _picker_toggled(self, enabled: bool):
+        if enabled and not self._image.isNull():
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.unsetCursor()
+
+    def _position_picker_button(self):
+        margin = 8
+        spacing = 6
+        y = max(
+            margin,
+            self.height() - self.picker_button.height() - margin)
+
+        self.picker_button.move(margin, y)
+        self.clear_probe_button.move(
+            margin + self.picker_button.width() + spacing,
+            y)
+        self.copy_button.move(
+            margin + self.picker_button.width() + spacing
+            + self.clear_probe_button.width() + spacing,
+            y)
+        self.picker_button.raise_()
+        self.copy_button.raise_()
+        self.clear_probe_button.raise_()
+
+    def set_probes(self, points):
+        self._probes = [(float(u), float(v)) for u, v in points]
+        self.clear_probe_button.setEnabled(bool(self._probes))
+        self.update()
+
+    @Slot()
+    def _clear_probes(self):
+        window = self.window()
+        clearer = getattr(window, "_clear_probes", None)
+        if clearer is not None:
+            clearer()
+
+    @Slot()
+    def _copy_agent_snapshot(self):
+        window = self.window()
+        copier = getattr(window, "_copy_agent_snapshot", None)
+        if copier is not None:
+            copier()
+
+    @Slot(QPoint)
+    def _show_copy_menu(self, position):
+        window = self.window()
+        if window is None:
+            return
+
+        menu = QMenu(self)
+        snapshot_action = menu.addAction("Copy agent snapshot")
+        settings_action = menu.addAction("Copy settings and probe text")
+        image_action = menu.addAction("Copy converted image")
+        marked_image_action = menu.addAction("Copy converted image with markers")
+
+        action = menu.exec(self.copy_button.mapToGlobal(position))
+        if action == snapshot_action:
+            copier = getattr(window, "_copy_agent_snapshot", None)
+            if copier is not None:
+                copier()
+        elif action == settings_action:
+            copier = getattr(window, "_copy_agent_text", None)
+            if copier is not None:
+                copier()
+        elif action == image_action:
+            copier = getattr(window, "_copy_converted_image", None)
+            if copier is not None:
+                copier()
+        elif action == marked_image_action:
+            copier = getattr(window, "_copy_converted_image_with_markers", None)
+            if copier is not None:
+                copier()
+
+    def converted_image_with_markers(self):
+        if self._image.isNull():
+            return QImage()
+
+        image = self._image.copy()
+        if not self._probes:
+            return image
+
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # Keep markers clearly visible when the native converted image is
+        # copied, independent of preview zoom. Scale their size gently from
+        # the image dimensions rather than using the preview's screen pixels.
+        minimum_dimension = max(1, min(image.width(), image.height()))
+        radius = max(6.0, minimum_dimension * 0.004)
+        cross = radius * 1.7
+        pen_width = max(1.0, minimum_dimension * 0.00065)
+
+        font = painter.font()
+        font.setPixelSize(max(12, int(round(radius * 1.8))))
+        painter.setFont(font)
+        painter.setPen(QPen(QColor(245, 210, 70), pen_width))
+
+        for index, (u, v) in enumerate(self._probes, start=1):
+            x = float(u) * image.width()
+            y = float(v) * image.height()
+            point = QPointF(x, y)
+
+            painter.drawEllipse(point, radius, radius)
+            painter.drawLine(QPointF(x - cross, y), QPointF(x + cross, y))
+            painter.drawLine(QPointF(x, y - cross), QPointF(x, y + cross))
+            painter.drawText(
+                QRectF(
+                    x + radius * 1.35,
+                    y - radius * 1.65,
+                    radius * 5.0,
+                    radius * 2.5),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                str(index))
+
+        painter.end()
+        image.setColorSpace(self._color_space)
+        return image
+
     def rgb_at(self, u: float, v: float):
         if self._image.isNull():
             return None
@@ -892,13 +1209,75 @@ class ImagePreviewWidget(QWidget):
         color = self._image.pixelColor(x, y)
         return (color.redF(), color.greenF(), color.blueF())
 
+    def dragEnterEvent(self, event):
+        if self._image.isNull():
+            event.ignore()
+            return
+
+        urls = event.mimeData().urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            event.ignore()
+            return
+
+        suffix = Path(urls[0].toLocalFile()).suffix.lower()
+        if suffix not in (".exr", ".dpx", ".tif", ".tiff", ".png", ".jpg", ".jpeg"):
+            event.ignore()
+            return
+
+        event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        if self._image.isNull():
+            event.ignore()
+            return
+
+        urls = event.mimeData().urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            event.ignore()
+            return
+
+        window = self.window()
+        loader = getattr(window, "_load_reference_image", None)
+        if loader is None:
+            event.ignore()
+            return
+
+        loader(urls[0].toLocalFile())
+        event.acceptProposedAction()
+
     def mousePressEvent(self, event):
         if self._image.isNull():
             return
 
-        # Pixel probing is intentionally restricted to a real left mouse
-        # button click. Ignore mouse events synthesized by macOS from the
-        # trackpad so taps and navigation gestures do not create probe data.
+        # A physical middle mouse button is always navigation, even while the
+        # color picker is armed. Dragging pans the converted image and the
+        # reference overlay together.
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            self._fit_to_view = False
+            self._middle_panning = True
+            self._last_pan_position = event.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+
+        # Right-click cancels color picking without creating or removing any
+        # existing sample points. Leave right-click untouched when the picker
+        # is not active so it remains available for future context actions.
+        if (event.button() == Qt.MouseButton.RightButton
+                and self.picker_button.isChecked()):
+            self.picker_button.setChecked(False)
+            event.accept()
+            return
+
+        # Pixel probing only happens after the picker button has been armed.
+        # Normal clicks therefore never create probe/log output by accident.
+        if not self.picker_button.isChecked():
+            event.ignore()
+            return
+
+        # Restrict the actual pick to a real left mouse click. Ignore mouse
+        # events synthesized by macOS from trackpad taps/navigation gestures.
         if event.button() != Qt.MouseButton.LeftButton:
             event.ignore()
             return
@@ -915,10 +1294,34 @@ class ImagePreviewWidget(QWidget):
             return
 
         u, v = uv
-        self._probe = (u, v)
-        self.update()
         self.probeRequested.emit(float(u), float(v))
         event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._middle_panning:
+            delta = event.position() - self._last_pan_position
+            self._last_pan_position = event.position()
+            self._pan += delta
+            self.update()
+            event.accept()
+            return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if (
+            event.button() == Qt.MouseButton.MiddleButton
+            and self._middle_panning
+        ):
+            self._middle_panning = False
+            if self.picker_button.isChecked():
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                self.unsetCursor()
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
         if self._image.isNull():
@@ -929,8 +1332,32 @@ class ImagePreviewWidget(QWidget):
         angle_delta = event.angleDelta()
         modifiers = event.modifiers()
 
-        # On macOS, two-finger trackpad scrolling normally arrives here.
-        # Prefer pixelDelta when available because it gives smooth panning.
+        zoom_modifier = (
+            modifiers & Qt.KeyboardModifier.ControlModifier
+            or modifiers & Qt.KeyboardModifier.MetaModifier
+        )
+
+        # Ctrl/Command + trackpad/wheel always zooms, including on macOS
+        # where a trackpad commonly provides pixelDelta rather than
+        # angleDelta. Pinch-to-zoom is handled by NativeGesture below.
+        if zoom_modifier:
+            if not pixel_delta.isNull():
+                delta = pixel_delta.y()
+                if delta != 0:
+                    factor = 1.01 ** delta
+                    self._zoom_at(event.position(), factor)
+                    event.accept()
+                    return
+
+            if not angle_delta.isNull():
+                factor = 1.15 ** (angle_delta.y() / 120.0)
+                self._zoom_at(event.position(), factor)
+                event.accept()
+                return
+
+        # Plain two-finger trackpad scrolling pans the converted image and
+        # reference together. Qt normally reports a trackpad through
+        # pixelDelta(), while a physical mouse wheel reports angleDelta().
         if not pixel_delta.isNull():
             self._fit_to_view = False
             self._pan += QPointF(
@@ -940,25 +1367,11 @@ class ImagePreviewWidget(QWidget):
             event.accept()
             return
 
-        # Some Qt/macOS combinations only expose angleDelta for trackpad
-        # scrolling. Treat it as pan unless the user explicitly holds
-        # Ctrl/Command, in which case it becomes wheel zoom.
-        zoom_modifier = (
-            modifiers & Qt.KeyboardModifier.ControlModifier
-            or modifiers & Qt.KeyboardModifier.MetaModifier
-        )
-
+        # A physical mouse wheel zooms without requiring a modifier. Keep the
+        # image point under the cursor stable, matching pinch zoom behavior.
         if not angle_delta.isNull():
-            if zoom_modifier:
-                factor = 1.15 ** (angle_delta.y() / 120.0)
-                self._zoom_at(event.position(), factor)
-            else:
-                self._fit_to_view = False
-                self._pan += QPointF(
-                    angle_delta.x() / 2.0,
-                    angle_delta.y() / 2.0)
-                self.update()
-
+            factor = 1.15 ** (angle_delta.y() / 120.0)
+            self._zoom_at(event.position(), factor)
             event.accept()
             return
 
@@ -1015,6 +1428,7 @@ class ImagePreviewWidget(QWidget):
         if self._fit_to_view:
             self.update()
 
+        self._position_picker_button()
         super().resizeEvent(event)
 
     def paintEvent(self, event):
@@ -1040,8 +1454,28 @@ class ImagePreviewWidget(QWidget):
             rect.toRect(),
             pixmap)
 
-        if self._probe is not None:
-            u, v = self._probe
+        if not self._reference_image.isNull():
+            reference_pixmap = QPixmap.fromImage(self._reference_image)
+            wipe_x = rect.left() + self._reference_wipe * rect.width()
+            clip_rect = QRectF(
+                rect.left(),
+                rect.top(),
+                max(0.0, wipe_x - rect.left()),
+                rect.height())
+
+            painter.save()
+            painter.setClipRect(clip_rect)
+            painter.drawPixmap(
+                rect.toRect(),
+                reference_pixmap)
+            painter.restore()
+
+            painter.setPen(QPen(QColor(245, 210, 70), 1.0))
+            painter.drawLine(
+                QPointF(wipe_x, rect.top()),
+                QPointF(wipe_x, rect.bottom()))
+
+        for index, (u, v) in enumerate(self._probes, start=1):
             x = rect.left() + u * rect.width()
             y = rect.top() + v * rect.height()
 
@@ -1049,13 +1483,17 @@ class ImagePreviewWidget(QWidget):
             painter.drawEllipse(QPointF(x, y), 6.0, 6.0)
             painter.drawLine(QPointF(x - 10, y), QPointF(x + 10, y))
             painter.drawLine(QPointF(x, y - 10), QPointF(x, y + 10))
+            painter.drawText(
+                QRectF(x + 8, y - 14, 28, 18),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                str(index))
 
 
 class VectorScopeWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._samples = []
-        self._probe_rgb = None
+        self._probe_rgbs = []
         self._zoom2 = False
         self.setMinimumSize(300, 250)
         self.setSizePolicy(
@@ -1090,11 +1528,11 @@ class VectorScopeWidget(QWidget):
         self.update()
 
     def set_probe(self, u: float, v: float, rgb):
-        self._probe_rgb = rgb
+        self._probe_rgbs.append(tuple(rgb))
         self.update()
 
     def clear_probe(self):
-        self._probe_rgb = None
+        self._probe_rgbs = []
         self.update()
 
     def set_zoom2(self, enabled: bool):
@@ -1258,8 +1696,8 @@ class VectorScopeWidget(QWidget):
             painter.setBrush(halo)
             painter.drawEllipse(point, 2.8, 2.8)
 
-        if self._probe_rgb is not None:
-            _, cb, cr = self._ycbcr(*self._probe_rgb)
+        for index, probe_rgb in enumerate(self._probe_rgbs, start=1):
+            _, cb, cr = self._ycbcr(*probe_rgb)
             point = self._scope_point(
                 center,
                 radius,
@@ -1276,13 +1714,17 @@ class VectorScopeWidget(QWidget):
             painter.drawLine(
                 QPointF(point.x(), point.y() - 10.0),
                 QPointF(point.x(), point.y() + 10.0))
+            painter.drawText(
+                QRectF(point.x() + 8, point.y() - 13, 24, 18),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                str(index))
 
 
 class HistogramWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._histograms = None
-        self._probe_rgb = None
+        self._probe_rgbs = []
         self._range_min = 0.0
         self._range_max = 1.0
         self._bins = 512
@@ -1356,11 +1798,11 @@ class HistogramWidget(QWidget):
         self.update()
 
     def set_probe(self, u: float, v: float, rgb):
-        self._probe_rgb = rgb
+        self._probe_rgbs.append(tuple(rgb))
         self.update()
 
     def clear_probe(self):
-        self._probe_rgb = None
+        self._probe_rgbs = []
         self.update()
 
     def paintEvent(self, event):
@@ -1455,9 +1897,9 @@ class HistogramWidget(QWidget):
             painter.setPen(QPen(colors[channel], 1.3))
             painter.drawPath(path)
 
-        if self._probe_rgb is not None:
-            painter.setPen(QPen(QColor(245, 210, 70), 1.3))
-            for value in self._probe_rgb:
+        painter.setPen(QPen(QColor(245, 210, 70), 1.3))
+        for probe_rgb in self._probe_rgbs:
+            for value in probe_rgb:
                 value = float(value)
                 if value < self._range_min or value > self._range_max:
                     continue
@@ -1489,7 +1931,7 @@ class ParadeWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._samples = None
-        self._probe = None
+        self._probes = []
         self.setMinimumSize(240, 200)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -1554,11 +1996,11 @@ class ParadeWidget(QWidget):
         self.update()
 
     def set_probe(self, u: float, v: float, rgb):
-        self._probe = (u, rgb)
+        self._probes.append((float(u), tuple(rgb)))
         self.update()
 
     def clear_probe(self):
-        self._probe = None
+        self._probes = []
         self.update()
 
     def paintEvent(self, event):
@@ -1683,11 +2125,10 @@ class ParadeWidget(QWidget):
                     painter.drawRect(
                         QRectF(px, py, 1.2, 1.2))
 
-        if self._probe is not None:
-            u, rgb = self._probe
-            probe_pen = QPen(QColor(245, 210, 70), 1.8)
-            painter.setBrush(QColor(245, 210, 70))
-            painter.setPen(probe_pen)
+        probe_pen = QPen(QColor(245, 210, 70), 1.8)
+        painter.setBrush(QColor(245, 210, 70))
+        painter.setPen(probe_pen)
+        for u, rgb in self._probes:
             for channel, rect in enumerate(channel_rects):
                 px = rect.left() + u * rect.width()
                 py = rect.bottom() - rgb[channel] * rect.height()
@@ -1709,7 +2150,7 @@ class WaveformWidget(QWidget):
         super().__init__()
         self._waveform = None
         self._luma_waveform = None
-        self._probe = None
+        self._probes = []
         self._mode = "rgb"
         self.setMinimumSize(240, 200)
         self.setSizePolicy(
@@ -1810,11 +2251,11 @@ class WaveformWidget(QWidget):
         self.update()
 
     def set_probe(self, u: float, v: float, rgb):
-        self._probe = (u, rgb)
+        self._probes.append((float(u), tuple(rgb)))
         self.update()
 
     def clear_probe(self):
-        self._probe = None
+        self._probes = []
         self.update()
 
     def paintEvent(self, event):
@@ -1919,16 +2360,15 @@ class WaveformWidget(QWidget):
                     painter.drawRect(
                         QRectF(px, py, 1.2, 1.2))
 
-            if self._probe is not None:
-                u, rgb = self._probe
+            painter.setBrush(QColor(245, 210, 70))
+            painter.setPen(QPen(QColor(245, 210, 70), 1.8))
+            for u, rgb in self._probes:
                 y = (
                     0.2126 * rgb[0]
                     + 0.7152 * rgb[1]
                     + 0.0722 * rgb[2])
                 px = plot.left() + u * plot.width()
                 py = plot.bottom() - y * plot.height()
-                painter.setBrush(QColor(245, 210, 70))
-                painter.setPen(QPen(QColor(245, 210, 70), 1.8))
                 painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
 
             title = "Y waveform"
@@ -1978,11 +2418,10 @@ class WaveformWidget(QWidget):
                         painter.drawRect(
                             QRectF(px, py, 1.2, 1.2))
 
-            if self._probe is not None:
-                u, rgb = self._probe
+            painter.setBrush(QColor(245, 210, 70))
+            painter.setPen(QPen(QColor(245, 210, 70), 1.8))
+            for u, rgb in self._probes:
                 px = plot.left() + u * plot.width()
-                painter.setBrush(QColor(245, 210, 70))
-                painter.setPen(QPen(QColor(245, 210, 70), 1.8))
                 for value in rgb:
                     py = plot.bottom() - value * plot.height()
                     painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
@@ -1998,6 +2437,111 @@ class WaveformWidget(QWidget):
                 label_height),
             Qt.AlignmentFlag.AlignCenter,
             title)
+
+
+class ScopeCompareHost(QWidget):
+    def __init__(self, result_widget: QWidget, reference_widget: QWidget):
+        super().__init__()
+
+        self.result_widget = result_widget
+        self.reference_widget = reference_widget
+        self._wipe = 0.5
+        self._has_reference = False
+        self._result_cache = QPixmap()
+        self._reference_cache = QPixmap()
+        self._cache_refresh_pending = False
+
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding)
+        self.setMinimumSize(
+            max(result_widget.minimumWidth(), reference_widget.minimumWidth()),
+            max(result_widget.minimumHeight(), reference_widget.minimumHeight()))
+
+        # The expensive scope widgets are rendered into cached pixmaps.
+        # Moving the comparison wipe then becomes a cheap clipped pixmap draw
+        # instead of repainting thousands of scope samples on every slider tick.
+        self.result_widget.setParent(self)
+        self.reference_widget.setParent(self)
+        self.result_widget.hide()
+        self.reference_widget.hide()
+
+    def refresh_cache(self):
+        # Never render child widgets synchronously from resizeEvent/paintEvent.
+        # Qt/macOS can re-enter QWidget backing-store painting in that case.
+        # Cache refreshes are deferred to the next event-loop turn instead.
+        if self._cache_refresh_pending:
+            return
+
+        self._cache_refresh_pending = True
+        QTimer.singleShot(0, self._rebuild_cache)
+
+    def _rebuild_cache(self):
+        self._cache_refresh_pending = False
+
+        if self.width() <= 0 or self.height() <= 0 or not self.isVisible():
+            return
+
+        target = QRect(0, 0, self.width(), self.height())
+        self.result_widget.setGeometry(target)
+        self.reference_widget.setGeometry(target)
+
+        result_cache = QPixmap(self.size())
+        result_cache.fill(Qt.GlobalColor.transparent)
+        self.result_widget.render(result_cache)
+
+        if self._has_reference:
+            reference_cache = QPixmap(self.size())
+            reference_cache.fill(Qt.GlobalColor.transparent)
+            self.reference_widget.render(reference_cache)
+        else:
+            reference_cache = QPixmap()
+
+        self._result_cache = result_cache
+        self._reference_cache = reference_cache
+        self.update()
+
+    def set_reference_enabled(self, enabled: bool):
+        self._has_reference = bool(enabled)
+        self.refresh_cache()
+
+    def set_wipe(self, value: int):
+        self._wipe = min(1.0, max(0.0, float(value) / 100.0))
+        # Intentionally do not rebuild scope geometry here. The cached result
+        # and reference images are simply recomposited at the new divider.
+        self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.refresh_cache()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_cache()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+
+        if not self._result_cache.isNull():
+            painter.drawPixmap(0, 0, self._result_cache)
+
+        if self._has_reference and not self._reference_cache.isNull():
+            wipe_x = int(round(self.width() * self._wipe))
+            wipe_x = min(self.width(), max(0, wipe_x))
+
+            if wipe_x > 0:
+                painter.save()
+                painter.setClipRect(QRect(0, 0, wipe_x, self.height()))
+                painter.drawPixmap(0, 0, self._reference_cache)
+                painter.restore()
+
+            painter.setPen(QPen(QColor(245, 210, 70), 1.0))
+            divider_x = min(
+                max(0, wipe_x),
+                max(0, self.width() - 1))
+            painter.drawLine(
+                QPointF(divider_x, 0),
+                QPointF(divider_x, self.height()))
 
 
 class ScopePane(QWidget):
@@ -2043,10 +2587,35 @@ class ScopePane(QWidget):
         self.parade = ParadeWidget()
         self.waveform = WaveformWidget()
 
-        self.stack.addWidget(self.vector_scope)
-        self.stack.addWidget(self.histogram)
-        self.stack.addWidget(self.parade)
-        self.stack.addWidget(self.waveform)
+        self.reference_vector_scope = VectorScopeWidget()
+        self.reference_histogram = HistogramWidget()
+        self.reference_parade = ParadeWidget()
+        self.reference_waveform = WaveformWidget()
+
+        self.vector_host = ScopeCompareHost(
+            self.vector_scope,
+            self.reference_vector_scope)
+        self.histogram_host = ScopeCompareHost(
+            self.histogram,
+            self.reference_histogram)
+        self.parade_host = ScopeCompareHost(
+            self.parade,
+            self.reference_parade)
+        self.waveform_host = ScopeCompareHost(
+            self.waveform,
+            self.reference_waveform)
+
+        self._scope_hosts = (
+            self.vector_host,
+            self.histogram_host,
+            self.parade_host,
+            self.waveform_host,
+        )
+
+        self.stack.addWidget(self.vector_host)
+        self.stack.addWidget(self.histogram_host)
+        self.stack.addWidget(self.parade_host)
+        self.stack.addWidget(self.waveform_host)
 
         layout.addWidget(toolbar)
         layout.addWidget(self.stack, 1)
@@ -2059,6 +2628,10 @@ class ScopePane(QWidget):
             self._mode_changed)
         self.zoom2.toggled.connect(
             self.vector_scope.set_zoom2)
+        self.zoom2.toggled.connect(
+            self.reference_vector_scope.set_zoom2)
+        self.zoom2.toggled.connect(
+            self._refresh_scope_caches)
 
         self._mode_changed(
             self.selector.currentIndex())
@@ -2067,31 +2640,74 @@ class ScopePane(QWidget):
         if index == 4:
             self.stack.setCurrentIndex(3)
             self.waveform.set_mode("y")
+            self.reference_waveform.set_mode("y")
         else:
             self.stack.setCurrentIndex(index)
             if index == 3:
                 self.waveform.set_mode("rgb")
+                self.reference_waveform.set_mode("rgb")
 
         self.zoom2.setVisible(index == 0)
+        self._refresh_scope_caches()
+
+    def _refresh_scope_caches(self):
+        for host in self._scope_hosts:
+            host.refresh_cache()
 
     def set_rgb(self, width: int, height: int, rgb):
-        # Populate every scope once so changing the dropdown is instantaneous.
+        # Populate every result scope once so changing the dropdown is instant.
         self.vector_scope.set_rgb(width, height, rgb)
         self.histogram.set_rgb(width, height, rgb)
         self.parade.set_rgb(width, height, rgb)
         self.waveform.set_rgb(width, height, rgb)
+        self._refresh_scope_caches()
+
+    def set_reference_rgb(self, width: int, height: int, rgb):
+        # Reference scopes use the same scope implementations and are clipped
+        # by the exact same wipe position as the image comparison.
+        self.reference_vector_scope.set_rgb(width, height, rgb)
+        self.reference_histogram.set_rgb(width, height, rgb)
+        self.reference_parade.set_rgb(width, height, rgb)
+        self.reference_waveform.set_rgb(width, height, rgb)
+
+        for host in self._scope_hosts:
+            host.set_reference_enabled(True)
+
+    def set_reference_wipe(self, value: int):
+        for host in self._scope_hosts:
+            host.set_wipe(value)
+
+    def clear_reference(self):
+        for host in self._scope_hosts:
+            host.set_reference_enabled(False)
 
     def set_probe(self, u: float, v: float, rgb):
+        # The picked value remains a FilmViz/result probe. The reference side
+        # is comparison-only and does not alter pipeline probing.
         self.vector_scope.set_probe(u, v, rgb)
         self.histogram.set_probe(u, v, rgb)
         self.parade.set_probe(u, v, rgb)
         self.waveform.set_probe(u, v, rgb)
+        self._refresh_scope_caches()
+
+    def set_probes(self, probes):
+        self.vector_scope.clear_probe()
+        self.histogram.clear_probe()
+        self.parade.clear_probe()
+        self.waveform.clear_probe()
+        for u, v, rgb in probes:
+            self.vector_scope.set_probe(u, v, rgb)
+            self.histogram.set_probe(u, v, rgb)
+            self.parade.set_probe(u, v, rgb)
+            self.waveform.set_probe(u, v, rgb)
+        self._refresh_scope_caches()
 
     def clear_probe(self):
         self.vector_scope.clear_probe()
         self.histogram.clear_probe()
         self.parade.clear_probe()
         self.waveform.clear_probe()
+        self._refresh_scope_caches()
 
 
 class FilmVizWindow(QMainWindow):
@@ -2113,6 +2729,13 @@ class FilmVizWindow(QMainWindow):
         self._scope_width = 0
         self._scope_height = 0
         self._scope_rgb = None
+        self._reference_scope_width = 0
+        self._reference_scope_height = 0
+        self._reference_scope_rgb = None
+        self._reference_image_filename = None
+        self._probe_points = []
+        self._probe_results = []
+        self._probe_source_identity = None
 
         central = QWidget()
         central_layout = QHBoxLayout(central)
@@ -2127,15 +2750,60 @@ class FilmVizWindow(QMainWindow):
         diagnostics_layout.setContentsMargins(0, 0, 0, 0)
 
         display_toolbar = QWidget()
-        display_toolbar_layout = QHBoxLayout(display_toolbar)
+        display_toolbar_layout = QGridLayout(display_toolbar)
         display_toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        display_toolbar_layout.setSpacing(6)
-        display_toolbar_layout.addStretch(1)
+        display_toolbar_layout.setHorizontalSpacing(6)
+
+        reference_controls = QWidget()
+        reference_controls_layout = QHBoxLayout(reference_controls)
+        reference_controls_layout.setContentsMargins(0, 0, 0, 0)
+        reference_controls_layout.setSpacing(8)
+
+        self.reference_icon = QLabel()
+        self.reference_icon.setPixmap(
+            _reference_image_icon(18).pixmap(QSize(18, 18)))
+        self.reference_icon.setFixedSize(24, 24)
+        self.reference_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.reference_icon.setToolTip(
+            "Drop a reference image onto the converted-image preview.")
+
+        self.reference_wipe = QSlider(Qt.Orientation.Horizontal)
+        self.reference_wipe.setRange(0, 100)
+        self.reference_wipe.setValue(50)
+        self.reference_wipe.setFixedWidth(360)
+        self.reference_wipe.setEnabled(False)
+        self.reference_wipe.setToolTip(
+            "Wipe between the reference image and the FilmViz result. "
+            "The same divider is used by all scopes.")
+
+        self.clear_reference_button = QPushButton()
+        self.clear_reference_button.setIcon(_trash_icon(18))
+        self.clear_reference_button.setIconSize(QSize(18, 18))
+        self.clear_reference_button.setFixedSize(30, 28)
+        self.clear_reference_button.setEnabled(False)
+        self.clear_reference_button.setToolTip("Remove the reference image")
+
+        reference_controls_layout.addWidget(self.reference_icon, 0)
+        reference_controls_layout.addWidget(self.reference_wipe, 0)
+        reference_controls_layout.addWidget(self.clear_reference_button, 0)
+
         display_label = QLabel("Display: Rec.709 Gamma 2.4")
         display_label.setToolTip(
             "FilmViz preview and application surface are configured for "
             "Rec.709 Gamma 2.4.")
-        display_toolbar_layout.addWidget(display_label)
+
+        # Equal outer columns keep the reference controls geometrically
+        # centered even though the display label lives at the far right.
+        display_toolbar_layout.setColumnStretch(0, 1)
+        display_toolbar_layout.setColumnStretch(2, 1)
+        display_toolbar_layout.addWidget(
+            reference_controls,
+            0, 1,
+            Qt.AlignmentFlag.AlignCenter)
+        display_toolbar_layout.addWidget(
+            display_label,
+            0, 2,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         diagnostics_layout.addWidget(display_toolbar, 0)
 
         diagnostics_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -2144,19 +2812,30 @@ class FilmVizWindow(QMainWindow):
         self.image_preview = ImagePreviewWidget()
         self.image_preview.probeRequested.connect(
             self._probe_image_pixel)
+        self.reference_wipe.valueChanged.connect(
+            self.image_preview.set_reference_wipe)
+        self.clear_reference_button.clicked.connect(
+            self._clear_reference_image)
         diagnostics_splitter.addWidget(self.image_preview)
 
         self.probe_output = QPlainTextEdit()
         self.probe_output.setReadOnly(True)
         self.probe_output.setMinimumHeight(70)
+        fixed_font = QFontDatabase.systemFont(
+            QFontDatabase.SystemFont.FixedFont)
+        self.probe_output.setFont(fixed_font)
         self.probe_output.setPlaceholderText(
-            "Click the converted image to inspect the matching source pixel "
-            "through AP0 → spectrum → negative → print → output.")
+            "Use Pick color, then click the converted image to inspect the "
+            "matching source pixel through AP0 → spectrum → negative → print → output.")
         diagnostics_splitter.addWidget(self.probe_output)
 
         scopes = QSplitter(Qt.Orientation.Horizontal)
         self.left_scope = ScopePane("Vectorscope")
         self.right_scope = ScopePane("RGB Histogram")
+        self.reference_wipe.valueChanged.connect(
+            self.left_scope.set_reference_wipe)
+        self.reference_wipe.valueChanged.connect(
+            self.right_scope.set_reference_wipe)
         scopes.addWidget(self.left_scope)
         scopes.addWidget(self.right_scope)
         scopes.setStretchFactor(0, 1)
@@ -2173,15 +2852,12 @@ class FilmVizWindow(QMainWindow):
         panel = QWidget()
         panel.setMinimumWidth(390)
         panel.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
         root_layout = QVBoxLayout(panel)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(6)
 
-        compact_font = panel.font()
-        compact_font.setPointSize(max(9, compact_font.pointSize() - 2))
-        panel.setFont(compact_font)
         panel.setStyleSheet(
             "QGroupBox { margin-top: 6px; }"
             "QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {"
@@ -2224,9 +2900,8 @@ class FilmVizWindow(QMainWindow):
         }
         common = QWidget()
         common.setMinimumWidth(360)
-        common.setMaximumWidth(430)
         common.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Maximum)
 
         common_layout = QVBoxLayout(common)
@@ -2349,7 +3024,9 @@ class FilmVizWindow(QMainWindow):
 
         controls = QWidget()
         controls.setMinimumWidth(330)
-        controls.setMaximumWidth(400)
+        controls.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred)
         controls_layout = QGridLayout(controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setHorizontalSpacing(8)
@@ -2392,9 +3069,8 @@ class FilmVizWindow(QMainWindow):
 
         pipeline_tabs = QTabWidget()
         pipeline_tabs.setMinimumWidth(360)
-        pipeline_tabs.setMaximumWidth(430)
         pipeline_tabs.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
 
         pipeline_page = QWidget()
@@ -2414,9 +3090,8 @@ class FilmVizWindow(QMainWindow):
         pipeline_scroll_host_layout.setContentsMargins(0, 0, 0, 0)
         pipeline_scroll_host_layout.addWidget(
             common,
-            0,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        pipeline_scroll_host_layout.addStretch(1)
+            1,
+            Qt.AlignmentFlag.AlignTop)
 
         pipeline_scroll.setWidget(pipeline_scroll_host)
         pipeline_page_layout.addWidget(pipeline_scroll)
@@ -2425,9 +3100,8 @@ class FilmVizWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.setMinimumWidth(360)
-        self.tabs.setMaximumWidth(430)
         self.tabs.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
         controls_splitter.addWidget(self.tabs)
 
@@ -2786,6 +3460,81 @@ class FilmVizWindow(QMainWindow):
 
         self.image_width_mm.setEnabled(identifier == "custom")
 
+    def _load_reference_image(self, filename: str):
+        if not self.image_preview.has_image():
+            return
+
+        try:
+            preview = filmviz.read_image_preview(filename, 1600)
+            width = int(preview["width"])
+            height = int(preview["height"])
+            rgb = bytes(preview["rgb"])
+        except Exception as error:
+            QMessageBox.warning(
+                self,
+                "Could not load reference image",
+                str(error))
+            return
+
+        self.image_preview.set_reference_rgb(
+            width,
+            height,
+            rgb)
+        self._reference_image_filename = str(Path(filename).expanduser().resolve())
+
+        self.reference_wipe.setEnabled(True)
+        self.clear_reference_button.setEnabled(True)
+        self.reference_icon.setToolTip(
+            f"Reference: {Path(filename).name}\n"
+            "Drop another image onto the preview to replace it.")
+
+        try:
+            scope_width, scope_height, scope_rgb = _read_scope_rgb(filename)
+        except Exception as error:
+            self._reference_scope_width = 0
+            self._reference_scope_height = 0
+            self._reference_scope_rgb = None
+            self.left_scope.clear_reference()
+            self.right_scope.clear_reference()
+            QMessageBox.warning(
+                self,
+                "Reference scopes unavailable",
+                str(error))
+            return
+
+        self._reference_scope_width = scope_width
+        self._reference_scope_height = scope_height
+        self._reference_scope_rgb = scope_rgb
+
+        self.left_scope.set_reference_rgb(
+            scope_width,
+            scope_height,
+            scope_rgb)
+        self.right_scope.set_reference_rgb(
+            scope_width,
+            scope_height,
+            scope_rgb)
+        self.left_scope.set_reference_wipe(
+            self.reference_wipe.value())
+        self.right_scope.set_reference_wipe(
+            self.reference_wipe.value())
+        self._resample_probes()
+
+    @Slot()
+    def _clear_reference_image(self):
+        self.image_preview.clear_reference()
+        self.left_scope.clear_reference()
+        self.right_scope.clear_reference()
+        self._reference_scope_width = 0
+        self._reference_scope_height = 0
+        self._reference_scope_rgb = None
+        self._reference_image_filename = None
+        self.reference_wipe.setEnabled(False)
+        self.clear_reference_button.setEnabled(False)
+        self.reference_icon.setToolTip(
+            "Drop a reference image onto the converted-image preview.")
+        self._resample_probes()
+
     def _load_diagnostics(self, filename: str):
         try:
             preview = filmviz.read_image_preview(filename, 1600)
@@ -2808,8 +3557,7 @@ class FilmVizWindow(QMainWindow):
             self._scope_width = 0
             self._scope_height = 0
             self._scope_rgb = None
-            self.left_scope.clear_probe()
-            self.right_scope.clear_probe()
+            self._resample_probes()
             QMessageBox.warning(
                 self,
                 "High-precision scopes unavailable",
@@ -2834,59 +3582,47 @@ class FilmVizWindow(QMainWindow):
             scope_width,
             scope_height,
             scope_rgb)
-        self.left_scope.clear_probe()
-        self.right_scope.clear_probe()
+        self._resample_probes()
 
 
-    @Slot(float, float)
-    def _probe_image_pixel(self, u: float, v: float):
-        scope_rgb = _scope_rgb_at(
-            self._scope_width,
-            self._scope_height,
-            self._scope_rgb,
-            u,
-            v)
-        if scope_rgb is not None:
-            self.left_scope.set_probe(u, v, scope_rgb)
-            self.right_scope.set_probe(u, v, scope_rgb)
-
+    def _current_probe_source_identity(self):
+        value = self.input_image.value()
+        if not value:
+            return None
         try:
-            arguments = self._common()
-            probe = filmviz.probe_image_pixel(
-                resources=arguments["resources"],
-                input_filename=self.input_image.value(),
-                input=arguments["input"],
-                negative=arguments["negative"],
-                print=arguments["print"],
-                exposure=arguments["exposure"],
-                negative_flash=arguments["negative_flash"],
-                print_flash=arguments["print_flash"],
-                push_pull=arguments["push_pull"],
-                color_density=arguments["color_density"],
-                warm_tone_separation=
-                    arguments["warm_tone_separation"],
-                negative_bleach_bypass=
-                    arguments["negative_bleach_bypass"],
-                print_bleach_bypass=
-                    arguments["print_bleach_bypass"],
-                printer_light_red=
-                    arguments["printer_light_red"],
-                printer_light_green=
-                    arguments["printer_light_green"],
-                printer_light_blue=
-                    arguments["printer_light_blue"],
-                printer_light_master=
-                    arguments["printer_light_master"],
-                middle_gray=arguments["middle_gray"],
-                printer_temperature=
-                    arguments["printer_temperature"],
-                u=u,
-                v=v,
-            )
-        except Exception as error:
-            self.probe_output.setPlainText(
-                f"Probe failed:\n{error}")
-            return
+            return str(Path(value).expanduser().resolve())
+        except Exception:
+            return value
+
+    def _evaluate_probe(self, u: float, v: float):
+        arguments = self._common()
+        return filmviz.probe_image_pixel(
+            resources=arguments["resources"],
+            input_filename=self.input_image.value(),
+            input=arguments["input"],
+            negative=arguments["negative"],
+            print=arguments["print"],
+            exposure=arguments["exposure"],
+            negative_flash=arguments["negative_flash"],
+            print_flash=arguments["print_flash"],
+            push_pull=arguments["push_pull"],
+            color_density=arguments["color_density"],
+            warm_tone_separation=arguments["warm_tone_separation"],
+            negative_bleach_bypass=arguments["negative_bleach_bypass"],
+            print_bleach_bypass=arguments["print_bleach_bypass"],
+            printer_light_red=arguments["printer_light_red"],
+            printer_light_green=arguments["printer_light_green"],
+            printer_light_blue=arguments["printer_light_blue"],
+            printer_light_master=arguments["printer_light_master"],
+            middle_gray=arguments["middle_gray"],
+            printer_temperature=arguments["printer_temperature"],
+            u=u,
+            v=v,
+        )
+
+    def _format_probe_result(self, index, entry):
+        probe = entry["probe"]
+        reference_rgb = entry.get("reference_rgb")
 
         def triplet(name):
             values = probe[name]
@@ -2895,6 +3631,30 @@ class FilmVizWindow(QMainWindow):
                 f"{float(values[1]):.6g}, "
                 f"{float(values[2]):.6g})"
             )
+
+        def field(label, value):
+            return f"{label:<18} {value}"
+
+        left = [
+            field("encoded RGB", triplet("encoded_rgb")),
+            field("input AP0", triplet("ap0_input")),
+            field("negative H R/G/B", triplet("negative_exposure")),
+            field("Status-M D R/G/B", triplet("negative_status_m")),
+            field("calibrated D", triplet("negative_calibrated")),
+        ]
+        right = [
+            field("color response D", triplet("negative_color_response")),
+            field("print H R/G/B", triplet("print_exposure")),
+            field("print D R/G/B", triplet("print_density")),
+            field("output AP0", triplet("output_ap0")),
+            field("output Rec709", triplet("output_rec709_gamma24")),
+        ]
+
+        column_width = max(len(line) for line in left) + 5
+        rows = [
+            left_line.ljust(column_width) + right_line
+            for left_line, right_line in zip(left, right)
+        ]
 
         spectrum = probe["spectrum"]
         spectral_text = " ".join(
@@ -2905,21 +3665,447 @@ class FilmVizWindow(QMainWindow):
             )
         )
 
-        self.probe_output.setPlainText(
-            f"pixel ({probe['x']}, {probe['y']}) / "
+        reference_lines = []
+        if reference_rgb is not None:
+            reference_text = (
+                f"({reference_rgb[0]:.7g}, "
+                f"{reference_rgb[1]:.7g}, "
+                f"{reference_rgb[2]:.7g})")
+            output_rgb = probe["output_rec709_gamma24"]
+            delta = tuple(
+                float(reference_rgb[channel]) - float(output_rgb[channel])
+                for channel in range(3))
+            delta_text = (
+                f"({delta[0]:+.7g}, {delta[1]:+.7g}, {delta[2]:+.7g})")
+            reference_lines.extend((
+                f"reference RGB     {reference_text}",
+                f"ref - output RGB  {delta_text}",
+            ))
+
+        return (
+            f"Pick {index} — pixel ({probe['x']}, {probe['y']}) / "
             f"{probe['width']}×{probe['height']}\n"
-            f"encoded RGB       {triplet('encoded_rgb')}\n"
-            f"input AP0         {triplet('ap0_input')}\n"
-            f"spectrum          {spectral_text}\n"
-            f"negative H R/G/B  {triplet('negative_exposure')}\n"
-            f"Status-M D R/G/B  {triplet('negative_status_m')}\n"
-            f"calibrated D      {triplet('negative_calibrated')}\n"
-            f"color response D  {triplet('negative_color_response')}\n"
-            f"print H R/G/B     {triplet('print_exposure')}\n"
-            f"print D R/G/B     {triplet('print_density')}\n"
-            f"output AP0        {triplet('output_ap0')}\n"
-            f"output Rec709     {triplet('output_rec709_gamma24')}"
+            + "\n".join(rows)
+            + f"\nspectrum          {spectral_text}"
+            + (("\n" + "\n".join(reference_lines)) if reference_lines else "")
         )
+
+    def _refresh_probe_output(self):
+        if not self._probe_results:
+            self.probe_output.clear()
+            return
+
+        self.probe_output.setPlainText(
+            "\n\n".join(
+                self._format_probe_result(index, entry)
+                for index, entry in enumerate(self._probe_results, start=1)
+            )
+        )
+
+    def _refresh_probe_markers(self):
+        self.image_preview.set_probes(self._probe_points)
+
+        scope_probes = []
+        for u, v in self._probe_points:
+            scope_rgb = _scope_rgb_at(
+                self._scope_width,
+                self._scope_height,
+                self._scope_rgb,
+                u,
+                v)
+            if scope_rgb is not None:
+                scope_probes.append((u, v, scope_rgb))
+
+        self.left_scope.set_probes(scope_probes)
+        self.right_scope.set_probes(scope_probes)
+
+    @Slot()
+    def _clear_probes(self):
+        self._probe_points = []
+        self._probe_results = []
+        self._probe_source_identity = None
+        self.image_preview.set_probes([])
+        self.left_scope.clear_probe()
+        self.right_scope.clear_probe()
+        self.probe_output.clear()
+
+    def _resample_probes(self):
+        if not self._probe_points:
+            self._refresh_probe_markers()
+            self._refresh_probe_output()
+            return
+
+        current_identity = self._current_probe_source_identity()
+        if (
+            self._probe_source_identity is not None
+            and current_identity != self._probe_source_identity
+        ):
+            self._clear_probes()
+            return
+
+        self._probe_source_identity = current_identity
+        results = []
+        for u, v in self._probe_points:
+            try:
+                probe = self._evaluate_probe(u, v)
+            except Exception as error:
+                self.probe_output.setPlainText(
+                    f"Probe resampling failed:\n{error}")
+                return
+            reference_rgb = _scope_rgb_at(
+                self._reference_scope_width,
+                self._reference_scope_height,
+                self._reference_scope_rgb,
+                u, v)
+            results.append({
+                "u": u,
+                "v": v,
+                "probe": probe,
+                "reference_rgb": reference_rgb,
+            })
+
+        self._probe_results = results
+        self._refresh_probe_markers()
+        self._refresh_probe_output()
+
+    @Slot(float, float)
+    def _probe_image_pixel(self, u: float, v: float):
+        current_identity = self._current_probe_source_identity()
+        if (
+            self._probe_source_identity is not None
+            and current_identity != self._probe_source_identity
+        ):
+            self._clear_probes()
+
+        try:
+            probe = self._evaluate_probe(u, v)
+        except Exception as error:
+            self.probe_output.setPlainText(
+                f"Probe failed:\n{error}")
+            return
+
+        self._probe_source_identity = current_identity
+        self._probe_points.append((float(u), float(v)))
+        reference_rgb = _scope_rgb_at(
+            self._reference_scope_width,
+            self._reference_scope_height,
+            self._reference_scope_rgb,
+            u, v)
+        self._probe_results.append({
+            "u": float(u),
+            "v": float(v),
+            "probe": probe,
+            "reference_rgb": reference_rgb,
+        })
+        self._refresh_probe_markers()
+        self._refresh_probe_output()
+
+    def _agent_snapshot_text(self):
+        common = self._common()
+
+        def value(widget):
+            if isinstance(widget, QDoubleSpinBox):
+                return f"{widget.value():g}"
+            if isinstance(widget, QSpinBox):
+                return str(widget.value())
+            if isinstance(widget, QCheckBox):
+                return "On" if widget.isChecked() else "Off"
+            return str(widget)
+
+        lines = [
+            "FilmViz agent snapshot",
+            "",
+            "[Files]",
+            f"Input image: {self.input_image.value()}",
+            f"Converted image: {self._last_output_image or self.output_image.value()}",
+            f"Reference image: {self._reference_image_filename or 'None'}",
+            f"Reference wipe: {self.reference_wipe.value()}%",
+            f"Display: Rec.709 Gamma 2.4",
+            "",
+            "[Pipeline]",
+            f"Resource directory: {common['resources']}",
+            f"Input profile: {common['input']}",
+            f"Negative: {common['negative']}",
+            f"Print: {common['print']}",
+            f"Output profile: {common['output']}",
+            f"Exposure stops: {common['exposure']:g}",
+            f"Negative flash (%): {common['negative_flash']:g}",
+            f"Print flash (%): {common['print_flash']:g}",
+            f"Push/pull stops: {common['push_pull']:g}",
+            f"Color density trim: {common['color_density']:g}",
+            f"Warm-tone separation: {common['warm_tone_separation']:g}",
+            f"Negative bypass: {common['negative_bleach_bypass']:g}",
+            f"Print bypass: {common['print_bleach_bypass']:g}",
+            f"Printer R light: {common['printer_light_red']:g}",
+            f"Printer G light: {common['printer_light_green']:g}",
+            f"Printer B light: {common['printer_light_blue']:g}",
+            f"Printer master: {common['printer_light_master']:g}",
+            f"Printer K: {common['printer_temperature']:g}",
+            f"Middle gray: {common['middle_gray']:g}",
+            f"LUT size: {common['lut_size']}",
+            f"Use LUT acceleration: {'On' if common['use_lut_acceleration'] else 'Off'}",
+            f"Worker threads: {common['threads']}",
+            "",
+            "[Image]",
+            f"Negative grain: {self.negative_grain.value():g}",
+            f"Print grain: {self.print_grain.value():g}",
+            f"Grain scale (px): {self.grain_size.value():g}",
+            f"Grain chroma: {self.grain_chroma.value():g}",
+            f"Grain seed: {self.grain_seed.value()}",
+            f"Film format: {self.film_format.currentText()}",
+            f"Active image width (mm): {self.image_width_mm.value():g}",
+            f"Negative MTF: {self.negative_mtf.value():g}%",
+            f"Print MTF: {self.print_mtf.value():g}%",
+            f"Halation: {self.halation_strength.value():g}",
+            f"Halation radius (px): {self.halation_radius.value():g}",
+            f"Halation threshold: {self.halation_threshold.value():g}",
+        ]
+
+        probe_text = self.probe_output.toPlainText().strip()
+        if probe_text:
+            lines.extend(("", "[Picked pixels]", probe_text))
+
+        return "\n".join(lines)
+
+    def _render_scope_image(
+        self,
+        result_widget,
+        reference_widget,
+        width: int,
+        height: int,
+    ):
+        def render(widget):
+            old_size = QSize(widget.size())
+            widget.resize(width, height)
+            image = QImage(
+                width,
+                height,
+                QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(QColor("#0b0d0f"))
+            painter = QPainter(image)
+            widget.render(painter)
+            painter.end()
+            widget.resize(old_size)
+            return image
+
+        result = render(result_widget)
+        if not self.image_preview.has_reference():
+            return result
+
+        reference = render(reference_widget)
+        wipe_x = int(round(width * self.reference_wipe.value() / 100.0))
+        wipe_x = min(width, max(0, wipe_x))
+
+        composed = QImage(result)
+        painter = QPainter(composed)
+        if wipe_x > 0:
+            painter.save()
+            painter.setClipRect(QRect(0, 0, wipe_x, height))
+            painter.drawImage(QRect(0, 0, width, height), reference)
+            painter.restore()
+        painter.setPen(QPen(QColor(245, 210, 70), 1.0))
+        painter.drawLine(wipe_x, 0, wipe_x, max(0, height - 1))
+        painter.end()
+        return composed
+
+    def _agent_scope_images(self, width: int, height: int):
+        pane = self.left_scope
+
+        vector_zoom = pane.vector_scope._zoom2
+        reference_vector_zoom = pane.reference_vector_scope._zoom2
+        pane.vector_scope.set_zoom2(False)
+        pane.reference_vector_scope.set_zoom2(False)
+
+        waveform_mode = pane.waveform._mode
+        reference_waveform_mode = pane.reference_waveform._mode
+
+        images = []
+        try:
+            images.append((
+                "Vectorscope",
+                self._render_scope_image(
+                    pane.vector_scope,
+                    pane.reference_vector_scope,
+                    width,
+                    height)))
+            images.append((
+                "RGB Histogram",
+                self._render_scope_image(
+                    pane.histogram,
+                    pane.reference_histogram,
+                    width,
+                    height)))
+            images.append((
+                "RGB Parade",
+                self._render_scope_image(
+                    pane.parade,
+                    pane.reference_parade,
+                    width,
+                    height)))
+
+            pane.waveform.set_mode("rgb")
+            pane.reference_waveform.set_mode("rgb")
+            images.append((
+                "RGB Waveform",
+                self._render_scope_image(
+                    pane.waveform,
+                    pane.reference_waveform,
+                    width,
+                    height)))
+
+            pane.waveform.set_mode("y")
+            pane.reference_waveform.set_mode("y")
+            images.append((
+                "Y Waveform",
+                self._render_scope_image(
+                    pane.waveform,
+                    pane.reference_waveform,
+                    width,
+                    height)))
+        finally:
+            pane.vector_scope.set_zoom2(vector_zoom)
+            pane.reference_vector_scope.set_zoom2(reference_vector_zoom)
+            pane.waveform.set_mode(waveform_mode)
+            pane.reference_waveform.set_mode(reference_waveform_mode)
+
+        return images
+
+    def _build_agent_snapshot(self):
+        if not self.image_preview.has_image():
+            return QImage()
+
+        source = self.image_preview._image
+        reference = self.image_preview._reference_image
+
+        page_width = 1600
+        margin = 28
+        gap = 22
+        settings_width = 520
+        image_width = page_width - margin * 2 - gap - settings_width
+        max_image_height = 690
+        image_height = min(
+            max_image_height,
+            max(1, int(round(image_width * source.height() / max(1, source.width())))))
+
+        scope_width = (page_width - margin * 2 - gap) // 2
+        scope_height = 330
+        scope_title_height = 28
+        scope_gap = 18
+        scope_images = self._agent_scope_images(scope_width, scope_height)
+        scope_rows = (len(scope_images) + 1) // 2
+        scopes_height = scope_rows * (scope_title_height + scope_height) + max(0, scope_rows - 1) * scope_gap
+
+        top_height = max(image_height, 690)
+        page_height = margin + top_height + 34 + scopes_height + margin
+
+        page = QImage(
+            page_width,
+            page_height,
+            QImage.Format.Format_ARGB32_Premultiplied)
+        page.fill(QColor("#101214"))
+
+        painter = QPainter(page)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        image_rect = QRectF(margin, margin, image_width, image_height)
+        painter.fillRect(image_rect, QColor("#07090a"))
+        painter.drawImage(image_rect, source, QRectF(source.rect()))
+
+        if not reference.isNull():
+            wipe_x = image_rect.left() + image_rect.width() * self.reference_wipe.value() / 100.0
+            painter.save()
+            painter.setClipRect(QRectF(
+                image_rect.left(),
+                image_rect.top(),
+                max(0.0, wipe_x - image_rect.left()),
+                image_rect.height()))
+            painter.drawImage(image_rect, reference, QRectF(reference.rect()))
+            painter.restore()
+            painter.setPen(QPen(QColor(245, 210, 70), 1.5))
+            painter.drawLine(
+                QPointF(wipe_x, image_rect.top()),
+                QPointF(wipe_x, image_rect.bottom()))
+
+        text_left = margin + image_width + gap
+        text_rect = QRectF(text_left, margin, settings_width, top_height)
+        painter.fillRect(text_rect, QColor("#17191b"))
+
+        title_font = self.font()
+        title_font.setBold(True)
+        title_font.setPixelSize(21)
+        painter.setFont(title_font)
+        painter.setPen(QColor(232, 232, 232))
+        painter.drawText(
+            QRectF(text_left + 18, margin + 16, settings_width - 36, 30),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "FilmViz settings")
+
+        body_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        body_font.setPixelSize(13)
+        painter.setFont(body_font)
+        painter.setPen(QColor(205, 205, 205))
+        painter.drawText(
+            QRectF(text_left + 18, margin + 52, settings_width - 36, top_height - 68),
+            Qt.AlignmentFlag.AlignLeft
+            | Qt.AlignmentFlag.AlignTop
+            | Qt.TextFlag.TextWordWrap,
+            self._agent_snapshot_text())
+
+        y = margin + top_height + 34
+        for index, (title, scope_image) in enumerate(scope_images):
+            row = index // 2
+            column = index % 2
+            x = margin + column * (scope_width + gap)
+            sy = y + row * (scope_title_height + scope_height + scope_gap)
+
+            painter.setFont(title_font)
+            painter.setPen(QColor(225, 225, 225))
+            painter.drawText(
+                QRectF(x, sy, scope_width, scope_title_height),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                title)
+            painter.drawImage(
+                QRectF(x, sy + scope_title_height, scope_width, scope_height),
+                scope_image)
+
+        painter.end()
+        page.setColorSpace(APP_COLOR_SPACE)
+        return page
+
+    @Slot()
+    def _copy_agent_snapshot(self):
+        if not self.image_preview.has_image():
+            return
+
+        snapshot = self._build_agent_snapshot()
+        if snapshot.isNull():
+            return
+
+        mime = QMimeData()
+        mime.setImageData(snapshot)
+        mime.setText(self._agent_snapshot_text())
+        QApplication.clipboard().setMimeData(mime)
+
+    @Slot()
+    def _copy_agent_text(self):
+        QApplication.clipboard().setText(self._agent_snapshot_text())
+
+    @Slot()
+    def _copy_converted_image(self):
+        if not self.image_preview.has_image():
+            return
+        QApplication.clipboard().setImage(self.image_preview._image)
+
+    @Slot()
+    def _copy_converted_image_with_markers(self):
+        if not self.image_preview.has_image():
+            return
+
+        image = self.image_preview.converted_image_with_markers()
+        if image.isNull():
+            return
+        QApplication.clipboard().setImage(image)
 
     @Slot()
     def _profile_family_changed(self):
@@ -3363,6 +4549,15 @@ def main() -> int:
     QSurfaceFormat.setDefaultFormat(surface_format)
 
     application = QApplication(sys.argv)
+
+    # Keep the entire application visually compact. Apply the reduction once
+    # at QApplication level so diagnostics, toolbars, tabs, controls, status
+    # text, and the settings panel all use the same font size.
+    application_font = application.font()
+    application_font.setPointSize(
+        max(7, application_font.pointSize() - 2))
+    application.setFont(application_font)
+
     window = FilmVizWindow()
 
     if os.environ.get("FILMVIZ_APP_SMOKE_TEST") == "1":
