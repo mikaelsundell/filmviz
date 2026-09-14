@@ -73,14 +73,15 @@ optional Python application additionally uses pybind11 and PySide6.
 ```bash
 cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Debug \
-    -DCMAKE_PREFIX_PATH=/Volumes/Projects/github/3rdparty/build/macosx/arm64.debug
+    -DCMAKE_PREFIX_PATH=/path/to/filmviz-dependencies/arm64.debug
 cmake --build build -j
 ```
 
-On macOS, select exactly one matching dependency tree per build directory:
-`arm64.debug` for Debug or `arm64.release` for Release. The Python application
-uses that configured prefix and sets `DYLD_IMAGE_SUFFIX=_debug` when launching
-against the debug Qt frameworks.
+Set `CMAKE_PREFIX_PATH` to the directory where you installed FilmViz's
+third-party dependencies. On macOS, select exactly one matching dependency tree
+per build directory: `arm64.debug` for Debug or `arm64.release` for Release.
+The Python application uses that configured prefix and sets
+`DYLD_IMAGE_SUFFIX=_debug` when launching against the debug Qt frameworks.
 
 With a single-config generator, executables and the Python launcher are written
 to `build/bin/`. Multi-config generators such as Xcode instead use the selected

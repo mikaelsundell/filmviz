@@ -272,11 +272,14 @@ CMake automatically uses `external/openfx/include`.
 ```bash
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH=/Volumes/Projects/github/3rdparty/build/macosx/arm64.release \
+  -DCMAKE_PREFIX_PATH=/path/to/filmviz-dependencies/arm64.release \
   -DFILMVIZ_BUILD_OFX=ON
 
 cmake --build build --config Release -j
 ```
+
+Set `CMAKE_PREFIX_PATH` to the directory where you installed FilmViz's
+third-party dependencies.
 
 A normal all-target build includes the OFX plug-in and pre-generated caches.
 The bundle is produced at:
