@@ -33,12 +33,13 @@ bool write_image(const std::string& filename,int width,int height,const std::vec
 int main(int argc,char** argv)
 {
     if(argc<3) {
-        std::cerr << "usage: filmviz_metal_compare <input> <output-prefix> [resources]\n";
+        std::cerr << "usage: filmviz_metal_compare <input> <output-prefix> [resources] [--spatial]\n";
         return 2;
     }
     const std::string input_filename=argv[1];
     const std::string output_prefix=argv[2];
     const std::string resources=argc>3?argv[3]:"resources";
+    const bool spatial=argc>4&&std::string(argv[4])=="--spatial";
     OIIO::ImageBuf input(input_filename);
     if(!input.read(0,0,true,OIIO::TypeDesc::FLOAT)||input.spec().nchannels<3) {
         std::cerr << "could not read RGB input: " << input.geterror() << '\n'; return 1;
@@ -53,6 +54,11 @@ int main(int argc,char** argv)
     FilmVizOfxRenderSettings settings;
     settings.input_profile=1;
     settings.output_profile=0;
+    if(spatial) {
+        settings.halation_enabled=true; settings.halation_strength=0.5f;
+        settings.halation_radius=12.0f; settings.halation_threshold=0.7f;
+        settings.negative_mtf_amount=1.0f; settings.print_mtf_amount=1.0f;
+    }
     id<MTLDevice> device=MTLCreateSystemDefaultDevice();
     id<MTLCommandQueue> queue=[device newCommandQueue];
     if(!device||!queue) { std::cerr << "Metal is unavailable\n"; return 1; }
@@ -72,15 +78,23 @@ int main(int argc,char** argv)
     const float* gpu=static_cast<const float*>(output_buffer.contents);
     for(std::size_t i=0;i<count;++i) for(int c=0;c<3;++c) metal[i*3u+c]=gpu[i*4u+c];
 
-    FilmPipeline::Settings pipeline_settings;
-    pipeline_settings.resources_directory=resources;
-    FilmPipeline pipeline;
-    if(!pipeline.initialize(pipeline_settings)) { std::cerr << pipeline.error() << '\n'; return 1; }
-    for(std::size_t i=0;i<count;++i) {
-        const std::array<float,3> ap0={{source[i*4u],source[i*4u+1],source[i*4u+2]}};
-        const auto result=pipeline.process(ap0);
-        if(!result.valid) { std::cerr << "CPU processing failed at pixel " << i << '\n'; return 1; }
-        for(int c=0;c<3;++c) cpu[i*3u+c]=result.ap0[c];
+    if(spatial) {
+        FilmVizOfxProcessor reference; std::vector<float> cpu_rgba(count*4u,0.0f);
+        FilmVizOfxFrame cpu_source,cpu_output; cpu_source.x2=cpu_output.x2=width; cpu_source.y2=cpu_output.y2=height;
+        cpu_source.row_bytes=cpu_output.row_bytes=static_cast<std::ptrdiff_t>(width*4*sizeof(float));
+        cpu_source.data=source.data(); cpu_output.data=cpu_rgba.data();
+        if(!reference.configure(settings,resources,error)||!reference.render(cpu_source,cpu_output,0,0,width,height,0.0,{},error)) { std::cerr << error << '\n'; return 1; }
+        for(std::size_t i=0;i<count;++i) for(int c=0;c<3;++c) cpu[i*3u+c]=cpu_rgba[i*4u+c];
+    } else {
+        FilmPipeline::Settings pipeline_settings; pipeline_settings.resources_directory=resources;
+        FilmPipeline pipeline;
+        if(!pipeline.initialize(pipeline_settings)) { std::cerr << pipeline.error() << '\n'; return 1; }
+        for(std::size_t i=0;i<count;++i) {
+            const std::array<float,3> ap0={{source[i*4u],source[i*4u+1],source[i*4u+2]}};
+            const auto result=pipeline.process(ap0);
+            if(!result.valid) { std::cerr << "CPU processing failed at pixel " << i << '\n'; return 1; }
+            for(int c=0;c<3;++c) cpu[i*3u+c]=result.ap0[c];
+        }
     }
 
     double squared=0.0; float maximum=0.0f;
@@ -99,6 +113,6 @@ int main(int argc,char** argv)
         ||!write_image(output_prefix+"_side_by_side.exr",width*2,height,side)) {
         std::cerr << "could not write comparison images\n"; return 1;
     }
-    std::cout << "CPU | Metal Direct\nRMS AP0 error: " << rms << "\nMaximum AP0 error: " << maximum << '\n';
+    std::cout << "CPU | Metal Direct" << (spatial?" (MTF + halation)":"") << "\nRMS AP0 error: " << rms << "\nMaximum AP0 error: " << maximum << '\n';
     return 0;
 }

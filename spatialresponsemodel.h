@@ -41,6 +41,26 @@ public:
         const Settings& settings,
         const Cancel& cancel = Cancel()) const;
 
+    bool kernels(
+        int width,
+        const Settings& settings,
+        std::array<std::vector<float>, 3>& result) const
+    {
+        if (!valid_
+            || width <= 0
+            || settings.image_width_mm <= 0.0f
+            || settings.negative_amount < 0.0f
+            || settings.print_amount < 0.0f) {
+            return false;
+        }
+
+        for (int channel = 0; channel < 3; ++channel) {
+            result[channel] = kernel(channel, width, settings);
+        }
+
+        return true;
+    }
+
 private:
     static bool load_curves(
         const std::string& filename,

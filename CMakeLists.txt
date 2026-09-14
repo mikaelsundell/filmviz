@@ -40,6 +40,7 @@ endif()
 find_package(Imath CONFIG REQUIRED)
 find_package(OpenImageIO CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+find_package(OpenCL QUIET)
 
 set(FILMVIZ_CORE_SOURCES
     bleachbypass.cpp
@@ -244,6 +245,27 @@ if(BUILD_TESTING)
         )
         add_test(NAME test_metal_direct COMMAND test_metal_direct)
     endif()
+
+    if(OpenCL_FOUND AND FILMVIZ_BUILD_OFX)
+        add_executable(test_opencl_direct
+            tests/test_opencl_direct.cpp
+            ofx/filmvizdirectopenclprocessor.cpp
+        )
+        target_include_directories(test_opencl_direct PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/ofx
+            ${CMAKE_CURRENT_BINARY_DIR}/ofx
+        )
+        target_link_libraries(test_opencl_direct PRIVATE
+            filmviz_core
+            filmviz_ofx_processing
+            OpenCL::OpenCL
+        )
+        target_compile_definitions(test_opencl_direct PRIVATE
+            FILMVIZ_TEST_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources"
+        )
+        add_test(NAME test_opencl_direct COMMAND test_opencl_direct)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -385,6 +407,29 @@ if(FILMVIZ_BUILD_OFX)
         message(STATUS
             "FilmViz OFX headers: ${FILMVIZ_OFX_INCLUDE_DIR}")
         add_subdirectory(ofx)
+
+        if(APPLE AND TARGET filmviz_python)
+            target_sources(filmviz_python PRIVATE
+                python/filmviz_metal_preview.mm
+                python/filmviz_metal_preview.h
+                ofx/filmvizdirectmetalprocessor.mm
+            )
+            target_include_directories(filmviz_python PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/ofx
+                ${CMAKE_CURRENT_SOURCE_DIR}/python
+            )
+            target_link_libraries(filmviz_python PRIVATE
+                filmviz_ofx_processing
+                "-framework Foundation"
+                "-framework Metal"
+            )
+            target_compile_definitions(filmviz_python PRIVATE
+                FILMVIZ_PYTHON_HAS_METAL=1
+            )
+            target_compile_options(filmviz_python PRIVATE
+                "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+            )
+        endif()
     else()
         message(STATUS
             "FilmViz OFX disabled: OpenFX headers were not found")

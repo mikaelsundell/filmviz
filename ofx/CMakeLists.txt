@@ -4,12 +4,34 @@
 # ---------------------------------------------------------------------------
 # Production OpenFX front end.
 #
-# The CPU path remains the reference implementation. On macOS the plug-in also
-# advertises OpenFX Metal rendering and uses Resolve's supplied command queue.
+# The production plug-in follows the GPU API supplied by the OpenFX host.
+# CPU processing remains available only to standalone validation utilities.
 # ---------------------------------------------------------------------------
 
 option(FILMVIZ_OFX_PREBAKE_CACHE
     "Pre-generate common FilmViz OFX transform caches during the build" ON)
+
+# Keep the direct spectral algorithm in one canonical kernel. The OpenCL
+# backend translates its small amount of Metal syntax at program-build time.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/filmvizdirectmetalprocessor.mm")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/filmvizdirectmetalprocessor.mm"
+    FILMVIZ_DIRECT_METAL_PROCESSOR_SOURCE)
+string(FIND "${FILMVIZ_DIRECT_METAL_PROCESSOR_SOURCE}" "R\"METAL(" FILMVIZ_DIRECT_KERNEL_BEGIN)
+string(FIND "${FILMVIZ_DIRECT_METAL_PROCESSOR_SOURCE}" ")METAL\";" FILMVIZ_DIRECT_KERNEL_END)
+if(FILMVIZ_DIRECT_KERNEL_BEGIN LESS 0 OR FILMVIZ_DIRECT_KERNEL_END LESS 0)
+    message(FATAL_ERROR "Could not extract the FilmViz direct GPU kernel")
+endif()
+math(EXPR FILMVIZ_DIRECT_KERNEL_BEGIN "${FILMVIZ_DIRECT_KERNEL_BEGIN} + 8")
+math(EXPR FILMVIZ_DIRECT_KERNEL_LENGTH
+    "${FILMVIZ_DIRECT_KERNEL_END} - ${FILMVIZ_DIRECT_KERNEL_BEGIN}")
+string(SUBSTRING "${FILMVIZ_DIRECT_METAL_PROCESSOR_SOURCE}"
+    ${FILMVIZ_DIRECT_KERNEL_BEGIN} ${FILMVIZ_DIRECT_KERNEL_LENGTH}
+    FILMVIZ_DIRECT_KERNEL_SOURCE)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/filmvizdirectkernelsource.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/filmvizdirectkernelsource.h"
+    @ONLY)
 
 add_library(filmviz_ofx_processing STATIC
     filmvizofxprocessor.cpp
@@ -51,6 +73,37 @@ target_compile_features(filmviz_ofx_pregenerate PRIVATE cxx_std_17)
 add_library(filmviz_ofx MODULE
     filmvizofx.cpp
 )
+
+target_include_directories(filmviz_ofx PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+if(OpenCL_FOUND)
+    target_sources(filmviz_ofx PRIVATE
+        filmvizdirectopenclprocessor.cpp
+        filmvizdirectopenclprocessor.h
+        filmvizdirectparams.h
+    )
+    target_link_libraries(filmviz_ofx PRIVATE OpenCL::OpenCL)
+    target_compile_definitions(filmviz_ofx PRIVATE FILMVIZ_HAS_OPENCL=1)
+
+    add_executable(filmviz_opencl_compare
+        filmviz_opencl_compare.cpp
+        filmvizdirectopenclprocessor.cpp
+    )
+    target_include_directories(filmviz_opencl_compare PRIVATE
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    target_link_libraries(filmviz_opencl_compare PRIVATE
+        filmviz_core
+        filmviz_ofx_processing
+        OpenCL::OpenCL
+    )
+else()
+    target_compile_definitions(filmviz_ofx PRIVATE FILMVIZ_HAS_OPENCL=0)
+endif()
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -176,6 +229,15 @@ set(FILMVIZ_OFX_BUNDLE_DIR
 set(FILMVIZ_OFX_BINARY_DIR
     "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/${FILMVIZ_OFX_ARCH_DIRECTORY}")
 
+set(FILMVIZ_OFX_ICON
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png")
+
+set(FILMVIZ_OFX_ICON_SVG
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.svg")
+
+set_property(TARGET filmviz_ofx APPEND PROPERTY
+    LINK_DEPENDS "${FILMVIZ_OFX_ICON};${FILMVIZ_OFX_ICON_SVG}")
+
 if(APPLE)
     set(FILMVIZ_OFX_PACKAGE_COMMAND
         sh
@@ -205,6 +267,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources"
     COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/icons"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/filmviz"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Libraries"
@@ -214,6 +278,15 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Info.plist"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${FILMVIZ_OFX_ICON}"
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/icons/filmviz.png"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${FILMVIZ_OFX_ICON_SVG}"
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/icons/filmviz.svg"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${FILMVIZ_OFX_ICON}"
+        "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Resources/com.github.mikaelsundell.filmviz.png"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:filmviz_core>"
         "${FILMVIZ_OFX_BUNDLE_DIR}/Contents/Libraries/$<TARGET_FILE_NAME:filmviz_core>"
@@ -305,6 +378,12 @@ echo \"Restart DaVinci Resolve and search OpenFX for 'FilmViz'.\"
             WORLD_READ WORLD_EXECUTE
     )
 endif()
+
+# A signed bundle must be replaced rather than merged with a previous install;
+# stale sealed resources invalidate its signature.
+install(CODE
+    "file(REMOVE_RECURSE \"${FILMVIZ_OFX_INSTALL_DIR}/FilmViz.ofx.bundle\")"
+    COMPONENT ofx)
 
 install(
     DIRECTORY "${FILMVIZ_OFX_BUNDLE_DIR}"

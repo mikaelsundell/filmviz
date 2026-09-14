@@ -1,5 +1,7 @@
 # FilmViz
 
+<img src="resources/ofx/icon.png" alt="FilmViz spectral film layers" width="480">
+
 FilmViz is experimental software for learning about spectral colour-negative
 and print-film processing. It is a research and education project, not a
 production-certified film-stock or colour-management product. The simulator

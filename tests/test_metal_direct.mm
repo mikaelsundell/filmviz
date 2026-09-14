@@ -96,6 +96,20 @@ int main()
                 << " error=" << sample_error << '\n';
         }
     }
+    const std::vector<float> pointwise=destination;
+    settings.halation_enabled=true; settings.halation_strength=0.5f;
+    settings.halation_radius=4.0f; settings.halation_threshold=0.4f;
+    settings.negative_mtf_amount=1.0f; settings.print_mtf_amount=1.0f;
+    if(!renderer.render(settings,(__bridge void*)queue,input,output,0,0,input.x2,1,0.0,error)) {
+        std::cerr << error << '\n'; return 1;
+    }
+    fence=[queue commandBuffer]; [fence commit]; [fence waitUntilCompleted];
+    std::copy_n(static_cast<const float*>(destination_buffer.contents),destination.size(),destination.data());
+    float spatial_change=0.0f;
+    for(std::size_t i=0;i<destination.size();++i) {
+        if(!std::isfinite(destination[i])) return 1;
+        spatial_change=std::max(spatial_change,std::abs(destination[i]-pointwise[i]));
+    }
     std::cout << "Direct Metal maximum AP0 error: " << maximum_error << '\n';
-    return maximum_error<=0.015f ? 0 : 1;
+    return maximum_error<=0.015f&&spatial_change>1e-5f ? 0 : 1;
 }

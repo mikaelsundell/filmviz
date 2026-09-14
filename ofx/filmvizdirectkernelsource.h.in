@@ -1,0 +1,6 @@
+// Generated from the canonical direct Metal kernel. Do not edit.
+#pragma once
+
+inline constexpr const char* kFilmVizDirectMetalKernelSource = R"FILMVIZ(
+@FILMVIZ_DIRECT_KERNEL_SOURCE@
+)FILMVIZ";

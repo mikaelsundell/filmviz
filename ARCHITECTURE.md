@@ -231,10 +231,13 @@ FilmPipeline::Result result = pipeline.process(ap0_linear);
 ```
 
 `FilmPipeline::direct_data()` exports the same initialized measured tables and
-calibration anchors as renderer-neutral `FilmDirectData`. The OpenFX direct
-Metal backend uploads that immutable data once and evaluates the pointwise
-pipeline per pixel, while the CPU implementation remains authoritative and the
-standalone comparator can render both implementations side by side.
+calibration anchors as renderer-neutral `FilmDirectData`. The OpenFX Metal and
+OpenCL direct backends upload that immutable data once and evaluate the direct
+spectral pipeline plus negative-stage halation and post-render measured MTF.
+The OpenFX plug-in follows the GPU queue supplied by the host: Metal or OpenCL
+on macOS and OpenCL on Windows. It reports an error instead of silently falling
+back to CPU. The CPU implementation remains authoritative, and standalone
+comparators render each GPU implementation beside the CPU reference.
 
 ## Fixed production calibration
 

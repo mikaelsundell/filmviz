@@ -5,10 +5,11 @@
 
 #include "filmvizofxprocessor.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
-struct FilmVizOfxMetalFrame
+struct FilmVizOfxOpenCLFrame
 {
     int x1 = 0;
     int y1 = 0;
@@ -18,19 +19,14 @@ struct FilmVizOfxMetalFrame
     void* buffer = nullptr;
 };
 
-// Direct spectral Metal backend. This renderer does not sample a transform
-// LUT: measured tables are uploaded once and the film pipeline is evaluated
-// for each pixel with live controls.
-class FilmVizDirectMetalProcessor
+class FilmVizDirectOpenCLProcessor
 {
 public:
-    FilmVizDirectMetalProcessor();
-    ~FilmVizDirectMetalProcessor();
+    FilmVizDirectOpenCLProcessor();
+    ~FilmVizDirectOpenCLProcessor();
 
-    FilmVizDirectMetalProcessor(const FilmVizDirectMetalProcessor&) = delete;
-    FilmVizDirectMetalProcessor& operator=(const FilmVizDirectMetalProcessor&) = delete;
-
-    void invalidate_profiles();
+    FilmVizDirectOpenCLProcessor(const FilmVizDirectOpenCLProcessor&) = delete;
+    FilmVizDirectOpenCLProcessor& operator=(const FilmVizDirectOpenCLProcessor&) = delete;
 
     bool configure(
         const FilmVizOfxRenderSettings& settings,
@@ -41,8 +37,8 @@ public:
     bool render(
         const FilmVizOfxRenderSettings& settings,
         void* command_queue,
-        const FilmVizOfxMetalFrame& source,
-        const FilmVizOfxMetalFrame& destination,
+        const FilmVizOfxOpenCLFrame& source,
+        const FilmVizOfxOpenCLFrame& destination,
         int render_x1,
         int render_y1,
         int render_x2,
@@ -53,8 +49,8 @@ public:
     bool render_cpu_bridge(
         FilmVizOfxProcessor& cpu_processor,
         void* command_queue,
-        const FilmVizOfxMetalFrame& source,
-        const FilmVizOfxMetalFrame& destination,
+        const FilmVizOfxOpenCLFrame& source,
+        const FilmVizOfxOpenCLFrame& destination,
         int render_x1,
         int render_y1,
         int render_x2,

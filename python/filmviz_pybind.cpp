@@ -10,6 +10,10 @@
 #include "printprofile.h"
 #include "threading.h"
 
+#if defined(FILMVIZ_PYTHON_HAS_METAL)
+#include "filmviz_metal_preview.h"
+#endif
+
 #include <OpenImageIO/imagebuf.h>
 
 #include <pybind11/pybind11.h>
@@ -849,6 +853,122 @@ probe_image_pixel(
     return probe;
 }
 
+#if defined(FILMVIZ_PYTHON_HAS_METAL)
+template<typename T>
+T
+dictionary_value(
+    const py::dict& values,
+    const char* name,
+    const T& fallback)
+{
+    const py::str key(name);
+    return values.contains(key)
+        ? py::cast<T>(values[key])
+        : fallback;
+}
+
+FilmVizOfxRenderSettings
+metal_preview_settings(
+    const py::dict& values)
+{
+    FilmVizOfxRenderSettings settings;
+    const std::string input =
+        dictionary_value<std::string>(
+            values,
+            "input",
+            "awg3-logc3-ei800");
+    const std::string output =
+        dictionary_value<std::string>(
+            values,
+            "output",
+            "rec709-gamma24");
+
+    const InputTransform::Encoding encoding = input_encoding(input);
+    image_output(output);
+
+    settings.input_profile =
+        encoding == InputTransform::Encoding::ACES2065_1_Linear ? 1 : 0;
+    settings.output_profile = output == "ap0-linear" ? 0 : 1;
+    settings.negative_profile =
+        dictionary_value<std::string>(
+            values,
+            "negative",
+            NegativeProfileCatalog::default_profile().identifier);
+    settings.print_profile =
+        dictionary_value<std::string>(
+            values,
+            "print",
+            PrintProfileCatalog::default_profile().identifier);
+    validate_stock_profiles(
+        settings.negative_profile,
+        settings.print_profile);
+
+    settings.exposure_stops =
+        dictionary_value<float>(values, "exposure", 0.0f);
+    settings.negative_flash_percent =
+        dictionary_value<float>(values, "negative_flash", 0.0f);
+    settings.print_flash_percent =
+        dictionary_value<float>(values, "print_flash", 0.0f);
+    settings.push_pull_stops =
+        dictionary_value<float>(values, "push_pull", 0.0f);
+    settings.color_density =
+        dictionary_value<float>(values, "color_density", 0.0f);
+    settings.color_depth =
+        dictionary_value<float>(
+            values,
+            "color_depth",
+            FilmColorResponse::standard_color_depth);
+    settings.negative_bleach_bypass =
+        dictionary_value<float>(values, "negative_bleach_bypass", 0.0f);
+    settings.print_bleach_bypass =
+        dictionary_value<float>(values, "print_bleach_bypass", 0.0f);
+    settings.printer_light_red =
+        dictionary_value<float>(values, "printer_light_red", 25.0f);
+    settings.printer_light_green =
+        dictionary_value<float>(values, "printer_light_green", 25.0f);
+    settings.printer_light_blue =
+        dictionary_value<float>(values, "printer_light_blue", 25.0f);
+    settings.printer_light_master =
+        dictionary_value<float>(values, "printer_light_master", 0.0f);
+    settings.middle_gray =
+        dictionary_value<float>(values, "middle_gray", 0.18f);
+    settings.printer_temperature =
+        dictionary_value<float>(values, "printer_temperature", 3200.0f);
+
+    settings.negative_grain =
+        dictionary_value<float>(values, "negative_grain", 0.0f);
+    settings.print_grain =
+        dictionary_value<float>(values, "print_grain", 0.0f);
+    settings.grain_enabled =
+        settings.negative_grain > 0.0f || settings.print_grain > 0.0f;
+    settings.grain_size =
+        dictionary_value<float>(values, "grain_size", 1.0f);
+    settings.grain_chroma =
+        dictionary_value<float>(values, "grain_chroma", 1.0f);
+    settings.grain_seed =
+        dictionary_value<std::uint32_t>(values, "grain_seed", 1u);
+
+    settings.film_format =
+        dictionary_value<std::string>(values, "film_format", "super-35");
+    settings.image_width_mm =
+        dictionary_value<float>(values, "image_width_mm", 24.89f);
+    settings.negative_mtf_amount =
+        dictionary_value<float>(values, "negative_mtf", 0.0f);
+    settings.print_mtf_amount =
+        dictionary_value<float>(values, "print_mtf", 0.0f);
+    settings.halation_strength =
+        dictionary_value<float>(values, "halation_strength", 0.0f);
+    settings.halation_radius =
+        dictionary_value<float>(values, "halation_radius", 12.0f);
+    settings.halation_threshold =
+        dictionary_value<float>(values, "halation_threshold", 0.7f);
+    settings.halation_enabled =
+        settings.halation_strength > 0.0f
+        && settings.halation_radius > 0.0f;
+    return settings;
+}
+#endif
+
 } // namespace
 
 PYBIND11_MODULE(filmviz_python, module)
@@ -873,6 +993,65 @@ PYBIND11_MODULE(filmviz_python, module)
             return FilmVizThreading::effective_thread_count(work_items);
         },
         py::arg("work_items") = 1024);
+
+#if defined(FILMVIZ_PYTHON_HAS_METAL)
+    py::class_<FilmVizMetalPreview>(module, "MetalPreview")
+        .def(py::init<>())
+        .def_static("available", &FilmVizMetalPreview::available)
+        .def("invalidate_profiles", &FilmVizMetalPreview::invalidate_profiles)
+        .def(
+            "render",
+            [](FilmVizMetalPreview& preview,
+                const std::string& input_filename,
+                const std::string& resources,
+                const py::dict& values,
+                int max_dimension,
+                double time) {
+
+                const FilmVizOfxRenderSettings settings =
+                    metal_preview_settings(values);
+                FilmVizMetalPreviewResult result;
+                std::string error;
+                bool rendered = false;
+
+                {
+                    py::gil_scoped_release release;
+                    rendered = preview.render(
+                        input_filename,
+                        resources,
+                        settings,
+                        max_dimension,
+                        time,
+                        result,
+                        error);
+                }
+
+                if (!rendered) {
+                    throw std::runtime_error(error);
+                }
+
+                py::dict output;
+                output["width"] = result.width;
+                output["height"] = result.height;
+                output["rgb"] = py::bytes(
+                    reinterpret_cast<const char*>(result.display_rgb.data()),
+                    result.display_rgb.size());
+                output["scope_rgb"] = py::bytes(
+                    reinterpret_cast<const char*>(result.scope_rgb.data()),
+                    result.scope_rgb.size() * sizeof(float));
+                return output;
+            },
+            py::arg("input_filename"),
+            py::arg("resources"),
+            py::arg("settings"),
+            py::arg("max_dimension") = 1280,
+            py::arg("time") = 0.0);
+
+    module.attr("metal_preview_available") =
+        FilmVizMetalPreview::available();
+#else
+    module.attr("metal_preview_available") = false;
+#endif
 
     module.def(
         "profiles",

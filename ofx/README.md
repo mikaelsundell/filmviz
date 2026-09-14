@@ -1,76 +1,40 @@
 # FilmViz OpenFX plug-in
 
 This folder contains the production OpenFX front end for FilmViz. The plug-in
-uses `filmviz_core` as the authoritative film model and supports both the CPU
-reference renderer and a Metal-accelerated renderer on macOS.
+uses `filmviz_core` as the authoritative film model and renders through the GPU
+API supplied by the OpenFX host.
 
-## Processing backends
+## GPU backend selection
 
-The **Processing** control selects the render backend:
+There is no plug-in-local backend control. FilmViz follows Resolve's configured
+GPU processing mode:
 
-- **Auto** — uses direct spectral Metal for pointwise colour and grain, and
-  CPU when the host does not supply Metal or a CPU-only spatial effect is
-  enabled. This is the recommended setting.
-- **CPU** — forces the reference CPU implementation. In a Metal render this
-  stages through shared buffers and is intended mainly for validation.
-- **Metal Direct** — evaluates rgb2spec, negative exposure/development,
+- **Metal** evaluates rgb2spec, negative exposure/development,
   Status-M closure, colour response, 2383 exposure/development and D55 viewing
   in Metal without a colour-transform LUT.
+- **OpenCL** evaluates the same direct spectral kernel through the
+  OpenFX host command queue. It is available when OpenCL was found at build
+  time.
 
-The former Metal colour-LUT renderer has been removed. Metal Direct consumes
-the measured/profile data exported by `FilmPipeline`; CPU remains the
-authoritative comparison and fallback implementation.
+Metal is preferred on macOS; OpenCL supports older macOS configurations and is
+the current Windows backend. The OFX plug-in does not silently fall back to CPU.
+If Resolve supplies neither API, FilmViz reports a persistent configuration
+error. CPU remains available in the standalone validation tools.
 
-## Interactive transform behavior
+## Direct GPU behavior
 
-The OFX transform cache is process-wide, not node-local. Resolve nodes with
-matching film-transform settings share the input-to-negative-exposure LUT,
-development/output LUT, development log domain, and granularity field. The
-heavy `FilmPipeline` is needed only to build a cache miss and is released once
-those immutable transform products have been generated. Cache ownership uses
-`weak_ptr`, so unused in-memory transforms can be released automatically.
-
-Exposure is deliberately excluded from the expensive transform key. The cached
-transform is split at FilmViz's physical negative-exposure boundary:
-
-```text
-encoded input
-  -> cached input-to-negative-exposure LUT
-  -> raw FilmExposure * 2^ExposureStops
-  -> logarithmic development shaper
-  -> cached negative-development / print / output LUT
-```
-
-Multiplying `FilmExposure` by `2^stops` is mathematically the same operation as
-the LogE exposure offset used by `FilmPipeline::relative_negative_log_exposure`.
-Changing Exposure therefore preserves the FilmViz model while avoiding LUT
-regeneration and Metal re-upload. Measured MTF, grain and halation spatial
-controls are also live parameters and do not invalidate the shared transform.
-
-Transform-changing controls such as negative stock, flash, push/pull, bleach
-bypass, printer lights, middle gray, and input/output profile select or build a
-different shared transform cache.
-
-During an interactive parameter drag, Resolve's interactive/draft render hint
-selects a quantized 9^3 preview transform when the requested full-quality
-transform is not already resident. This substantially reduces spectral cache
-generation time while preserving the same physical pipeline. When interaction
-ends, FilmViz generates or loads the exact parameter value at the fixed
-production LUT size. Runtime-only Exposure, MTF, grain, and halation changes
-continue to reuse the resident full-quality transform without entering preview
-mode.
-
-Metal Direct does not enter the preview-LUT path. Measured profile and rgb2spec
+Direct GPU rendering does not use a preview-LUT path. Measured profile and rgb2spec
 tables are uploaded once per profile/device and shared across nodes; flash,
 push/pull, Color Separation, Color Depth, bleach bypass, printer lights, middle
-gray, input/output selection and grain remain live kernel parameters. MTF and
-halation currently select the established spatial paths under Auto; explicit
-Metal Direct reports that limitation instead of silently changing the requested
-implementation.
+gray, input/output selection, grain and halation remain live kernel parameters.
+Halation is evaluated in negative-exposure space before development. Measured
+MTF is applied after the direct film render using per-channel kernels generated
+from the profile curves. Metal and OpenCL share the same packed parameter layout
+and canonical kernel algorithm.
 
-## Persistent and bundled caches
+## Standalone CPU reference caches
 
-FilmViz checks transform caches in this order:
+The standalone CPU reference utilities check transform caches in this order:
 
 1. process-wide shared memory cache;
 2. pre-generated cache bundled in `Contents/Resources/filmviz/cache/ofx`;
@@ -94,15 +58,14 @@ export FILMVIZ_OFX_CACHE_DIR=/path/to/cache
 
 ### Pre-generating common combinations
 
-A normal OFX build pre-generates the neutral/common FilmViz combinations at LUT
+A normal OFX build pre-generates the neutral/common CPU reference combinations at LUT
 size 33 when `FILMVIZ_OFX_PREBAKE_CACHE=ON` (default). The generated cache
 contains both negative stocks, both input profiles, and both output profiles,
 with Kodak Vision 2383/3383, 25/25/25 printer lights, 3200 K, zero push/pull,
 zero bleach
 bypass, and middle gray 0.18. Each `.fvcache` contains the input-to-negative-
 exposure LUT, the log-exposure development domain, the developed/output LUT,
-and the granularity sigma field, so those common combinations are ready when
-Resolve creates the node.
+and the granularity sigma field for validation and comparison tools.
 
 The build tool is:
 
@@ -129,16 +92,17 @@ with:
 -DFILMVIZ_OFX_PREBAKE_CACHE=OFF
 ```
 
-## Metal profile cache
+## GPU profile caches
 
-Direct Metal nodes separately share immutable measured spectral, sensitometric,
-dye, viewer, granularity and rgb2spec buffers. These resources are keyed only by
-device and stock selection, so creative control changes require no LUT build or
-GPU re-upload.
+Direct Metal and OpenCL nodes separately share immutable measured spectral,
+sensitometric, dye, viewer, granularity and rgb2spec buffers. These resources
+are keyed by API context/device and stock selection, so creative control changes
+require no LUT build or GPU re-upload.
 
-Metal Direct currently accelerates the complete pointwise spectral colour path
-and negative/print grain. Halation and measured MTF use CPU fallback under Auto
-until their spatial passes are moved onto the direct backend.
+Both direct backends accelerate the complete spectral colour path,
+negative/print grain, negative-stage halation and measured negative/print MTF.
+Only the small measured MTF coefficient calculation remains on the CPU; all
+image-sized spatial work stays on the GPU command queue.
 
 ## Standalone CPU/Metal comparison
 
@@ -151,6 +115,23 @@ AP0 error:
 filmviz_metal_compare input.exr comparison/output /path/to/resources
 ```
 
+Add `--spatial` after the resource path to enable a representative MTF and
+halation validation pass against the CPU OFX reference. In that mode the CPU
+side intentionally uses the production 33^3 OFX transform, so its reported
+error also includes the LUT approximation relative to the direct GPU pipeline.
+
+The cross-platform OpenCL equivalent writes `_cpu.exr`, `_opencl.exr`, and
+`_side_by_side.exr`:
+
+```bash
+filmviz_opencl_compare input.exr comparison/output /path/to/resources
+```
+
+OpenCL is detected with CMake's `FindOpenCL`. When it is unavailable the OFX
+plug-in still builds with CPU support (and Metal support on macOS). A Windows
+GPU build needs the vendor OpenCL runtime and development import library/header
+available to CMake.
+
 ## Timeline/performance logging
 
 FilmViz writes a thread-safe OFX performance log by default. On macOS:
@@ -160,8 +141,7 @@ FilmViz writes a thread-safe OFX performance log by default. On macOS:
 ```
 
 The log includes plug-in load/unload, node creation/destruction, frame time,
-backend requests, exposure, stock selection, cache hits/misses, bundled/disk
-cache hits, LUT-generation time, Metal upload/reuse, and render/encode timing.
+exposure, stock selection, GPU profile upload/reuse, and render/encode timing.
 The log rotates at approximately 32 MB.
 
 Open it with:
@@ -198,7 +178,6 @@ Resolve presents the controls in collapsible groups:
 
 Setup:
 
-- Processing backend
 - Input and output profiles
 
 Negative:
@@ -245,9 +224,9 @@ Advanced:
 - Worker threads
 
 MTF, grain and halation are disabled by default. Enabling MTF uses the measured
-cycles/mm response and the selected active-image width. Because the current
-Metal kernel is pointwise, measured MTF automatically uses the CPU spatial
-bridge.
+cycles/mm response and the selected active-image width. Metal Direct and
+OpenCL Direct execute the image-sized MTF and halation passes on the GPU. CPU
+remains available only in the standalone reference and comparison tools.
 Color Separation operates in calibrated negative dye-coordinate space before
 spectral density synthesis. Increasing it progressively calms chroma. Zero is
 the accepted standard response, -4 is calibrated bypass, and +4 is twice the
@@ -359,7 +338,9 @@ Resolve after installation.
 ## Current limitations
 
 - Float RGBA input/output only.
-- Metal acceleration is macOS-only; CPU remains available on all platforms.
+- Metal is available on macOS and OpenCL is available when found at build time.
+- CUDA is not yet supported; Windows Resolve must supply an OpenCL queue.
+- The production OFX plug-in has no CPU fallback.
 - Full-frame rendering is requested because halation and MTF are spatial.
 - No custom-drawn OFX UI; Resolve renders the standard parameter controls.
 - Metal halation uses Metal Performance Shaders Gaussian blur while the CPU

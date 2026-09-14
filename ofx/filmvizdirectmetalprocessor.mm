@@ -3,8 +3,13 @@
 
 #include "filmvizdirectmetalprocessor.h"
 
+#include "filmvizdirectparams.h"
+
 #include "filmdirectdata.h"
 #include "filmpipeline.h"
+#include "negativeprofile.h"
+#include "printprofile.h"
+#include "spatialresponsemodel.h"
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -14,85 +19,13 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
 
 namespace
 {
-
-struct alignas(16) DirectParams
-{
-    std::uint32_t spectral_count = 0;
-    std::uint32_t rgb2spec_resolution = 0;
-    std::uint32_t rgb2spec_forward_count = 0;
-    std::uint32_t input_profile = 0;
-    std::uint32_t output_profile = 1;
-    std::uint32_t reserved_header[3] = {};
-
-    std::int32_t source_x1 = 0;
-    std::int32_t source_y1 = 0;
-    std::int32_t source_x2 = 0;
-    std::int32_t source_y2 = 0;
-    std::int32_t destination_x1 = 0;
-    std::int32_t destination_y1 = 0;
-    std::int32_t destination_x2 = 0;
-    std::int32_t destination_y2 = 0;
-    std::int32_t render_x1 = 0;
-    std::int32_t render_y1 = 0;
-    std::int32_t render_x2 = 0;
-    std::int32_t render_y2 = 0;
-    std::uint32_t source_row_bytes = 0;
-    std::uint32_t destination_row_bytes = 0;
-    std::uint32_t reserved0 = 0;
-    std::uint32_t reserved1 = 0;
-
-    float exposure_stops = 0.0f;
-    float negative_flash_percent = 0.0f;
-    float print_flash_percent = 0.0f;
-    float push_pull_stops = 0.0f;
-    float color_density = 0.0f;
-    float color_depth = 1.0f;
-    float negative_bleach_bypass = 0.0f;
-    float print_bleach_bypass = 0.0f;
-    float printer_light_red = 25.0f;
-    float printer_light_green = 25.0f;
-    float printer_light_blue = 25.0f;
-    float printer_light_master = 0.0f;
-    float middle_gray = 0.18f;
-    float printer_temperature = 3200.0f;
-    float wavelength_min_nm = 380.0f;
-    float wavelength_step_nm = 5.0f;
-    std::uint32_t granularity_count = 0;
-    std::uint32_t frame_seed = 0;
-    std::uint32_t grain_enabled = 0;
-    std::uint32_t reserved_grain = 0;
-    float negative_grain = 0.0f;
-    float print_grain = 0.0f;
-    float grain_size = 1.0f;
-    float grain_chroma = 1.0f;
-    float granularity_density_min = 0.0f;
-    float granularity_density_max = 4.0f;
-    float reserved_grain_float[2] = {};
-
-    float reference_negative_exposure[4] = {};
-    float reference_negative_density[4] = {};
-    float minimum_negative_coordinate[4] = {};
-    float neutral_negative_increment[4] = {};
-    float calibration_zero_target[4] = {};
-    float calibration_zero_measured[4] = {};
-    float calibration_minimum_status_m[4] = {};
-    float print_target_log_exposure[4] = {};
-    float calibration_jacobian_0[4] = {};
-    float calibration_jacobian_1[4] = {};
-    float calibration_jacobian_2[4] = {};
-
-    std::uint32_t curve_negative_01[4] = {};
-    std::uint32_t curve_negative_2_print_0[4] = {};
-    std::uint32_t curve_print_12[4] = {};
-};
-
-static_assert(sizeof(DirectParams)==432,
-    "DirectParams must match the direct Metal constant-buffer layout");
 
 static const char* kDirectMetalSource = R"METAL(
 #include <metal_stdlib>
@@ -133,6 +66,14 @@ struct DirectParams
     uint4 curve_negative_01;
     uint4 curve_negative_2_print_0;
     uint4 curve_print_12;
+};
+
+struct SpatialParams
+{
+    uint width; uint height; uint radius; uint horizontal;
+    uint gamma24; uint reserved0; uint reserved1; uint reserved2;
+    float strength; float threshold; float2 reserved_float;
+    float4 scatter;
 };
 
 inline float4 read_pixel(device const uchar* bytes, uint row_bytes, int x, int y, int x1, int y1)
@@ -469,29 +410,36 @@ kernel void filmviz_direct(
     device const float* rgb_forward [[buffer(11)]],
     device const float4* negative_granularity [[buffer(12)]],
     device const float4* print_granularity [[buffer(13)]],
-    constant DirectParams& p [[buffer(14)]], uint2 gid [[thread_position_in_grid]])
+    constant DirectParams& p [[buffer(14)]],
+    device const float4* prepared_exposure [[buffer(15)]], uint2 gid [[thread_position_in_grid]])
 {
     int x=p.render_x1+int(gid.x), y=p.render_y1+int(gid.y);
     if(x>=p.render_x2||y>=p.render_y2) return;
     float4 src=read_pixel(source,p.source_row_bytes,x,y,p.source_x1,p.source_y1);
-    float3 ap0=p.input_profile==0?logc3_to_ap0(src.xyz):src.xyz;
-    float luminance=dot(float3(0.34396645f,0.72816610f,-0.07213255f),ap0);
-    float scene_scale=isfinite(luminance)&&luminance>0.18f?luminance/0.18f:1.0f;
-    float3 reconstruction=ap0/scene_scale;
-    float spectrum_scale=max(1.0f,max(max(reconstruction.x,reconstruction.y),reconstruction.z));
-    float3 coeff=rgb2spec_fetch(rgb_scale,rgb_data,p.rgb2spec_resolution,reconstruction/spectrum_scale);
-    float3 rgb_target=clamp(reconstruction/spectrum_scale,0.0f,1.0f);
-    if(!(rgb_target.x==rgb_target.y && rgb_target.y==rgb_target.z))
-        coeff=rgb2spec_optimize(coeff,rgb_target,rgb_forward,p.rgb2spec_forward_count);
-    spectrum_scale*=scene_scale;
     float3 negative_exposure=float3(0.0f);
-    for(uint i=0;i<p.spectral_count;++i) {
-        float4 s=negative_exposure_data[i];
-        negative_exposure+=s.yzw*(spectrum_scale*spectrum(coeff,s.x));
+    if(p.reserved_header0!=0u) {
+        uint width=uint(p.source_x2-p.source_x1);
+        negative_exposure=prepared_exposure[uint(y-p.source_y1)*width+uint(x-p.source_x1)].xyz;
+    } else {
+        float3 ap0=p.input_profile==0?logc3_to_ap0(src.xyz):src.xyz;
+        float luminance=dot(float3(0.34396645f,0.72816610f,-0.07213255f),ap0);
+        float scene_scale=isfinite(luminance)&&luminance>0.18f?luminance/0.18f:1.0f;
+        float3 reconstruction=ap0/scene_scale;
+        float spectrum_scale=max(1.0f,max(max(reconstruction.x,reconstruction.y),reconstruction.z));
+        float3 coeff=rgb2spec_fetch(rgb_scale,rgb_data,p.rgb2spec_resolution,reconstruction/spectrum_scale);
+        float3 rgb_target=clamp(reconstruction/spectrum_scale,0.0f,1.0f);
+        if(!(rgb_target.x==rgb_target.y && rgb_target.y==rgb_target.z))
+            coeff=rgb2spec_optimize(coeff,rgb_target,rgb_forward,p.rgb2spec_forward_count);
+        spectrum_scale*=scene_scale;
+        for(uint i=0;i<p.spectral_count;++i) {
+            float4 s=negative_exposure_data[i];
+            negative_exposure+=s.yzw*(spectrum_scale*spectrum(coeff,s.x));
+        }
+        float3 reference_flash=p.reference_negative_exposure.xyz*(p.middle_gray/0.18f);
+        negative_exposure+=reference_flash*(p.negative_flash_percent*0.01f);
     }
     float3 reference=p.reference_negative_exposure.xyz*(p.middle_gray/0.18f);
-    negative_exposure+=reference*(p.negative_flash_percent*0.01f);
-    float3 log_exposure=-0.515f+0.301029995664f*p.exposure_stops+log10(max(negative_exposure,float3(1e-20f))/max(reference,float3(1e-20f)));
+    float3 log_exposure=-0.515f+(p.reserved_header0!=0u?0.0f:0.301029995664f*p.exposure_stops)+log10(max(negative_exposure,float3(1e-20f))/max(reference,float3(1e-20f)));
     float3 negative_status=float3(
         curve_sample(curves,p.curve_negative_01.x,p.curve_negative_01.y,log_exposure.x),
         curve_sample(curves,p.curve_negative_01.z,p.curve_negative_01.w,log_exposure.y),
@@ -553,6 +501,107 @@ kernel void filmviz_direct(
     }
     write_pixel(destination,p.destination_row_bytes,x,y,p.destination_x1,p.destination_y1,float4(converted,src.w));
 }
+
+kernel void filmviz_prepare_halation(
+    device const uchar* source [[buffer(0)]],
+    device float4* exposure_output [[buffer(1)]],
+    device float4* highlight_output [[buffer(2)]],
+    device const float4* negative_exposure_data [[buffer(3)]],
+    device const float* rgb_scale [[buffer(4)]],
+    device const float* rgb_data [[buffer(5)]],
+    device const float* rgb_forward [[buffer(6)]],
+    constant DirectParams& p [[buffer(7)]],
+    constant SpatialParams& spatial [[buffer(8)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if(gid.x>=spatial.width||gid.y>=spatial.height) return;
+    int x=p.source_x1+int(gid.x), y=p.source_y1+int(gid.y);
+    float4 src=read_pixel(source,p.source_row_bytes,x,y,p.source_x1,p.source_y1);
+    float3 ap0=p.input_profile==0?logc3_to_ap0(src.xyz):src.xyz;
+    float exposure_scale=exp2(p.exposure_stops);
+    ap0*=exposure_scale;
+    float luminance=dot(float3(0.34396645f,0.72816610f,-0.07213255f),ap0);
+    float scene_scale=isfinite(luminance)&&luminance>0.18f?luminance/0.18f:1.0f;
+    float3 reconstruction=ap0/scene_scale;
+    float spectrum_scale=max(1.0f,max(max(reconstruction.x,reconstruction.y),reconstruction.z));
+    float3 coeff=rgb2spec_fetch(rgb_scale,rgb_data,p.rgb2spec_resolution,reconstruction/spectrum_scale);
+    float3 rgb_target=clamp(reconstruction/spectrum_scale,0.0f,1.0f);
+    if(!(rgb_target.x==rgb_target.y&&rgb_target.y==rgb_target.z))
+        coeff=rgb2spec_optimize(coeff,rgb_target,rgb_forward,p.rgb2spec_forward_count);
+    spectrum_scale*=scene_scale;
+    float3 exposure=float3(0.0f);
+    for(uint i=0;i<p.spectral_count;++i) {
+        float4 s=negative_exposure_data[i];
+        exposure+=s.yzw*(spectrum_scale*spectrum(coeff,s.x));
+    }
+    float3 reference=p.reference_negative_exposure.xyz*(p.middle_gray/0.18f);
+    exposure=(exposure+reference*(p.negative_flash_percent*0.01f))*exposure_scale;
+    float safe_luminance=max(0.0f,luminance), weight=safe_luminance;
+    if(spatial.threshold>1e-8f) {
+        float onset=0.5f*spatial.threshold;
+        if(safe_luminance<=onset) weight=0.0f;
+        else { float t=clamp((safe_luminance-onset)/max(spatial.threshold-onset,1e-8f),0.0f,1.0f); weight=safe_luminance*t*t*(3.0f-2.0f*t); }
+    }
+    uint index=gid.y*spatial.width+gid.x;
+    exposure_output[index]=float4(exposure,src.w);
+    highlight_output[index]=float4(max(exposure,0.0f)*weight,src.w);
+}
+
+kernel void filmviz_box_blur(
+    device const float4* source [[buffer(0)]], device float4* destination [[buffer(1)]],
+    constant SpatialParams& p [[buffer(2)]], uint2 gid [[thread_position_in_grid]])
+{
+    if(gid.x>=p.width||gid.y>=p.height) return;
+    float4 value=float4(0.0f); int radius=int(p.radius);
+    for(int tap=-radius;tap<=radius;++tap) {
+        uint x=p.horizontal!=0u?uint(clamp(int(gid.x)+tap,0,int(p.width)-1)):gid.x;
+        uint y=p.horizontal==0u?uint(clamp(int(gid.y)+tap,0,int(p.height)-1)):gid.y;
+        value+=source[y*p.width+x];
+    }
+    destination[gid.y*p.width+gid.x]=value/float(2*radius+1);
+}
+
+kernel void filmviz_combine_halation(
+    device float4* exposure [[buffer(0)]], device const float4* highlight [[buffer(1)]],
+    device const float4* near_blur [[buffer(2)]], device const float4* far_blur [[buffer(3)]],
+    constant SpatialParams& p [[buffer(4)]], uint2 gid [[thread_position_in_grid]])
+{
+    if(gid.x>=p.width||gid.y>=p.height) return;
+    uint index=gid.y*p.width+gid.x;
+    float3 blurred=0.72f*near_blur[index].xyz+0.28f*far_blur[index].xyz;
+    float3 spread=max(float3(0.0f),blurred-0.95f*highlight[index].xyz);
+    float4 result=exposure[index]; result.xyz+=p.strength*p.scatter.xyz*spread; exposure[index]=result;
+}
+
+kernel void filmviz_mtf(
+    device const float4* source [[buffer(0)]], device float4* destination [[buffer(1)]],
+    device const float* weights [[buffer(2)]], constant SpatialParams& p [[buffer(3)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if(gid.x>=p.width||gid.y>=p.height) return;
+    int radius=int(p.radius); float3 value=float3(0.0f);
+    for(int tap=-radius;tap<=radius;++tap) {
+        uint x=p.horizontal!=0u?uint(clamp(int(gid.x)+tap,0,int(p.width)-1)):gid.x;
+        uint y=p.horizontal==0u?uint(clamp(int(gid.y)+tap,0,int(p.height)-1)):gid.y;
+        float3 sample=source[y*p.width+x].xyz;
+        if(p.gamma24!=0u&&p.horizontal!=0u) sample=pow(max(sample,0.0f),float3(2.4f));
+        uint w=uint(tap+radius);
+        value+=sample*float3(weights[w],weights[uint(2*radius+1)+w],weights[uint(4*radius+2)+w]);
+    }
+    if(p.gamma24!=0u&&p.horizontal==0u) value=pow(max(value,0.0f),float3(1.0f/2.4f));
+    if(p.horizontal==0u) value=clamp(value,0.0f,1.0f);
+    destination[gid.y*p.width+gid.x]=float4(value,source[gid.y*p.width+gid.x].w);
+}
+
+kernel void filmviz_copy_dense(
+    device const float4* source [[buffer(0)]], device uchar* destination [[buffer(1)]],
+    constant DirectParams& p [[buffer(2)]], uint2 gid [[thread_position_in_grid]])
+{
+    uint width=uint(p.render_x2-p.render_x1),height=uint(p.render_y2-p.render_y1);
+    if(gid.x>=width||gid.y>=height) return;
+    int x=p.render_x1+int(gid.x),y=p.render_y1+int(gid.y);
+    write_pixel(destination,p.destination_row_bytes,x,y,p.destination_x1,p.destination_y1,source[gid.y*width+gid.x]);
+}
 )METAL";
 
 id<MTLBuffer> make_buffer(id<MTLDevice> device, const std::vector<float>& values)
@@ -566,6 +615,16 @@ MTLSize threadgroup_size(id<MTLComputePipelineState> pipeline)
     const NSUInteger width=std::max<NSUInteger>(1,std::min<NSUInteger>(pipeline.threadExecutionWidth,16));
     const NSUInteger height=std::max<NSUInteger>(1,std::min<NSUInteger>(pipeline.maxTotalThreadsPerThreadgroup/width,16));
     return MTLSizeMake(width,height,1);
+}
+
+bool encode_2d(id<MTLCommandBuffer> command,id<MTLComputePipelineState> pipeline,
+    NSUInteger width,NSUInteger height,const std::function<void(id<MTLComputeCommandEncoder>)>& bind)
+{
+    id<MTLComputeCommandEncoder> encoder=[command computeCommandEncoder];
+    if(!encoder) return false;
+    [encoder setComputePipelineState:pipeline]; bind(encoder);
+    [encoder dispatchThreads:MTLSizeMake(width,height,1) threadsPerThreadgroup:threadgroup_size(pipeline)];
+    [encoder endEncoding]; return true;
 }
 
 struct DirectResources
@@ -595,6 +654,11 @@ struct FilmVizDirectMetalProcessor::Impl
     id<MTLDevice> device=nil;
     id<MTLLibrary> library=nil;
     id<MTLComputePipelineState> pipeline=nil;
+    id<MTLComputePipelineState> prepare_halation=nil;
+    id<MTLComputePipelineState> box_blur=nil;
+    id<MTLComputePipelineState> combine_halation=nil;
+    id<MTLComputePipelineState> mtf=nil;
+    id<MTLComputePipelineState> copy_dense=nil;
     id<MTLBuffer> negative_exposure=nil;
     id<MTLBuffer> negative_density=nil;
     id<MTLBuffer> status_m=nil;
@@ -608,12 +672,25 @@ struct FilmVizDirectMetalProcessor::Impl
     id<MTLBuffer> negative_granularity=nil;
     id<MTLBuffer> print_granularity=nil;
     FilmDirectData data;
+    SpatialResponseModel spatial_response;
+    bool spatial_response_valid=false;
+    std::string spatial_profile_key;
     std::string profile_key;
     std::shared_ptr<DirectResources> shared_resources;
 };
 
 FilmVizDirectMetalProcessor::FilmVizDirectMetalProcessor():impl_(std::make_unique<Impl>()) {}
 FilmVizDirectMetalProcessor::~FilmVizDirectMetalProcessor()=default;
+
+void FilmVizDirectMetalProcessor::invalidate_profiles()
+{
+    impl_->negative_exposure=nil; impl_->negative_density=nil; impl_->status_m=nil;
+    impl_->print_exposure=nil; impl_->print_density=nil; impl_->viewer=nil; impl_->curves=nil;
+    impl_->rgb_scale=nil; impl_->rgb_data=nil; impl_->rgb_forward=nil;
+    impl_->negative_granularity=nil; impl_->print_granularity=nil;
+    impl_->shared_resources.reset(); impl_->profile_key.clear();
+    impl_->spatial_response_valid=false; impl_->spatial_profile_key.clear();
+}
 
 bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& settings,
     const std::string& resources_directory, void* command_queue, std::string& error)
@@ -630,12 +707,35 @@ bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& sett
         impl_->library=[device newLibraryWithSource:[NSString stringWithUTF8String:kDirectMetalSource]
             options:options error:&library_error];
         if(!impl_->library) { error=library_error?[[library_error localizedDescription] UTF8String]:"could not compile direct FilmViz Metal library"; return false; }
-        id<MTLFunction> function=[impl_->library newFunctionWithName:@"filmviz_direct"];
         NSError* pipeline_error=nil;
-        impl_->pipeline=[device newComputePipelineStateWithFunction:function error:&pipeline_error];
-        if(!impl_->pipeline) { error=pipeline_error?[[pipeline_error localizedDescription] UTF8String]:"could not create direct FilmViz Metal pipeline"; return false; }
+        auto make_pipeline=[&](NSString* name)->id<MTLComputePipelineState> {
+            id<MTLFunction> function=[impl_->library newFunctionWithName:name];
+            return function?[device newComputePipelineStateWithFunction:function error:&pipeline_error]:nil;
+        };
+        impl_->pipeline=make_pipeline(@"filmviz_direct");
+        impl_->prepare_halation=make_pipeline(@"filmviz_prepare_halation");
+        impl_->box_blur=make_pipeline(@"filmviz_box_blur");
+        impl_->combine_halation=make_pipeline(@"filmviz_combine_halation");
+        impl_->mtf=make_pipeline(@"filmviz_mtf");
+        impl_->copy_dense=make_pipeline(@"filmviz_copy_dense");
+        if(!impl_->pipeline||!impl_->prepare_halation||!impl_->box_blur||!impl_->combine_halation||!impl_->mtf||!impl_->copy_dense) {
+            error=pipeline_error?[[pipeline_error localizedDescription] UTF8String]:"could not create FilmViz Metal pipelines"; return false;
+        }
     }
     const std::string profile_key=resources_directory+'\n'+settings.negative_profile+'\n'+settings.print_profile;
+    if(profile_key!=impl_->spatial_profile_key) {
+        const auto* negative_profile=NegativeProfileCatalog::find(settings.negative_profile);
+        const auto* print_profile=PrintProfileCatalog::find(settings.print_profile=="none"
+            ?PrintProfileCatalog::default_profile().identifier:settings.print_profile);
+        impl_->spatial_response_valid=false;
+        if(negative_profile&&print_profile) {
+            const std::filesystem::path resources(resources_directory);
+            impl_->spatial_response_valid=impl_->spatial_response.load(
+                (resources/negative_profile->resource_directory/(negative_profile->resource_prefix+"_modulation_transfer_function_curves.csv")).string(),
+                (resources/print_profile->resource_directory/print_profile->mtf_filename).string());
+        }
+        impl_->spatial_profile_key=profile_key;
+    }
     const std::string key=std::to_string(reinterpret_cast<std::uintptr_t>((__bridge void*)device))+'\n'+profile_key;
     if(key==impl_->profile_key&&impl_->rgb_data) return true;
 
@@ -706,7 +806,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     render_x1=std::max(render_x1,destination.x1); render_y1=std::max(render_y1,destination.y1);
     render_x2=std::min(render_x2,destination.x2); render_y2=std::min(render_y2,destination.y2);
     if(render_x1>=render_x2||render_y1>=render_y2) return true;
-    DirectParams p;
+    FilmVizDirectParams p;
     p.spectral_count=impl_->data.spectral_count; p.rgb2spec_resolution=impl_->data.rgb2spec_resolution;
     p.rgb2spec_forward_count=impl_->data.rgb2spec_forward_count;
     p.input_profile=settings.input_profile; p.output_profile=settings.output_profile;
@@ -741,21 +841,80 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     p.curve_negative_01[0]=n[0].offset; p.curve_negative_01[1]=n[0].count; p.curve_negative_01[2]=n[1].offset; p.curve_negative_01[3]=n[1].count;
     p.curve_negative_2_print_0[0]=n[2].offset; p.curve_negative_2_print_0[1]=n[2].count; p.curve_negative_2_print_0[2]=q[0].offset; p.curve_negative_2_print_0[3]=q[0].count;
     p.curve_print_12[0]=q[1].offset; p.curve_print_12[1]=q[1].count; p.curve_print_12[2]=q[2].offset; p.curve_print_12[3]=q[2].count;
+    const bool use_halation=settings.halation_enabled&&settings.halation_strength>0.0f&&settings.halation_radius>0.0f;
+    const bool use_mtf=settings.negative_mtf_amount>0.0f||settings.print_mtf_amount>0.0f;
+    if(use_mtf&&!impl_->spatial_response_valid) { error="FilmViz measured MTF response is unavailable"; return false; }
+    const NSUInteger source_width=source.x2-source.x1,source_height=source.y2-source.y1;
+    const NSUInteger render_width=render_x2-render_x1,render_height=render_y2-render_y1;
     id<MTLCommandQueue> queue=(__bridge id<MTLCommandQueue>)command_queue;
+    id<MTLDevice> device=queue.device;
     id<MTLCommandBuffer> command=[queue commandBuffer];
-    id<MTLComputeCommandEncoder> encoder=[command computeCommandEncoder];
-    [encoder setComputePipelineState:impl_->pipeline];
-    [encoder setBuffer:(__bridge id<MTLBuffer>)source.buffer offset:0 atIndex:0];
-    [encoder setBuffer:(__bridge id<MTLBuffer>)destination.buffer offset:0 atIndex:1];
-    [encoder setBuffer:impl_->negative_exposure offset:0 atIndex:2]; [encoder setBuffer:impl_->negative_density offset:0 atIndex:3];
-    [encoder setBuffer:impl_->status_m offset:0 atIndex:4]; [encoder setBuffer:impl_->print_exposure offset:0 atIndex:5];
-    [encoder setBuffer:impl_->print_density offset:0 atIndex:6]; [encoder setBuffer:impl_->viewer offset:0 atIndex:7];
-    [encoder setBuffer:impl_->curves offset:0 atIndex:8]; [encoder setBuffer:impl_->rgb_scale offset:0 atIndex:9];
-    [encoder setBuffer:impl_->rgb_data offset:0 atIndex:10]; [encoder setBuffer:impl_->rgb_forward offset:0 atIndex:11];
-    [encoder setBuffer:impl_->negative_granularity offset:0 atIndex:12]; [encoder setBuffer:impl_->print_granularity offset:0 atIndex:13];
-    [encoder setBytes:&p length:sizeof(p) atIndex:14];
-    [encoder dispatchThreads:MTLSizeMake(render_x2-render_x1,render_y2-render_y1,1) threadsPerThreadgroup:threadgroup_size(impl_->pipeline)];
-    [encoder endEncoding]; [command commit];
+    const MTLResourceOptions temporary_options=MTLResourceStorageModePrivate;
+    id<MTLBuffer> prepared=(__bridge id<MTLBuffer>)source.buffer;
+    id<MTLBuffer> highlight=nil,near_a=nil,near_b=nil,far_a=nil,far_b=nil;
+    FilmVizDirectSpatialParams spatial;
+    if(use_halation) {
+        const NSUInteger bytes=source_width*source_height*sizeof(float)*4u;
+        prepared=[device newBufferWithLength:bytes options:temporary_options];
+        highlight=[device newBufferWithLength:bytes options:temporary_options];
+        near_a=[device newBufferWithLength:bytes options:temporary_options]; near_b=[device newBufferWithLength:bytes options:temporary_options];
+        far_a=[device newBufferWithLength:bytes options:temporary_options]; far_b=[device newBufferWithLength:bytes options:temporary_options];
+        if(!prepared||!highlight||!near_a||!near_b||!far_a||!far_b) { error="could not allocate FilmViz Metal halation buffers"; return false; }
+        spatial.width=source_width; spatial.height=source_height; spatial.strength=settings.halation_strength; spatial.threshold=settings.halation_threshold;
+        if(!encode_2d(command,impl_->prepare_halation,source_width,source_height,[&](id<MTLComputeCommandEncoder> e){
+            [e setBuffer:(__bridge id<MTLBuffer>)source.buffer offset:0 atIndex:0]; [e setBuffer:prepared offset:0 atIndex:1]; [e setBuffer:highlight offset:0 atIndex:2];
+            [e setBuffer:impl_->negative_exposure offset:0 atIndex:3]; [e setBuffer:impl_->rgb_scale offset:0 atIndex:4]; [e setBuffer:impl_->rgb_data offset:0 atIndex:5]; [e setBuffer:impl_->rgb_forward offset:0 atIndex:6];
+            [e setBytes:&p length:sizeof(p) atIndex:7]; [e setBytes:&spatial length:sizeof(spatial) atIndex:8];
+        })) { error="could not encode FilmViz Metal halation preparation"; return false; }
+        auto blur_three=[&](id<MTLBuffer> initial,id<MTLBuffer> a,id<MTLBuffer> b,int radius) {
+            spatial.radius=radius;
+            for(int pass=0;pass<3;++pass) {
+                spatial.horizontal=1; id<MTLBuffer> input=pass==0?initial:a;
+                if(!encode_2d(command,impl_->box_blur,source_width,source_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:input offset:0 atIndex:0]; [e setBuffer:b offset:0 atIndex:1]; [e setBytes:&spatial length:sizeof(spatial) atIndex:2]; })) return false;
+                spatial.horizontal=0;
+                if(!encode_2d(command,impl_->box_blur,source_width,source_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:b offset:0 atIndex:0]; [e setBuffer:a offset:0 atIndex:1]; [e setBytes:&spatial length:sizeof(spatial) atIndex:2]; })) return false;
+            }
+            return true;
+        };
+        if(!blur_three(highlight,near_a,near_b,filmviz_halation_box_radius(settings.halation_radius))
+            ||!blur_three(highlight,far_a,far_b,filmviz_halation_box_radius(settings.halation_radius*2.2f))) { error="could not encode FilmViz Metal halation blur"; return false; }
+        if(!encode_2d(command,impl_->combine_halation,source_width,source_height,[&](id<MTLComputeCommandEncoder> e){
+            [e setBuffer:prepared offset:0 atIndex:0]; [e setBuffer:highlight offset:0 atIndex:1]; [e setBuffer:near_a offset:0 atIndex:2]; [e setBuffer:far_a offset:0 atIndex:3]; [e setBytes:&spatial length:sizeof(spatial) atIndex:4];
+        })) { error="could not encode FilmViz Metal halation combine"; return false; }
+        p.reserved_header[0]=1u;
+    }
+    id<MTLBuffer> dense_a=nil,dense_b=nil;
+    FilmVizDirectParams direct_p=p;
+    id<MTLBuffer> direct_destination=(__bridge id<MTLBuffer>)destination.buffer;
+    if(use_mtf) {
+        const NSUInteger bytes=render_width*render_height*sizeof(float)*4u;
+        dense_a=[device newBufferWithLength:bytes options:temporary_options]; dense_b=[device newBufferWithLength:bytes options:temporary_options];
+        if(!dense_a||!dense_b) { error="could not allocate FilmViz Metal MTF buffers"; return false; }
+        direct_destination=dense_a; direct_p.destination_x1=render_x1; direct_p.destination_y1=render_y1;
+        direct_p.destination_x2=render_x2; direct_p.destination_y2=render_y2; direct_p.destination_row_bytes=render_width*sizeof(float)*4u;
+    }
+    if(!encode_2d(command,impl_->pipeline,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){
+        [e setBuffer:(__bridge id<MTLBuffer>)source.buffer offset:0 atIndex:0]; [e setBuffer:direct_destination offset:0 atIndex:1];
+        [e setBuffer:impl_->negative_exposure offset:0 atIndex:2]; [e setBuffer:impl_->negative_density offset:0 atIndex:3]; [e setBuffer:impl_->status_m offset:0 atIndex:4]; [e setBuffer:impl_->print_exposure offset:0 atIndex:5];
+        [e setBuffer:impl_->print_density offset:0 atIndex:6]; [e setBuffer:impl_->viewer offset:0 atIndex:7]; [e setBuffer:impl_->curves offset:0 atIndex:8]; [e setBuffer:impl_->rgb_scale offset:0 atIndex:9];
+        [e setBuffer:impl_->rgb_data offset:0 atIndex:10]; [e setBuffer:impl_->rgb_forward offset:0 atIndex:11]; [e setBuffer:impl_->negative_granularity offset:0 atIndex:12]; [e setBuffer:impl_->print_granularity offset:0 atIndex:13];
+        [e setBytes:&direct_p length:sizeof(direct_p) atIndex:14]; [e setBuffer:prepared offset:0 atIndex:15];
+    })) { error="could not encode FilmViz direct Metal render"; return false; }
+    if(use_mtf) {
+        SpatialResponseModel::Settings s; s.image_width_mm=settings.image_width_mm; s.negative_amount=settings.negative_mtf_amount;
+        s.print_amount=settings.print_mtf_amount; s.sampling_width_pixels=source_width; s.gamma24_encoded=settings.output_profile==1;
+        std::array<std::vector<float>,3> channel_weights;
+        if(!impl_->spatial_response.kernels(render_width,s,channel_weights)) { error="could not generate FilmViz measured MTF kernels"; return false; }
+        std::vector<float> weights; for(const auto& channel:channel_weights) weights.insert(weights.end(),channel.begin(),channel.end());
+        id<MTLBuffer> weight_buffer=make_buffer(device,weights); if(!weight_buffer) { error="could not upload FilmViz Metal MTF kernels"; return false; }
+        spatial.width=render_width; spatial.height=render_height; spatial.radius=channel_weights[0].size()/2u; spatial.gamma24=s.gamma24_encoded?1u:0u;
+        spatial.horizontal=1;
+        if(!encode_2d(command,impl_->mtf,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_a offset:0 atIndex:0]; [e setBuffer:dense_b offset:0 atIndex:1]; [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3]; })) { error="could not encode FilmViz Metal horizontal MTF"; return false; }
+        spatial.horizontal=0;
+        if(!encode_2d(command,impl_->mtf,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_b offset:0 atIndex:0]; [e setBuffer:dense_a offset:0 atIndex:1]; [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3]; })) { error="could not encode FilmViz Metal vertical MTF"; return false; }
+        if(!encode_2d(command,impl_->copy_dense,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_a offset:0 atIndex:0]; [e setBuffer:(__bridge id<MTLBuffer>)destination.buffer offset:0 atIndex:1]; [e setBytes:&p length:sizeof(p) atIndex:2]; })) { error="could not encode FilmViz Metal MTF output"; return false; }
+    }
+    [command commit];
     return true;
 }
 

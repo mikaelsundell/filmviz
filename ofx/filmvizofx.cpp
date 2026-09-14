@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell.
 
-// FilmViz OpenFX front end with CPU and Metal render backends.
+// FilmViz OpenFX front end with Metal and OpenCL render backends.
 
 
 #include "ofxCore.h"
@@ -15,9 +15,13 @@
 #if FILMVIZ_HAS_METAL
 #include "filmvizdirectmetalprocessor.h"
 #endif
+#if FILMVIZ_HAS_OPENCL
+#include "filmvizdirectopenclprocessor.h"
+#endif
 
 #include "ofxImageEffect.h"
 #include "ofxGPURender.h"
+#include "ofxMessage.h"
 #include "ofxParam.h"
 #include "ofxProperty.h"
 
@@ -46,7 +50,6 @@ constexpr const char* kPluginIdentifier = "com.github.mikaelsundell.filmviz";
 constexpr const char* kPluginLabel = "FilmViz";
 constexpr const char* kPluginGrouping = "FilmViz";
 
-constexpr const char* kParamBackend = "backend";
 constexpr const char* kParamInputProfile = "inputProfile";
 constexpr const char* kParamNegativeProfile = "negativeProfile";
 constexpr const char* kParamPrintProfile = "printProfile";
@@ -88,69 +91,50 @@ constexpr const char* kGroupGrain = "groupGrain";
 constexpr const char* kGroupHalation = "groupHalation";
 constexpr const char* kGroupAdvanced = "groupAdvanced";
 
-constexpr int kInteractiveLutSize = 9;
-
-float
-quantize_interactive(
-    float value,
-    float step)
-{
-    return
-        step > 0.0f
-            ? std::round(value / step) * step
-            : value;
-}
-
-FilmVizOfxRenderSettings
-interactive_transform_settings(
-    const FilmVizOfxRenderSettings& settings)
-{
-    FilmVizOfxRenderSettings preview = settings;
-
-    // Coarse steps encourage reuse while Resolve emits the dense sequence of
-    // values produced by slider drags. The exact values and production LUT
-    // size are restored for the non-interactive render.
-    preview.push_pull_stops =
-        quantize_interactive(preview.push_pull_stops, 0.10f);
-    preview.color_density =
-        quantize_interactive(preview.color_density, 0.05f);
-    preview.color_depth =
-        quantize_interactive(preview.color_depth, 0.05f);
-    preview.negative_flash_percent =
-        quantize_interactive(preview.negative_flash_percent, 0.10f);
-    preview.print_flash_percent =
-        quantize_interactive(preview.print_flash_percent, 0.10f);
-    preview.negative_bleach_bypass =
-        quantize_interactive(preview.negative_bleach_bypass, 0.05f);
-    preview.print_bleach_bypass =
-        quantize_interactive(preview.print_bleach_bypass, 0.05f);
-    preview.printer_light_red =
-        quantize_interactive(preview.printer_light_red, 0.50f);
-    preview.printer_light_green =
-        quantize_interactive(preview.printer_light_green, 0.50f);
-    preview.printer_light_blue =
-        quantize_interactive(preview.printer_light_blue, 0.50f);
-    preview.printer_light_master =
-        quantize_interactive(preview.printer_light_master, 0.50f);
-    preview.middle_gray =
-        std::max(
-            0.01f,
-            quantize_interactive(preview.middle_gray, 0.01f));
-
-    return preview;
-}
-
 OfxHost* gHost = nullptr;
 const OfxImageEffectSuiteV1* gEffectSuite = nullptr;
 const OfxPropertySuiteV1* gPropertySuite = nullptr;
 const OfxParameterSuiteV1* gParameterSuite = nullptr;
+const OfxMessageSuiteV2* gMessageSuite = nullptr;
+const OfxMessageSuiteV1* gMessageSuiteV1 = nullptr;
+
+void
+set_gpu_error(
+    OfxImageEffectHandle effect,
+    const std::string& message)
+{
+    if (gMessageSuite && gMessageSuite->setPersistentMessage) {
+        gMessageSuite->setPersistentMessage(
+            effect,
+            kOfxMessageError,
+            "filmviz.gpu",
+            "%s",
+            message.c_str());
+    }
+    else if (gMessageSuiteV1 && gMessageSuiteV1->message) {
+        gMessageSuiteV1->message(
+            effect,
+            kOfxMessageError,
+            "filmviz.gpu",
+            "%s",
+            message.c_str());
+    }
+}
+
+void
+clear_gpu_error(
+    OfxImageEffectHandle effect)
+{
+    if (gMessageSuite && gMessageSuite->clearPersistentMessage) {
+        gMessageSuite->clearPersistentMessage(effect);
+    }
+}
 
 struct InstanceData
 {
     OfxImageClipHandle source_clip = nullptr;
     OfxImageClipHandle output_clip = nullptr;
 
-    OfxParamHandle backend = nullptr;
     OfxParamHandle input = nullptr;
     OfxParamHandle negative = nullptr;
     OfxParamHandle print = nullptr;
@@ -187,9 +171,11 @@ struct InstanceData
     OfxParamHandle halation_threshold = nullptr;
 
     std::string resources_directory;
-    FilmVizOfxProcessor processor;
 #if FILMVIZ_HAS_METAL
     FilmVizDirectMetalProcessor direct_metal_processor;
+#endif
+#if FILMVIZ_HAS_OPENCL
+    FilmVizDirectOpenCLProcessor direct_opencl_processor;
 #endif
 };
 
@@ -293,10 +279,8 @@ bool
 read_settings(
     InstanceData& instance,
     double time,
-    FilmVizOfxRenderSettings& settings,
-    int& backend)
+    FilmVizOfxRenderSettings& settings)
 {
-    int backend_value = 0;
     int input = 0;
     int negative = 0;
     int print = 0;
@@ -335,7 +319,6 @@ read_settings(
     double halation_threshold = 0.7;
 
     const OfxStatus status[] = {
-        gParameterSuite->paramGetValueAtTime(instance.backend, time, &backend_value),
         gParameterSuite->paramGetValueAtTime(instance.input, time, &input),
         gParameterSuite->paramGetValueAtTime(instance.negative, time, &negative),
         gParameterSuite->paramGetValueAtTime(instance.print, time, &print),
@@ -375,12 +358,6 @@ read_settings(
             return false;
         }
     }
-
-#if FILMVIZ_HAS_METAL
-    backend = backend_value;
-#else
-    backend = backend_value == 1 ? 2 : 0;
-#endif
 
     const auto& negative_profiles =
         NegativeProfileCatalog::profiles();
@@ -484,8 +461,7 @@ create_instance(
     }
 
     const bool ok =
-        fetch_param(parameter_set, kParamBackend, instance->backend)
-        && fetch_param(parameter_set, kParamInputProfile, instance->input)
+        fetch_param(parameter_set, kParamInputProfile, instance->input)
         && fetch_param(parameter_set, kParamNegativeProfile, instance->negative)
         && fetch_param(parameter_set, kParamPrintProfile, instance->print)
         && fetch_param(parameter_set, kParamOutputProfile, instance->output)
@@ -618,6 +594,22 @@ fetch_suites()
                 kOfxParameterSuite,
                 1));
 
+    gMessageSuite =
+        reinterpret_cast<const OfxMessageSuiteV2*>(
+            gHost->fetchSuite(
+                gHost->host,
+                kOfxMessageSuite,
+                2));
+
+    gMessageSuiteV1 =
+        gMessageSuite
+            ? reinterpret_cast<const OfxMessageSuiteV1*>(gMessageSuite)
+            : reinterpret_cast<const OfxMessageSuiteV1*>(
+                gHost->fetchSuite(
+                    gHost->host,
+                    kOfxMessageSuite,
+                    1));
+
     return
         gEffectSuite
         && gPropertySuite
@@ -647,6 +639,18 @@ describe(
         kOfxPropLabel,
         0,
         kPluginLabel);
+
+    gPropertySuite->propSetString(
+        properties,
+        kOfxPropIcon,
+        0,
+        "icons/filmviz.svg");
+
+    gPropertySuite->propSetString(
+        properties,
+        kOfxPropIcon,
+        1,
+        "icons/filmviz.png");
 
     gPropertySuite->propSetString(
         properties,
@@ -682,12 +686,22 @@ describe(
 #endif
 #endif
 
+#if FILMVIZ_HAS_OPENCL
+#ifdef kOfxImageEffectPropOpenCLRenderSupported
+    gPropertySuite->propSetString(
+        properties,
+        kOfxImageEffectPropOpenCLRenderSupported,
+        0,
+        "true");
+#endif
+#endif
+
 #ifdef kOfxImageEffectPropCPURenderSupported
     gPropertySuite->propSetString(
         properties,
         kOfxImageEffectPropCPURenderSupported,
         0,
-        "true");
+        "false");
 #endif
 
     gPropertySuite->propSetString(
@@ -1010,21 +1024,6 @@ describe_in_context(
         return kOfxStatFailed;
     }
 
-#if FILMVIZ_HAS_METAL
-    static const char* backends[] = {
-        "Auto",
-        "Metal Direct",
-        "CPU"
-    };
-    constexpr int backend_count = 3;
-#else
-    static const char* backends[] = {
-        "Auto",
-        "CPU"
-    };
-    constexpr int backend_count = 2;
-#endif
-
     static const char* input_profiles[] = {
         "ARRI Wide Gamut 3 / LogC3 EI800",
         "ACES2065-1 / AP0"
@@ -1079,7 +1078,6 @@ describe_in_context(
         || !define_group_parameter(parameter_set, kGroupGrain, "Grain", false)
         || !define_group_parameter(parameter_set, kGroupHalation, "Halation", false)
         || !define_group_parameter(parameter_set, kGroupAdvanced, "Advanced", false)
-        || !define_choice_parameter(parameter_set, kParamBackend, "Processing", backends, backend_count, 0, kGroupSetup)
         || !define_choice_parameter(parameter_set, kParamInputProfile, "Input", input_profiles, 2, 0, kGroupSetup)
         || !define_choice_parameter(parameter_set, kParamNegativeProfile, "Stock", negative_options.data(), static_cast<int>(negative_options.size()), 0, kGroupNegative)
         || !define_double_parameter(parameter_set, kParamExposure, "Exposure", 0.0, -8.0, 8.0, kGroupNegative)
@@ -1141,8 +1139,6 @@ render(
 
     double time = 0.0;
     int render_window[4] = {0, 0, 0, 0};
-    int interactive_render = 0;
-    int draft_render = 0;
 
     if (gPropertySuite->propGetDouble(
             in_args,
@@ -1157,20 +1153,6 @@ render(
 
         return kOfxStatFailed;
     }
-
-    // These are optional host hints. Resolve supplies the interactive flag
-    // while a parameter is actively being adjusted.
-    gPropertySuite->propGetInt(
-        in_args,
-        kOfxImageEffectPropInteractiveRenderStatus,
-        0,
-        &interactive_render);
-
-    gPropertySuite->propGetInt(
-        in_args,
-        kOfxImageEffectPropRenderQualityDraft,
-        0,
-        &draft_render);
 
     OfxPropertySetHandle source_image = nullptr;
     OfxPropertySetHandle output_image = nullptr;
@@ -1327,62 +1309,23 @@ render(
         output_row_bytes;
 
     FilmVizOfxRenderSettings settings;
-    int backend = 0;
 
     if (!read_settings(
             *instance,
             time,
-            settings,
-            backend)) {
+            settings)) {
 
         release_images();
         return kOfxStatFailed;
-    }
-
-    const bool interactive =
-        interactive_render != 0
-        || draft_render != 0;
-
-    const bool direct_metal_candidate =
-        backend == 1
-        || (backend == 0
-            && settings.negative_mtf_amount <= 0.0f
-            && settings.print_mtf_amount <= 0.0f
-            && !settings.halation_enabled);
-
-    if (interactive
-        && !direct_metal_candidate
-        && !instance->processor.has_transform(
-            settings,
-            instance->resources_directory)) {
-        FilmVizOfxRenderSettings preview =
-            interactive_transform_settings(settings);
-
-        // Runtime-only edits such as Exposure retain the resident full-quality
-        // transform. Transform-changing edits get a small temporary LUT, then
-        // settle at the requested size after the drag.
-        if (!instance->processor.has_transform(
-                preview,
-                instance->resources_directory)) {
-            preview.lut_size =
-                std::min(
-                    preview.lut_size,
-                    kInteractiveLutSize);
-        }
-
-        settings = preview;
     }
 
     std::ostringstream render_details;
     render_details
         << "node=" << instance
         << " time=" << time
-        << " backend_request=" << backend
         << " negative=" << settings.negative_profile
         << " print=" << settings.print_profile
         << " exposure=" << settings.exposure_stops
-        << " lut=" << settings.lut_size
-        << " interactive=" << (interactive ? 1 : 0)
         << " format=" << settings.film_format
         << " width_mm=" << settings.image_width_mm
         << " negative_mtf=" << settings.negative_mtf_amount
@@ -1390,16 +1333,14 @@ render(
         << " grain=" << (settings.grain_enabled ? 1 : 0)
         << " halation=" << (settings.halation_enabled ? 1 : 0);
 
-    const bool requires_cpu_spatial =
-        settings.negative_mtf_amount > 0.0f
-        || settings.print_mtf_amount > 0.0f;
-
     FilmVizOfxLog::Scope render_scope(
         "render",
         render_details.str());
 
     int metal_enabled = 0;
     void* metal_command_queue = nullptr;
+    int opencl_enabled = 0;
+    void* opencl_command_queue = nullptr;
 
 #if FILMVIZ_HAS_METAL
 #ifdef kOfxImageEffectPropMetalEnabled
@@ -1416,6 +1357,25 @@ render(
             kOfxImageEffectPropMetalCommandQueue,
             0,
             &metal_command_queue);
+    }
+#endif
+#endif
+
+#if FILMVIZ_HAS_OPENCL
+#ifdef kOfxImageEffectPropOpenCLEnabled
+    gPropertySuite->propGetInt(
+        in_args,
+        kOfxImageEffectPropOpenCLEnabled,
+        0,
+        &opencl_enabled);
+#endif
+#ifdef kOfxImageEffectPropOpenCLCommandQueue
+    if (opencl_enabled) {
+        gPropertySuite->propGetPointer(
+            in_args,
+            kOfxImageEffectPropOpenCLCommandQueue,
+            0,
+            &opencl_command_queue);
     }
 #endif
 #endif
@@ -1441,148 +1401,117 @@ render(
         metal_output.buffer = output_data;
 
         std::string error;
-        bool rendered = false;
-
-        // Processing choices:
-        // Auto and Metal Direct use the spectral kernel for pointwise colour
-        // and grain. CPU is retained as the reference/fallback path, including
-        // the spatial controls not yet implemented by the direct kernel.
-        const bool use_direct =
-            backend == 1
-            || (backend == 0
-                && !requires_cpu_spatial
-                && !settings.halation_enabled);
-
-        if (use_direct
-            && (requires_cpu_spatial
-                || settings.halation_enabled)) {
-            error =
-                "Metal Direct currently supports the pointwise colour pipeline; "
-                "select Auto or CPU for MTF or halation controls";
-        }
-        else if (use_direct) {
-            rendered =
-                instance->direct_metal_processor.configure(
-                    settings,
-                    instance->resources_directory,
-                    metal_command_queue,
-                    error)
-                && instance->direct_metal_processor.render(
-                    settings,
-                    metal_command_queue,
-                    metal_source,
-                    metal_output,
-                    render_window[0],
-                    render_window[1],
-                    render_window[2],
-                    render_window[3],
-                    time,
-                    error);
-        }
-        else if (!instance->processor.configure(
-                    settings,
-                    instance->resources_directory,
-                    error)) {
-            rendered = false;
-        }
-        else {
-            rendered =
-                instance->direct_metal_processor.render_cpu_bridge(
-                    instance->processor,
-                    metal_command_queue,
-                    metal_source,
-                    metal_output,
-                    render_window[0],
-                    render_window[1],
-                    render_window[2],
-                    render_window[3],
-                    time,
-                    [&]() {
-                        return
-                            gEffectSuite->abort(
-                                effect) != 0;
-                    },
-                    error);
-        }
+        const bool rendered =
+            instance->direct_metal_processor.configure(
+                settings,
+                instance->resources_directory,
+                metal_command_queue,
+                error)
+            && instance->direct_metal_processor.render(
+                settings,
+                metal_command_queue,
+                metal_source,
+                metal_output,
+                render_window[0],
+                render_window[1],
+                render_window[2],
+                render_window[3],
+                time,
+                error);
         release_images();
 
         if (!rendered) {
             render_scope.finish(
-                std::string("backend=")
-                    + (use_direct
-                        ? "metal_direct"
-                        : "cpu_bridge")
-                    + " result=failed error=" + error);
-
-            if (error == "render aborted") {
-                return kOfxStatOK;
-            }
-
-            return backend == 2 || requires_cpu_spatial
-                ? kOfxStatFailed
-                : kOfxStatGPURenderFailed;
+                "backend=metal_direct result=failed error=" + error);
+            set_gpu_error(
+                effect,
+                "FilmViz Metal rendering failed: " + error);
+            return kOfxStatGPURenderFailed;
         }
 
-        render_scope.finish(
-            std::string("backend=")
-                + (use_direct
-                    ? "metal_direct"
-                    : "cpu_bridge")
-                + " result=ok");
+        clear_gpu_error(effect);
+        render_scope.finish("backend=metal_direct result=ok");
         return kOfxStatOK;
     }
 #endif
 
-    // Resolve supplied ordinary CPU image pointers. Auto and CPU use the
-    // reference CPU renderer; explicit Metal also falls back here when the
-    // host did not enable Metal for this render action.
-    source_frame.data =
-        static_cast<float*>(
-            source_data);
+#if FILMVIZ_HAS_OPENCL
+    if (opencl_enabled
+        && opencl_command_queue) {
 
-    output_frame.data =
-        static_cast<float*>(
-            output_data);
+        FilmVizOfxOpenCLFrame opencl_source;
+        opencl_source.x1 = source_frame.x1;
+        opencl_source.y1 = source_frame.y1;
+        opencl_source.x2 = source_frame.x2;
+        opencl_source.y2 = source_frame.y2;
+        opencl_source.row_bytes = source_row_bytes;
+        opencl_source.buffer = source_data;
 
-    std::string error;
+        FilmVizOfxOpenCLFrame opencl_output;
+        opencl_output.x1 = output_frame.x1;
+        opencl_output.y1 = output_frame.y1;
+        opencl_output.x2 = output_frame.x2;
+        opencl_output.y2 = output_frame.y2;
+        opencl_output.row_bytes = output_row_bytes;
+        opencl_output.buffer = output_data;
 
-    if (!instance->processor.configure(
-            settings,
-            instance->resources_directory,
-            error)) {
+        std::string error;
+        const bool rendered =
+            instance->direct_opencl_processor.configure(
+                settings,
+                instance->resources_directory,
+                opencl_command_queue,
+                error)
+            && instance->direct_opencl_processor.render(
+                settings,
+                opencl_command_queue,
+                opencl_source,
+                opencl_output,
+                render_window[0],
+                render_window[1],
+                render_window[2],
+                render_window[3],
+                time,
+                error);
 
         release_images();
-        return kOfxStatFailed;
-    }
 
-    const bool rendered =
-        instance->processor.render(
-            source_frame,
-            output_frame,
-            render_window[0],
-            render_window[1],
-            render_window[2],
-            render_window[3],
-            time,
-            [&]() {
-                return
-                    gEffectSuite->abort(
-                        effect) != 0;
-            },
-            error);
+        if (!rendered) {
+            render_scope.finish(
+                "backend=opencl_direct result=failed error=" + error);
+            set_gpu_error(
+                effect,
+                "FilmViz OpenCL rendering failed: " + error);
+            return kOfxStatGPURenderFailed;
+        }
+
+        clear_gpu_error(effect);
+        render_scope.finish("backend=opencl_direct result=ok");
+        return kOfxStatOK;
+    }
+#endif
 
     release_images();
 
-    if (!rendered) {
-        render_scope.finish(
-            "backend=cpu result=failed error=" + error);
-        return error == "render aborted"
-            ? kOfxStatOK
-            : kOfxStatFailed;
-    }
+#if defined(_WIN32)
+    const std::string error =
+        "FilmViz requires Resolve to provide an OpenCL GPU render queue on "
+        "Windows. CUDA is not currently supported. Select OpenCL under "
+        "Preferences > Memory and GPU.";
+#elif defined(__APPLE__)
+    const std::string error =
+        "FilmViz requires Resolve to provide a Metal or OpenCL GPU render "
+        "queue. Select Metal (recommended) or OpenCL under Preferences > "
+        "Memory and GPU.";
+#else
+    const std::string error =
+        "FilmViz requires Resolve to provide a supported OpenCL GPU render "
+        "queue.";
+#endif
 
-    render_scope.finish("backend=cpu result=ok");
-    return kOfxStatOK;
+    set_gpu_error(effect, error);
+    render_scope.finish("backend=unavailable result=failed error=" + error);
+    return kOfxStatErrUnsupported;
 }
 
 OfxStatus

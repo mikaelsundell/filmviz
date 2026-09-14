@@ -328,8 +328,8 @@ SpatialResponseModel::apply(
     }
 
     std::array<std::vector<float>, 3> kernels;
-    for (int channel = 0; channel < 3; ++channel) {
-        kernels[channel] = kernel(channel, width, settings);
+    if (!this->kernels(width, settings, kernels)) {
+        return false;
     }
 
     const int radius =

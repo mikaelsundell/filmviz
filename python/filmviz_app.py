@@ -5,9 +5,13 @@
 
 from __future__ import annotations
 
+import array
+import csv
 import os
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -132,6 +136,8 @@ try:
         QDesktopServices,
         QIcon,
         QImage,
+        QKeySequence,
+        QShortcut,
         QFontDatabase,
         QPainter,
         QPainterPath,
@@ -198,6 +204,8 @@ def _display_color_space(name: str):
 
 
 APP_COLOR_SPACE = _display_color_space("rec709-gamma24")
+
+
 
 
 def _read_scope_rgb(filename: str):
@@ -299,6 +307,11 @@ class OperationWorker(QObject):
                 self.finished.emit(self.success_message)
 
 
+class MetalPreviewBridge(QObject):
+    finished = Signal(int, object)
+    failed = Signal(int, str)
+
+
 class PathRow(QWidget):
     def __init__(self, mode: str, initial: str = "", minimum_width: int = 0):
         super().__init__()
@@ -345,13 +358,118 @@ class PathRow(QWidget):
             )
         if selected:
             self.edit.setText(selected)
+            self.edit.editingFinished.emit()
 
     def value(self) -> str:
         return self.edit.text().strip()
 
 
+class _DragSpinBoxMixin:
+    """Horizontal scrub interaction shared by all FilmViz spin boxes.
+
+    Normal interaction is click/drag left-right to change the value.
+    Double-click switches the embedded line edit into text-edit mode.
+    """
+
+    _pixels_per_step = 6.0
+
+    def _init_drag_spinbox(self):
+        self._drag_active = False
+        self._drag_start_x = 0.0
+        self._drag_start_value = 0.0
+        self._text_editing = False
+        editor = self.lineEdit()
+        editor.setReadOnly(True)
+        editor.setCursor(Qt.CursorShape.SizeHorCursor)
+        editor.installEventFilter(self)
+        editor.editingFinished.connect(self._finish_text_edit)
+
+    def _finish_text_edit(self):
+        if self._text_editing:
+            self.interpretText()
+        self._text_editing = False
+        editor = self.lineEdit()
+        editor.setReadOnly(True)
+        editor.setCursor(Qt.CursorShape.SizeHorCursor)
+        self.clearFocus()
+
+    def _begin_text_edit(self):
+        if self.isReadOnly():
+            return
+        self._drag_active = False
+        self._text_editing = True
+        editor = self.lineEdit()
+        editor.setReadOnly(False)
+        editor.setCursor(Qt.CursorShape.IBeamCursor)
+        editor.setFocus(Qt.FocusReason.MouseFocusReason)
+        editor.selectAll()
+
+    def _scrub_value(self, delta_x):
+        if self.isReadOnly():
+            return
+        steps = float(delta_x) / self._pixels_per_step
+        value = self._drag_start_value + steps * float(self.singleStep())
+        if isinstance(self, QSpinBox):
+            value = int(round(value))
+        self.setValue(value)
+
+    def eventFilter(self, watched, event):
+        if watched is self.lineEdit():
+            event_type = event.type()
+
+            if event_type == QEvent.Type.Enter and not self._text_editing:
+                watched.setCursor(Qt.CursorShape.SizeHorCursor)
+
+            elif event_type == QEvent.Type.MouseButtonDblClick:
+                if event.button() == Qt.MouseButton.LeftButton and not self.isReadOnly():
+                    self._begin_text_edit()
+                    event.accept()
+                    return True
+
+            elif event_type == QEvent.Type.MouseButtonPress:
+                if (event.button() == Qt.MouseButton.LeftButton
+                        and not self._text_editing
+                        and not self.isReadOnly()):
+                    self._drag_active = True
+                    self._drag_start_x = float(event.globalPosition().x())
+                    self._drag_start_value = float(self.value())
+                    watched.setCursor(Qt.CursorShape.SizeHorCursor)
+                    self.setFocus(Qt.FocusReason.MouseFocusReason)
+                    event.accept()
+                    return True
+
+            elif event_type == QEvent.Type.MouseMove:
+                if self._drag_active:
+                    self._scrub_value(float(event.globalPosition().x()) - self._drag_start_x)
+                    event.accept()
+                    return True
+
+            elif event_type == QEvent.Type.MouseButtonRelease:
+                if self._drag_active and event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_active = False
+                    event.accept()
+                    return True
+
+            elif event_type == QEvent.Type.FocusOut and self._text_editing:
+                self._finish_text_edit()
+
+        return super().eventFilter(watched, event)
+
+
+class DragDoubleSpinBox(_DragSpinBoxMixin, QDoubleSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._init_drag_spinbox()
+
+
+class DragSpinBox(_DragSpinBoxMixin, QSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._init_drag_spinbox()
+
+
 def _double(value, minimum, maximum, step=0.1, decimals=3):
-    widget = QDoubleSpinBox()
+    widget = DragDoubleSpinBox()
     widget.setRange(minimum, maximum)
     widget.setSingleStep(step)
     widget.setDecimals(decimals)
@@ -598,17 +716,31 @@ def _read_curve_csv(
 
 
 class CurvePlotWidget(QWidget):
+    pointSelected = Signal(int, int, str, float, float)
+    pointChanged = Signal(int, int, str, float, float)
+
     def __init__(self):
         super().__init__()
         self.setMinimumHeight(330)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
+        self.setMouseTracking(True)
         self._title = ""
         self._x_label = ""
         self._curves = []
+        self._original_curves = []
         self._error = ""
         self._stop_axis = None
+        self._selected_curve = -1
+        self._selected_point = -1
+        self._dragging = False
+        self._plot_rect = QRectF()
+        self._x_min = 0.0
+        self._x_max = 1.0
+        self._y_min = 0.0
+        self._y_max = 1.0
+        self._edit_spacing_nm = 0.0
 
     def set_curves(
         self,
@@ -616,21 +748,302 @@ class CurvePlotWidget(QWidget):
         x_label: str,
         curves,
         stop_axis=None,
+        original_curves=None,
     ):
         self._title = title
         self._x_label = x_label
-        self._curves = curves
+        self._curves = [
+            (name, [(float(x), float(y)) for x, y in points])
+            for name, points in curves
+        ]
+        source_original = original_curves if original_curves is not None else curves
+        self._original_curves = [
+            (name, [(float(x), float(y)) for x, y in points])
+            for name, points in source_original
+        ]
         self._stop_axis = stop_axis
         self._error = ""
+        self._selected_curve = -1
+        self._selected_point = -1
+        self._dragging = False
         self.update()
 
     def set_error(self, message: str):
         self._title = ""
         self._x_label = ""
         self._curves = []
+        self._original_curves = []
         self._stop_axis = None
         self._error = message
+        self._selected_curve = -1
+        self._selected_point = -1
+        self._dragging = False
         self.update()
+
+    def set_edit_spacing_nm(self, spacing_nm: float):
+        self._edit_spacing_nm = max(0.0, float(spacing_nm))
+        # Selection may no longer be an editable anchor after spacing changes.
+        if self._selected_curve >= 0 and self._selected_point >= 0:
+            editable = self._editable_indices(self._selected_curve)
+            if self._selected_point not in editable:
+                self._selected_curve = -1
+                self._selected_point = -1
+                self._dragging = False
+        self.update()
+
+    def _editable_indices(self, curve_index: int):
+        if curve_index < 0 or curve_index >= len(self._curves):
+            return []
+        points = self._curves[curve_index][1]
+        if not points:
+            return []
+        if self._edit_spacing_nm <= 0.0:
+            return list(range(len(points)))
+
+        spacing = self._edit_spacing_nm
+        x0 = points[0][0]
+        indices = []
+        last_bucket = None
+        for index, (x, _) in enumerate(points):
+            bucket = int(round((x - x0) / spacing))
+            target = x0 + bucket * spacing
+            tolerance = max(1e-6, spacing * 0.12)
+            if abs(x - target) <= tolerance and bucket != last_bucket:
+                indices.append(index)
+                last_bucket = bucket
+
+        # Always expose both ends so interpolation has explicit boundaries.
+        if 0 not in indices:
+            indices.insert(0, 0)
+        if len(points) - 1 not in indices:
+            indices.append(len(points) - 1)
+        return sorted(set(indices))
+
+    def curve_points(self, curve_index: int):
+        if curve_index < 0 or curve_index >= len(self._curves):
+            return []
+        return list(self._curves[curve_index][1])
+
+    def _set_anchor_y(self, curve_index: int, point_index: int, value: float):
+        name, points = self._curves[curve_index]
+        x, _ = points[point_index]
+        points[point_index] = (x, float(value))
+
+        editable = self._editable_indices(curve_index)
+        if point_index not in editable or len(editable) < 2:
+            return
+
+        anchor_pos = editable.index(point_index)
+        spans = []
+        if anchor_pos > 0:
+            spans.append((editable[anchor_pos - 1], point_index))
+        if anchor_pos + 1 < len(editable):
+            spans.append((point_index, editable[anchor_pos + 1]))
+
+        # Re-sample only the spans touching the edited anchor. The anchor X
+        # coordinates remain measured/original; only Y values are interpolated.
+        threshold = self._curve_break_threshold(points)
+        for first, last in spans:
+            # Never interpolate through a missing-data gap. A coarse edit
+            # spacing controls measured samples within a continuous segment
+            # only; it does not invent spectral values where the CSV is empty.
+            if threshold is not None and any(
+                points[index][0] - points[index - 1][0] > threshold
+                for index in range(first + 1, last + 1)
+            ):
+                continue
+
+            x0, y0 = points[first]
+            x1, y1 = points[last]
+            dx = x1 - x0
+            if abs(dx) < 1e-12:
+                continue
+            for index in range(first + 1, last):
+                xi, _ = points[index]
+                t = (xi - x0) / dx
+                points[index] = (xi, y0 + t * (y1 - y0))
+
+    @staticmethod
+    def _curve_break_threshold(points):
+        deltas = [
+            points[index][0] - points[index - 1][0]
+            for index in range(1, len(points))
+            if points[index][0] > points[index - 1][0]
+        ]
+        if not deltas:
+            return None
+        deltas = sorted(deltas)
+        median = deltas[len(deltas) // 2]
+        return median * 1.75
+
+    def _draw_curve(self, painter, points, pen):
+        if len(points) < 2:
+            return
+        threshold = self._curve_break_threshold(points)
+        painter.setPen(pen)
+        # drawPath() uses the painter's current brush as well as its pen.
+        # Point handles set a brush below, so without resetting it here the
+        # following open curve can be implicitly closed and filled. Curves
+        # are always strokes only.
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        path = QPainterPath()
+        path.moveTo(self._map_point(points[0][0], points[0][1]))
+        previous_x = points[0][0]
+        for x, y in points[1:]:
+            mapped = self._map_point(x, y)
+            if threshold is not None and x - previous_x > threshold:
+                painter.drawPath(path)
+                path = QPainterPath()
+                path.moveTo(mapped)
+            else:
+                path.lineTo(mapped)
+            previous_x = x
+        painter.drawPath(path)
+
+    def selected_point(self):
+        if self._selected_curve < 0 or self._selected_point < 0:
+            return None
+        if self._selected_curve >= len(self._curves):
+            return None
+        name, points = self._curves[self._selected_curve]
+        if self._selected_point >= len(points):
+            return None
+        x, y = points[self._selected_point]
+        return self._selected_curve, self._selected_point, name, x, y
+
+    def set_selected_y(self, value: float):
+        selected = self.selected_point()
+        if selected is None:
+            return
+        curve_index, point_index, name, x, old_y = selected
+        value = float(value)
+        if abs(value - old_y) < 1e-12:
+            return
+        self._set_anchor_y(curve_index, point_index, value)
+        self.pointChanged.emit(curve_index, point_index, name, x, value)
+        self.update()
+
+    def _geometry(self):
+        all_points = [
+            point
+            for _, points in self._curves
+            for point in points
+        ]
+        original_points = [
+            point
+            for _, points in self._original_curves
+            for point in points
+        ]
+        all_points += original_points
+        if not all_points:
+            return None
+
+        x_min = min(point[0] for point in all_points)
+        x_max = max(point[0] for point in all_points)
+        y_min = min(point[1] for point in all_points)
+        y_max = max(point[1] for point in all_points)
+
+        if abs(x_max - x_min) < 1e-12:
+            x_max = x_min + 1.0
+        if abs(y_max - y_min) < 1e-12:
+            y_max = y_min + 1.0
+
+        y_padding = max(1e-6, 0.08 * (y_max - y_min))
+        y_min -= y_padding
+        y_max += y_padding
+
+        left = 68.0
+        right = 24.0
+        top = 42.0
+        bottom = 72.0 if self._stop_axis else 52.0
+        plot = QRectF(
+            left,
+            top,
+            max(1.0, self.width() - left - right),
+            max(1.0, self.height() - top - bottom))
+
+        self._plot_rect = plot
+        self._x_min = x_min
+        self._x_max = x_max
+        self._y_min = y_min
+        self._y_max = y_max
+        return plot, x_min, x_max, y_min, y_max
+
+    def _map_point(self, x: float, y: float):
+        plot = self._plot_rect
+        px = plot.left() + (x - self._x_min) / (self._x_max - self._x_min) * plot.width()
+        py = plot.bottom() - (y - self._y_min) / (self._y_max - self._y_min) * plot.height()
+        return QPointF(px, py)
+
+    def _value_from_y(self, py: float):
+        plot = self._plot_rect
+        t = (plot.bottom() - py) / max(1e-12, plot.height())
+        return self._y_min + t * (self._y_max - self._y_min)
+
+    def _hit_test(self, position, radius=9.0):
+        if self._geometry() is None:
+            return None
+        best = None
+        best_distance2 = radius * radius
+        for curve_index, (name, points) in enumerate(self._curves):
+            for point_index in self._editable_indices(curve_index):
+                x, y = points[point_index]
+                mapped = self._map_point(x, y)
+                dx = mapped.x() - position.x()
+                dy = mapped.y() - position.y()
+                distance2 = dx * dx + dy * dy
+                if distance2 <= best_distance2:
+                    best_distance2 = distance2
+                    best = (curve_index, point_index, name, x, y)
+        return best
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+
+        hit = self._hit_test(event.position())
+        if hit is None:
+            self._selected_curve = -1
+            self._selected_point = -1
+            self._dragging = False
+            self.update()
+            event.accept()
+            return
+
+        curve_index, point_index, name, x, y = hit
+        self._selected_curve = curve_index
+        self._selected_point = point_index
+        self._dragging = True
+        self.pointSelected.emit(curve_index, point_index, name, x, y)
+        self.update()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if not self._dragging:
+            super().mouseMoveEvent(event)
+            return
+
+        selected = self.selected_point()
+        if selected is None or self._geometry() is None:
+            return
+
+        curve_index, point_index, name, x, _ = selected
+        clamped_y = min(
+            self._plot_rect.bottom(),
+            max(self._plot_rect.top(), event.position().y()))
+        y = self._value_from_y(clamped_y)
+        self._set_anchor_y(curve_index, point_index, y)
+        self.pointChanged.emit(curve_index, point_index, name, x, y)
+        self.update()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._dragging:
+            self._dragging = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -652,13 +1065,8 @@ class CurvePlotWidget(QWidget):
                 self._error)
             return
 
-        all_points = [
-            point
-            for _, points in self._curves
-            for point in points
-        ]
-
-        if not all_points:
+        geometry = self._geometry()
+        if geometry is None:
             painter.setPen(text_color)
             painter.drawText(
                 self.rect(),
@@ -666,29 +1074,7 @@ class CurvePlotWidget(QWidget):
                 "No curve data")
             return
 
-        x_min = min(point[0] for point in all_points)
-        x_max = max(point[0] for point in all_points)
-        y_min = min(point[1] for point in all_points)
-        y_max = max(point[1] for point in all_points)
-
-        if abs(x_max - x_min) < 1e-12:
-            x_max = x_min + 1.0
-        if abs(y_max - y_min) < 1e-12:
-            y_max = y_min + 1.0
-
-        y_padding = 0.06 * (y_max - y_min)
-        y_min -= y_padding
-        y_max += y_padding
-
-        left = 68.0
-        right = 24.0
-        top = 42.0
-        bottom = 72.0 if self._stop_axis else 52.0
-        plot = QRectF(
-            left,
-            top,
-            max(1.0, self.width() - left - right),
-            max(1.0, self.height() - top - bottom))
+        plot, x_min, x_max, y_min, y_max = geometry
 
         painter.setPen(QPen(frame_color, 1.0))
         painter.drawRect(plot)
@@ -707,11 +1093,6 @@ class CurvePlotWidget(QWidget):
             Qt.AlignmentFlag.AlignCenter,
             self._title)
 
-        def map_point(x, y):
-            px = plot.left() + (x - x_min) / (x_max - x_min) * plot.width()
-            py = plot.bottom() - (y - y_min) / (y_max - y_min) * plot.height()
-            return QPointF(px, py)
-
         colors = [
             QColor("#e05252"),
             QColor("#59b66b"),
@@ -721,20 +1102,38 @@ class CurvePlotWidget(QWidget):
             QColor("#5bb9bf"),
         ]
 
+        # Original CSV curves remain visible as a dim dashed reference.
+        # Large wavelength gaps are intentionally not connected: those are
+        # missing measurements, not a filled/interpolated section.
+        for curve_index, (name, points) in enumerate(self._original_curves):
+            color = QColor(colors[curve_index % len(colors)])
+            color.setAlpha(80)
+            pen = QPen(color, 1.0)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            self._draw_curve(painter, points, pen)
+
         for curve_index, (name, points) in enumerate(self._curves):
             if len(points) < 2:
                 continue
 
-            path = QPainterPath()
-            path.moveTo(map_point(points[0][0], points[0][1]))
-            for x, y in points[1:]:
-                path.lineTo(map_point(x, y))
+            color = colors[curve_index % len(colors)]
+            self._draw_curve(painter, points, QPen(color, 1.8))
 
-            painter.setPen(
-                QPen(
-                    colors[curve_index % len(colors)],
-                    1.8))
-            painter.drawPath(path)
+            editable = set(self._editable_indices(curve_index))
+            for point_index, (x, y) in enumerate(points):
+                if point_index not in editable:
+                    continue
+                point = self._map_point(x, y)
+                selected = (
+                    curve_index == self._selected_curve
+                    and point_index == self._selected_point)
+                painter.setPen(QPen(color, 1.4))
+                painter.setBrush(
+                    QColor(245, 210, 70)
+                    if selected
+                    else palette.color(self.backgroundRole()))
+                radius = 5.5 if selected else 3.5
+                painter.drawEllipse(point, radius, radius)
 
         painter.setPen(text_color)
         painter.drawText(
@@ -758,8 +1157,7 @@ class CurvePlotWidget(QWidget):
                 if stop_x < x_min - 1e-9 or stop_x > x_max + 1e-9:
                     continue
 
-                x = map_point(stop_x, y_min).x()
-
+                x = self._map_point(stop_x, y_min).x()
                 painter.drawLine(
                     QPointF(x, plot.bottom()),
                     QPointF(x, plot.bottom() + 5))
@@ -773,7 +1171,7 @@ class CurvePlotWidget(QWidget):
                         label)
 
             if x_min <= zero_x <= x_max:
-                zero_px = map_point(zero_x, y_min).x()
+                zero_px = self._map_point(zero_x, y_min).x()
                 zero_pen = QPen(secondary_color, 1.0)
                 zero_pen.setStyle(Qt.PenStyle.DashLine)
                 painter.setPen(zero_pen)
@@ -787,12 +1185,13 @@ class CurvePlotWidget(QWidget):
                 Qt.AlignmentFlag.AlignCenter,
                 "camera stops")
 
+        painter.setPen(text_color)
         painter.drawText(
-            QRectF(4, plot.top() - 8, left - 12, 20),
+            QRectF(4, plot.top() - 8, 56, 20),
             Qt.AlignmentFlag.AlignRight,
             f"{y_max:.4g}")
         painter.drawText(
-            QRectF(4, plot.bottom() - 12, left - 12, 20),
+            QRectF(4, plot.bottom() - 12, 56, 20),
             Qt.AlignmentFlag.AlignRight,
             f"{y_min:.4g}")
         painter.drawText(
@@ -807,10 +1206,7 @@ class CurvePlotWidget(QWidget):
         legend_x = plot.left() + 8
         legend_y = plot.top() + 8
         for curve_index, (name, _) in enumerate(self._curves):
-            painter.setPen(
-                QPen(
-                    colors[curve_index % len(colors)],
-                    2.0))
+            painter.setPen(QPen(colors[curve_index % len(colors)], 2.0))
             painter.drawLine(
                 QPointF(legend_x, legend_y + 7),
                 QPointF(legend_x + 18, legend_y + 7))
@@ -821,7 +1217,6 @@ class CurvePlotWidget(QWidget):
                 | Qt.AlignmentFlag.AlignVCenter,
                 name)
             legend_y += 20
-
 
 
 class ImagePreviewWidget(QWidget):
@@ -1950,6 +2345,26 @@ class ParadeWidget(QWidget):
             sampled = values[indices]
 
             x = indices % width
+
+            # Keep the actual sampled pixels for display. The binned arrays
+            # remain useful for probe/analysis compatibility, but the visible
+            # waveform is rendered from these raw samples so it behaves like
+            # a true low-opacity intensity cloud rather than a block histogram.
+            x_normalized = (
+                x.astype(np.float32)
+                / max(1.0, float(width - 1))
+            )
+            valid = np.all(np.isfinite(sampled), axis=1)
+            valid &= np.any(
+                (sampled >= 0.0) & (sampled <= 1.0),
+                axis=1)
+            cloud = np.column_stack((
+                x_normalized[valid],
+                sampled[valid, 0],
+                sampled[valid, 1],
+                sampled[valid, 2],
+            ))
+            self._waveform_points = cloud.tolist()
             column_indices = np.minimum(
                 columns - 1,
                 (x * columns // max(1, width)).astype(np.int64))
@@ -2150,6 +2565,7 @@ class WaveformWidget(QWidget):
         super().__init__()
         self._waveform = None
         self._luma_waveform = None
+        self._waveform_points = []
         self._probes = []
         self._mode = "rgb"
         self.setMinimumSize(240, 200)
@@ -2158,10 +2574,12 @@ class WaveformWidget(QWidget):
             QSizePolicy.Policy.Expanding)
 
     def set_rgb(self, width: int, height: int, rgb):
-        columns = 384
-        bins = 512
+        # Fast diagnostic waveform: accumulate into a compact fixed grid.
+        # Rendering cost depends on occupied bins, not on source pixel count.
+        columns = 320
+        bins = 256
         pixel_count = width * height
-        stride = max(1, pixel_count // 220000)
+        stride = max(1, pixel_count // 180000)
 
         if np is not None:
             values = np.asarray(rgb, dtype=np.float32).reshape(-1, 3)
@@ -2173,37 +2591,69 @@ class WaveformWidget(QWidget):
                 columns - 1,
                 (x * columns // max(1, width)).astype(np.int64))
 
-            rgb_bins = np.clip(
-                (sampled * (bins - 1)).astype(np.int64),
-                0,
-                bins - 1)
-
             waveform = np.zeros(
                 (3, columns, bins),
                 dtype=np.int32)
 
+            # Keep the scope as a true 0..100 display. Values below 0 or above
+            # 1 are ignored rather than clamped into the first/last bin, which
+            # otherwise creates artificial flat lines at the footer/header.
             for channel in range(3):
+                channel_values = sampled[:, channel]
+                valid = (
+                    np.isfinite(channel_values)
+                    & (channel_values >= 0.0)
+                    & (channel_values <= 1.0)
+                )
+                if not np.any(valid):
+                    continue
+
+                channel_bins = np.minimum(
+                    bins - 1,
+                    (channel_values[valid] * (bins - 1)).astype(np.int64))
                 np.add.at(
                     waveform[channel],
-                    (column_indices, rgb_bins[:, channel]),
+                    (column_indices[valid], channel_bins),
                     1)
 
             luma = (
                 0.2126 * sampled[:, 0]
                 + 0.7152 * sampled[:, 1]
                 + 0.0722 * sampled[:, 2])
-            luma_bins = np.clip(
-                (luma * (bins - 1)).astype(np.int64),
-                0,
-                bins - 1)
 
             luma_waveform = np.zeros(
                 (columns, bins),
                 dtype=np.int32)
-            np.add.at(
-                luma_waveform,
-                (column_indices, luma_bins),
-                1)
+
+            valid_luma = (
+                np.isfinite(luma)
+                & (luma >= 0.0)
+                & (luma <= 1.0)
+            )
+            if np.any(valid_luma):
+                luma_bins = np.minimum(
+                    bins - 1,
+                    (luma[valid_luma] * (bins - 1)).astype(np.int64))
+                np.add.at(
+                    luma_waveform,
+                    (column_indices[valid_luma], luma_bins),
+                    1)
+
+            # Preserve the sampled source pixels for the visible point-cloud
+            # renderer. NumPy is available in the normal FilmViz runtime, so
+            # without this assignment the waveform grid was populated but the
+            # visible cloud had no points and therefore rendered empty.
+            x_normalized = (
+                x.astype(np.float32)
+                / max(1.0, float(width - 1))
+            )
+            finite = np.all(np.isfinite(sampled), axis=1)
+            cloud = np.column_stack((
+                x_normalized[finite],
+                sampled[finite, 0],
+                sampled[finite, 1],
+                sampled[finite, 2],
+            ))
 
             self._waveform = waveform
             self._luma_waveform = luma_waveform
@@ -2218,6 +2668,7 @@ class WaveformWidget(QWidget):
             [0] * bins
             for _ in range(columns)
         ]
+        cloud_points = []
 
         for pixel in range(0, pixel_count, stride):
             x = pixel % width
@@ -2230,17 +2681,25 @@ class WaveformWidget(QWidget):
             g = float(rgb[offset + 1])
             b = float(rgb[offset + 2])
 
+            if all(map(__import__("math").isfinite, (r, g, b))):
+                cloud_points.append((
+                    float(x) / max(1.0, float(width - 1)),
+                    r, g, b))
+
             for channel, value in enumerate((r, g, b)):
+                if not (0.0 <= value <= 1.0):
+                    continue
                 bin_index = min(
                     bins - 1,
-                    max(0, int(value * (bins - 1))))
+                    int(value * (bins - 1)))
                 waveform[channel][column][bin_index] += 1
 
             y = 0.2126 * r + 0.7152 * g + 0.0722 * b
-            y_bin = min(
-                bins - 1,
-                max(0, int(y * (bins - 1))))
-            luma_waveform[column][y_bin] += 1
+            if 0.0 <= y <= 1.0:
+                y_bin = min(
+                    bins - 1,
+                    int(y * (bins - 1)))
+                luma_waveform[column][y_bin] += 1
 
         self._waveform = waveform
         self._luma_waveform = luma_waveform
@@ -2319,57 +2778,56 @@ class WaveformWidget(QWidget):
                 "RGB waveform")
             return
 
+        # Render the actual sampled pixels using the same proven approach as
+        # the vectorscope: a small translucent core plus a fainter halo.
+        # Repeated overlap naturally builds brightness and RGB overlap tends
+        # toward white under additive blending.
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Plus)
         painter.setPen(Qt.PenStyle.NoPen)
+
+        # Draw each occupied density bin once. The alpha is the exact opacity
+        # obtained by compositing `count` samples with a fixed per-sample alpha:
+        #
+        #   A = 1 - (1 - a)^count
+        #
+        # This preserves density/opacity behavior without drawing every sample.
+        base_alpha = 0.028
 
         if self._mode == "y":
             if self._luma_waveform is None:
                 return
 
-            maximum = max(
-                int(max(column))
-                for column in self._luma_waveform)
-
-            if maximum <= 0:
+            data = self._luma_waveform
+            columns = len(data)
+            bins = len(data[0]) if columns else 0
+            if columns <= 0 or bins <= 0:
                 return
 
-            for x_index, column in enumerate(self._luma_waveform):
-                px = (
-                    plot.left()
-                    + x_index / max(1, len(self._luma_waveform) - 1)
-                    * plot.width())
+            cell_w = plot.width() / max(1, columns - 1)
+            cell_h = plot.height() / max(1, bins - 1)
+
+            for x_index, column in enumerate(data):
+                px = plot.left() + x_index * cell_w
 
                 for value, count in enumerate(column):
                     if count <= 0:
                         continue
 
-                    alpha = min(
-                        0.78,
-                        0.08
-                        + 0.70
-                        * ((count / maximum) ** 0.32))
+                    alpha = 1.0 - ((1.0 - base_alpha) ** int(count))
+                    alpha = min(0.78, alpha)
 
-                    color = QColor(220, 220, 220)
+                    color = QColor(235, 235, 235)
                     color.setAlphaF(alpha)
                     painter.setBrush(color)
 
-                    py = (
-                        plot.bottom()
-                        - value / max(1, len(column) - 1)
-                        * plot.height())
-
+                    py = plot.bottom() - value * cell_h
                     painter.drawRect(
-                        QRectF(px, py, 1.2, 1.2))
-
-            painter.setBrush(QColor(245, 210, 70))
-            painter.setPen(QPen(QColor(245, 210, 70), 1.8))
-            for u, rgb in self._probes:
-                y = (
-                    0.2126 * rgb[0]
-                    + 0.7152 * rgb[1]
-                    + 0.0722 * rgb[2])
-                px = plot.left() + u * plot.width()
-                py = plot.bottom() - y * plot.height()
-                painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
+                        QRectF(
+                            px,
+                            py,
+                            max(1.0, cell_w + 0.35),
+                            max(1.0, cell_h + 0.35)))
 
             title = "Y waveform"
 
@@ -2380,53 +2838,64 @@ class WaveformWidget(QWidget):
                 QColor("#5b8def"),
             )
 
-            maxima = [
-                max(int(max(column)) for column in channel)
-                for channel in self._waveform
-            ]
-            maximum = max(maxima)
-
-            if maximum <= 0:
+            columns = len(self._waveform[0])
+            bins = len(self._waveform[0][0]) if columns else 0
+            if columns <= 0 or bins <= 0:
                 return
 
+            cell_w = plot.width() / max(1, columns - 1)
+            cell_h = plot.height() / max(1, bins - 1)
+
+            painter.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_Plus)
+
             for channel, data in enumerate(self._waveform):
+                base = colors[channel]
+
                 for x_index, column in enumerate(data):
-                    px = (
-                        plot.left()
-                        + x_index / max(1, len(data) - 1)
-                        * plot.width())
+                    px = plot.left() + x_index * cell_w
 
                     for value, count in enumerate(column):
                         if count <= 0:
                             continue
 
-                        alpha = min(
-                            0.72,
-                            0.06
-                            + 0.66
-                            * ((count / maximum) ** 0.32))
+                        alpha = 1.0 - ((1.0 - base_alpha) ** int(count))
+                        alpha = min(0.72, alpha)
 
-                        color = QColor(colors[channel])
+                        color = QColor(base)
                         color.setAlphaF(alpha)
                         painter.setBrush(color)
 
-                        py = (
-                            plot.bottom()
-                            - value / max(1, len(column) - 1)
-                            * plot.height())
-
+                        py = plot.bottom() - value * cell_h
                         painter.drawRect(
-                            QRectF(px, py, 1.2, 1.2))
+                            QRectF(
+                                px,
+                                py,
+                                max(1.0, cell_w + 0.35),
+                                max(1.0, cell_h + 0.35)))
 
-            painter.setBrush(QColor(245, 210, 70))
-            painter.setPen(QPen(QColor(245, 210, 70), 1.8))
+            painter.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_SourceOver)
+            title = "RGB waveform"
+
+        painter.setBrush(QColor(245, 210, 70))
+        painter.setPen(QPen(QColor(245, 210, 70), 1.8))
+
+        if self._mode == "y":
+            for u, rgb in self._probes:
+                y = (
+                    0.2126 * rgb[0]
+                    + 0.7152 * rgb[1]
+                    + 0.0722 * rgb[2])
+                px = plot.left() + u * plot.width()
+                py = plot.bottom() - y * plot.height()
+                painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
+        else:
             for u, rgb in self._probes:
                 px = plot.left() + u * plot.width()
                 for value in rgb:
                     py = plot.bottom() - value * plot.height()
                     painter.drawEllipse(QPointF(px, py), 4.5, 4.5)
-
-            title = "RGB waveform"
 
         painter.setPen(self.palette().color(self.foregroundRole()))
         painter.drawText(
@@ -2545,6 +3014,8 @@ class ScopeCompareHost(QWidget):
 
 
 class ScopePane(QWidget):
+    popOutRequested = Signal(object)
+
     def __init__(self, initial: str):
         super().__init__()
 
@@ -2574,8 +3045,15 @@ class ScopePane(QWidget):
             "Magnify vectorscope chroma displacement by 2×.")
         self.zoom2.setChecked(False)
 
+        self.pop_out_button = QPushButton("↗")
+        self.pop_out_button.setFixedSize(28, 24)
+        self.pop_out_button.setToolTip("Open this scope in a separate window")
+        self.pop_out_button.clicked.connect(
+            lambda: self.popOutRequested.emit(self))
+
         toolbar_layout.addWidget(self.selector, 1)
         toolbar_layout.addWidget(self.zoom2, 0)
+        toolbar_layout.addWidget(self.pop_out_button, 0)
 
         self.stack = QStackedWidget()
         self.stack.setSizePolicy(
@@ -2710,6 +3188,79 @@ class ScopePane(QWidget):
         self._refresh_scope_caches()
 
 
+class FloatingScopeWindow(QWidget):
+    splitChanged = Signal(bool)
+    closing = Signal()
+
+    def __init__(self, primary_scope: ScopePane, parent=None):
+        flags = (
+            Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+        )
+        super().__init__(parent, flags)
+        self.setWindowTitle("FilmViz Scopes")
+        self.resize(920, 600)
+        self.setMinimumSize(520, 360)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        toolbar = QWidget()
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setSpacing(6)
+
+        toolbar_layout.addWidget(QLabel("Scopes"), 0)
+        toolbar_layout.addStretch(1)
+
+        self.split_button = QPushButton("2 scopes")
+        self.split_button.setCheckable(True)
+        self.split_button.setToolTip(
+            "Show one or two scope panes in this window")
+        self.split_button.toggled.connect(self.splitChanged.emit)
+        toolbar_layout.addWidget(self.split_button, 0)
+
+        layout.addWidget(toolbar, 0)
+
+        self.scope_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.scope_splitter.setChildrenCollapsible(False)
+        layout.addWidget(self.scope_splitter, 1)
+
+        self.primary_scope = primary_scope
+        self.secondary_scope = None
+        self.add_scope(primary_scope)
+
+    def add_scope(self, pane: ScopePane):
+        pane.setParent(None)
+        self.scope_splitter.addWidget(pane)
+        pane.show()
+        pane.pop_out_button.hide()
+
+        if pane is not self.primary_scope:
+            self.secondary_scope = pane
+
+        if self.scope_splitter.count() == 2:
+            self.scope_splitter.setStretchFactor(0, 1)
+            self.scope_splitter.setStretchFactor(1, 1)
+            width = max(2, self.scope_splitter.width())
+            self.scope_splitter.setSizes([width // 2, width // 2])
+
+    def remove_secondary(self):
+        pane = self.secondary_scope
+        if pane is None:
+            return None
+        pane.setParent(None)
+        self.secondary_scope = None
+        return pane
+
+    def closeEvent(self, event):
+        self.closing.emit()
+        event.accept()
+
+
 class FilmVizWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2736,6 +3287,28 @@ class FilmVizWindow(QMainWindow):
         self._probe_points = []
         self._probe_results = []
         self._probe_source_identity = None
+        self._runtime_resources = None
+        self._runtime_resources_source = None
+        self._profile_edit_path = None
+        self._profile_edit_x_column = None
+        self._floating_scope_window = None
+        self._floating_scope_primary = None
+        self._floating_scope_secondary = None
+        self._metal_preview = None
+        self._metal_preview_busy = False
+        self._metal_preview_pending = False
+        self._metal_preview_generation = 0
+        self._metal_profiles_dirty = False
+        self._metal_preview_bridge = MetalPreviewBridge(self)
+        self._metal_preview_bridge.finished.connect(
+            self._metal_preview_finished)
+        self._metal_preview_bridge.failed.connect(
+            self._metal_preview_failed)
+        self._metal_preview_timer = QTimer(self)
+        self._metal_preview_timer.setSingleShot(True)
+        self._metal_preview_timer.setInterval(75)
+        self._metal_preview_timer.timeout.connect(
+            self._start_metal_preview)
 
         central = QWidget()
         central_layout = QHBoxLayout(central)
@@ -2829,19 +3402,23 @@ class FilmVizWindow(QMainWindow):
             "matching source pixel through AP0 → spectrum → negative → print → output.")
         diagnostics_splitter.addWidget(self.probe_output)
 
-        scopes = QSplitter(Qt.Orientation.Horizontal)
+        self.scopes_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.left_scope = ScopePane("Vectorscope")
         self.right_scope = ScopePane("RGB Histogram")
         self.reference_wipe.valueChanged.connect(
             self.left_scope.set_reference_wipe)
         self.reference_wipe.valueChanged.connect(
             self.right_scope.set_reference_wipe)
-        scopes.addWidget(self.left_scope)
-        scopes.addWidget(self.right_scope)
-        scopes.setStretchFactor(0, 1)
-        scopes.setStretchFactor(1, 1)
-        scopes.setChildrenCollapsible(False)
-        diagnostics_splitter.addWidget(scopes)
+        self.left_scope.popOutRequested.connect(
+            self._pop_out_scope)
+        self.right_scope.popOutRequested.connect(
+            self._pop_out_scope)
+        self.scopes_splitter.addWidget(self.left_scope)
+        self.scopes_splitter.addWidget(self.right_scope)
+        self.scopes_splitter.setStretchFactor(0, 1)
+        self.scopes_splitter.setStretchFactor(1, 1)
+        self.scopes_splitter.setChildrenCollapsible(False)
+        diagnostics_splitter.addWidget(self.scopes_splitter)
 
         diagnostics_splitter.setStretchFactor(0, 4)
         diagnostics_splitter.setStretchFactor(1, 1)
@@ -2951,6 +3528,18 @@ class FilmVizWindow(QMainWindow):
         self.output_profile.setCurrentText("rec709-gamma24")
         common_form.addRow("Output profile", self.output_profile)
 
+        self.realtime_metal = QCheckBox()
+        metal_available = bool(
+            getattr(filmviz, "metal_preview_available", False))
+        self.realtime_metal.setEnabled(metal_available)
+        self.realtime_metal.setChecked(False)
+        self.realtime_metal.setToolTip(
+            "Render the current input through the direct Metal pipeline after "
+            "each control or runtime profile edit."
+            if metal_available else
+            "Realtime Metal preview is unavailable in this build.")
+        common_form.addRow("Realtime Metal preview", self.realtime_metal)
+
         self.exposure = _double(0.0, -10.0, 10.0, 0.25)
         self.negative_flash = _double(0.0, 0.0, 25.0, 0.1, 2)
         self.print_flash = _double(0.0, 0.0, 25.0, 0.1, 2)
@@ -2972,7 +3561,7 @@ class FilmVizWindow(QMainWindow):
         self.printer_light_master = _double(0.0, -10.0, 10.0, 0.05, 2)
         self.middle_gray = _double(0.18, 0.001, 2.0, 0.01, 4)
         self.printer_temperature = _double(3200.0, 1000.0, 10000.0, 50.0, 0)
-        self.lut_size = QSpinBox()
+        self.lut_size = DragSpinBox()
         self.lut_size.setRange(2, 129)
         self.lut_size.setValue(65)
         self.use_lut_acceleration = QCheckBox()
@@ -2981,7 +3570,7 @@ class FilmVizWindow(QMainWindow):
             "Disable to evaluate the spectral FilmPipeline directly per pixel. "
             "Direct mode is intended for validation and requires grain and "
             "halation to be disabled.")
-        self.threads = QSpinBox()
+        self.threads = DragSpinBox()
         self.threads.setRange(0, 256)
         self.threads.setSpecialValueText("Auto")
         self.threads.setValue(0)
@@ -3150,7 +3739,7 @@ class FilmVizWindow(QMainWindow):
         self.print_grain = _double(0.0, 0.0, 2.0)
         self.grain_size = _double(1.0, 0.0, 10.0, 0.25)
         self.grain_chroma = _double(1.0, 0.0, 1.0, 0.1)
-        self.grain_seed = QSpinBox()
+        self.grain_seed = DragSpinBox()
         self.grain_seed.setRange(0, 2_147_483_647)
         self.grain_seed.setValue(1)
         self.film_format = QComboBox()
@@ -3203,6 +3792,23 @@ class FilmVizWindow(QMainWindow):
         image_form.addRow("Halation threshold", self.halation_threshold_control)
         self.convert_button = QPushButton("Convert image")
         self.convert_button.clicked.connect(self.convert_image)
+
+        self.convert_shortcut = QShortcut(
+            QKeySequence(Qt.Key.Key_Return),
+            self)
+        self.convert_shortcut.setContext(
+            Qt.ShortcutContext.ApplicationShortcut)
+        self.convert_shortcut.activated.connect(
+            self._convert_from_shortcut)
+
+        self.convert_enter_shortcut = QShortcut(
+            QKeySequence(Qt.Key.Key_Enter),
+            self)
+        self.convert_enter_shortcut.setContext(
+            Qt.ShortcutContext.ApplicationShortcut)
+        self.convert_enter_shortcut.activated.connect(
+            self._convert_from_shortcut)
+
         self.open_output_button = QPushButton("Open output")
         self.open_output_button.clicked.connect(self.open_output_image)
         self.open_output_button.setVisible(False)
@@ -3275,7 +3881,13 @@ class FilmVizWindow(QMainWindow):
         profiles_header_layout = QHBoxLayout(profiles_header)
         profiles_header_layout.setContentsMargins(0, 0, 0, 0)
         profiles_header_layout.addStretch(1)
+        self.profile_save_button = QPushButton("Save profile…")
+        self.profile_save_button.setEnabled(False)
+        self.profile_save_button.setToolTip(
+            "Export the current runtime-edited profile curves without changing "
+            "the canonical resource CSV files.")
         self.profiles_reset_button = _reset_button()
+        profiles_header_layout.addWidget(self.profile_save_button)
         profiles_header_layout.addWidget(self.profiles_reset_button)
         profiles_layout.addWidget(profiles_header)
 
@@ -3293,24 +3905,94 @@ class FilmVizWindow(QMainWindow):
                 f"Print — {profile['display_name']}",
                 ("print", profile["identifier"]))
         self.profile_curve_type = QComboBox()
+        self.profile_edit_spacing = QComboBox()
+        self.profile_edit_spacing.addItem("All samples", 0.0)
+        self.profile_edit_spacing.addItem("5 nm", 5.0)
+        self.profile_edit_spacing.addItem("10 nm", 10.0)
+        self.profile_edit_spacing.addItem("20 nm", 20.0)
+        self.profile_edit_spacing.addItem("25 nm", 25.0)
+        self.profile_edit_spacing.addItem("50 nm", 50.0)
+        self.profile_edit_spacing.setToolTip(
+            "Choose which wavelength samples are editable. Moving an anchor "
+            "linearly interpolates samples between its neighboring anchors.")
 
         profile_controls_layout.addWidget(QLabel("Profile"))
         profile_controls_layout.addWidget(self.profile_family)
         profile_controls_layout.addSpacing(18)
         profile_controls_layout.addWidget(QLabel("Curves"))
         profile_controls_layout.addWidget(self.profile_curve_type, 1)
+        profile_controls_layout.addSpacing(12)
+        profile_controls_layout.addWidget(QLabel("Edit spacing"))
+        profile_controls_layout.addWidget(self.profile_edit_spacing)
 
         self.profile_plot = CurvePlotWidget()
 
+        point_editor = QWidget()
+        point_editor_layout = QHBoxLayout(point_editor)
+        point_editor_layout.setContentsMargins(0, 0, 0, 0)
+        point_editor_layout.setSpacing(8)
+
+        self.profile_selected_curve = QLabel("No point selected")
+        self.profile_selected_curve.setMinimumWidth(120)
+
+        self.profile_point_x = DragDoubleSpinBox()
+        self.profile_point_x.setDecimals(8)
+        self.profile_point_x.setRange(-1.0e9, 1.0e9)
+        self.profile_point_x.setReadOnly(True)
+        self.profile_point_x.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self.profile_point_x.setEnabled(False)
+
+        self.profile_point_y = DragDoubleSpinBox()
+        self.profile_point_y.setDecimals(8)
+        self.profile_point_y.setRange(-1.0e9, 1.0e9)
+        self.profile_point_y.setSingleStep(0.001)
+        self.profile_point_y.setEnabled(False)
+
+        self.profile_reset_curve_button = QPushButton("Reset curve")
+        self.profile_reset_curve_button.setEnabled(False)
+        self.profile_reset_profile_button = QPushButton("Reset profile")
+        self.profile_reset_profile_button.setEnabled(False)
+
+        point_editor_layout.addWidget(QLabel("Selected"))
+        point_editor_layout.addWidget(self.profile_selected_curve, 1)
+        point_editor_layout.addWidget(QLabel("X"))
+        point_editor_layout.addWidget(self.profile_point_x)
+        point_editor_layout.addWidget(QLabel("Y"))
+        point_editor_layout.addWidget(self.profile_point_y)
+        point_editor_layout.addWidget(self.profile_reset_curve_button)
+        point_editor_layout.addWidget(self.profile_reset_profile_button)
+
+        profile_hint = QLabel(
+            "Click an editable sample to select it. Drag vertically or enter an exact Y value. "
+            "For wavelength curves, Edit spacing can expose coarser nm anchors and interpolate "
+            "the samples between neighboring anchors. Original CSV data remains untouched.")
+        profile_hint.setWordWrap(True)
+
         profiles_layout.addWidget(profile_controls)
         profiles_layout.addWidget(self.profile_plot, 1)
+        profiles_layout.addWidget(point_editor)
+        profiles_layout.addWidget(profile_hint)
 
         self.profile_family.currentIndexChanged.connect(
             self._profile_family_changed)
         self.profile_curve_type.currentIndexChanged.connect(
             self._reload_profile_plot)
+        self.profile_edit_spacing.currentIndexChanged.connect(
+            self._profile_edit_spacing_changed)
         self.resources.edit.editingFinished.connect(
-            self._reload_profile_plot)
+            self._resources_changed)
+        self.profile_plot.pointSelected.connect(
+            self._profile_point_selected)
+        self.profile_plot.pointChanged.connect(
+            self._profile_point_changed)
+        self.profile_point_y.valueChanged.connect(
+            self._profile_numeric_y_changed)
+        self.profile_reset_curve_button.clicked.connect(
+            self._reset_current_profile_curve)
+        self.profile_reset_profile_button.clicked.connect(
+            self._reset_current_profile)
+        self.profile_save_button.clicked.connect(
+            self._save_current_profile)
 
         profiles_scroll = QScrollArea()
         profiles_scroll.setWidgetResizable(True)
@@ -3333,6 +4015,51 @@ class FilmVizWindow(QMainWindow):
             self._reset_lut_settings)
         self.profiles_reset_button.clicked.connect(
             self._reset_profiles)
+
+        self.realtime_metal.toggled.connect(
+            self._realtime_metal_toggled)
+        self.input_image.edit.editingFinished.connect(
+            self._schedule_metal_preview)
+
+        for combo in (
+            self.input_profile,
+            self.negative_profile,
+            self.print_profile,
+            self.output_profile,
+            self.film_format,
+        ):
+            combo.currentIndexChanged.connect(
+                self._schedule_metal_preview)
+
+        for control in (
+            self.exposure,
+            self.negative_flash,
+            self.print_flash,
+            self.push_pull,
+            self.color_density,
+            self.color_depth,
+            self.negative_bleach_bypass,
+            self.print_bleach_bypass,
+            self.printer_light_red,
+            self.printer_light_green,
+            self.printer_light_blue,
+            self.printer_light_master,
+            self.printer_temperature,
+            self.middle_gray,
+            self.negative_grain,
+            self.print_grain,
+            self.grain_size,
+            self.grain_chroma,
+            self.grain_seed,
+            self.image_width_mm,
+            self.negative_mtf,
+            self.print_mtf,
+            self.halation_strength,
+            self.halation_radius,
+            self.halation_threshold,
+        ):
+            control.valueChanged.connect(
+                self._schedule_metal_preview)
 
         image_actions = QWidget()
         image_actions_layout = QHBoxLayout(image_actions)
@@ -3369,6 +4096,122 @@ class FilmVizWindow(QMainWindow):
 
         root_layout.addWidget(status)
         root_layout.addWidget(self.progress)
+
+
+
+    def _scope_main_index(self, pane):
+        if pane is self.left_scope:
+            return 0
+        if pane is self.right_scope:
+            return 1
+        return self.scopes_splitter.count()
+
+    def _restore_scope_to_main(self, pane):
+        if pane is None:
+            return
+
+        pane.setParent(None)
+        pane.pop_out_button.show()
+        self.scopes_splitter.insertWidget(
+            self._scope_main_index(pane),
+            pane)
+        pane.show()
+
+        self.scopes_splitter.setStretchFactor(0, 1)
+        self.scopes_splitter.setStretchFactor(1, 1)
+
+    @Slot(object)
+    def _pop_out_scope(self, pane):
+        # Keep a single floating scope window. If one pane is already floating,
+        # clicking pop-out on the remaining main pane simply turns on the
+        # two-scope split and moves that pane into the existing window.
+        if self._floating_scope_window is not None:
+            if (
+                pane is not self._floating_scope_primary
+                and pane is not self._floating_scope_secondary
+            ):
+                self._floating_scope_window.split_button.setChecked(True)
+            self._floating_scope_window.raise_()
+            self._floating_scope_window.activateWindow()
+            return
+
+        pane.setParent(None)
+        pane.show()
+
+        floating = FloatingScopeWindow(pane, self)
+        floating.splitChanged.connect(
+            self._floating_scope_split_changed)
+        floating.closing.connect(
+            self._restore_floating_scopes)
+
+        self._floating_scope_window = floating
+        self._floating_scope_primary = pane
+        self._floating_scope_secondary = None
+
+        floating.show()
+        floating.raise_()
+        floating.activateWindow()
+
+    @Slot(bool)
+    def _floating_scope_split_changed(self, enabled):
+        floating = self._floating_scope_window
+        if floating is None:
+            return
+
+        if enabled:
+            if self._floating_scope_secondary is not None:
+                return
+
+            other = (
+                self.right_scope
+                if self._floating_scope_primary is self.left_scope
+                else self.left_scope
+            )
+
+            # The other scope can only be moved if it is still in the main
+            # splitter. This keeps the operation deterministic.
+            if other.parent() is not self.scopes_splitter:
+                floating.split_button.blockSignals(True)
+                floating.split_button.setChecked(False)
+                floating.split_button.blockSignals(False)
+                return
+
+            other.setParent(None)
+            floating.add_scope(other)
+            self._floating_scope_secondary = other
+            floating.secondary_scope = other
+            return
+
+        secondary = floating.remove_secondary()
+        if secondary is not None:
+            self._floating_scope_secondary = None
+            self._restore_scope_to_main(secondary)
+
+    @Slot()
+    def _restore_floating_scopes(self):
+        floating = self._floating_scope_window
+        if floating is None:
+            return
+
+        primary = self._floating_scope_primary
+        secondary = self._floating_scope_secondary
+
+        # Clear state first so reparenting/close processing cannot re-enter the
+        # floating-window logic with stale references.
+        self._floating_scope_window = None
+        self._floating_scope_primary = None
+        self._floating_scope_secondary = None
+
+        if secondary is None:
+            secondary = floating.secondary_scope
+
+        if primary is not None:
+            self._restore_scope_to_main(primary)
+        if secondary is not None and secondary is not primary:
+            self._restore_scope_to_main(secondary)
+
+        floating.deleteLater()
+
 
 
 
@@ -3430,10 +4273,7 @@ class FilmVizWindow(QMainWindow):
 
     @Slot()
     def _reset_profiles(self):
-        if self.profile_family.count() > 0:
-            self.profile_family.setCurrentIndex(0)
-        if self.profile_curve_type.count() > 0:
-            self.profile_curve_type.setCurrentIndex(0)
+        self._discard_runtime_resources()
         self._reload_profile_plot()
 
     @Slot()
@@ -4117,6 +4957,329 @@ class FilmVizWindow(QMainWindow):
             return
         QApplication.clipboard().setImage(image)
 
+    def _discard_runtime_resources(self):
+        runtime = self._runtime_resources
+        self._runtime_resources = None
+        self._runtime_resources_source = None
+        self._profile_edit_path = None
+        self._profile_edit_x_column = None
+        if runtime is not None:
+            try:
+                runtime.cleanup()
+            except Exception:
+                pass
+        if hasattr(self, "profile_reset_profile_button"):
+            self.profile_reset_profile_button.setEnabled(False)
+        if hasattr(self, "profile_reset_curve_button"):
+            self.profile_reset_curve_button.setEnabled(False)
+        if hasattr(self, "profile_save_button"):
+            self.profile_save_button.setEnabled(False)
+        if hasattr(self, "realtime_metal"):
+            self._schedule_profile_metal_preview()
+
+    @Slot()
+    def _resources_changed(self):
+        source = str(Path(self.resources.value()).expanduser().resolve())
+        if (
+            self._runtime_resources is not None
+            and self._runtime_resources_source != source
+        ):
+            self._discard_runtime_resources()
+        self._reload_profile_plot()
+        self._schedule_profile_metal_preview()
+
+    def _effective_resources_path(self):
+        if self._runtime_resources is not None:
+            return Path(self._runtime_resources.name)
+        return Path(self.resources.value()).expanduser()
+
+    def _ensure_runtime_resources(self):
+        source = Path(self.resources.value()).expanduser().resolve()
+        if self._runtime_resources is not None:
+            if self._runtime_resources_source == str(source):
+                return Path(self._runtime_resources.name)
+            self._discard_runtime_resources()
+
+        if not source.is_dir():
+            raise RuntimeError(f"Resource directory does not exist: {source}")
+
+        runtime = tempfile.TemporaryDirectory(prefix="filmviz_profile_edit_")
+        target = Path(runtime.name)
+        shutil.copytree(source, target, dirs_exist_ok=True)
+        self._runtime_resources = runtime
+        self._runtime_resources_source = str(source)
+        return target
+
+    def _current_profile_info(self):
+        data = self.profile_family.currentData()
+        if not data:
+            return None
+        family, identifier = data
+        if family == "negative":
+            profile = self.negative_profiles_by_id.get(identifier)
+        else:
+            profile = self.print_profiles_by_id.get(identifier)
+        if profile is None:
+            return None
+        return family, identifier, profile
+
+    def _current_profile_paths(self):
+        info = self._current_profile_info()
+        filename = self.profile_curve_type.currentData()
+        if info is None or not filename:
+            return None, None, None
+
+        family, identifier, profile = info
+        relative = Path(profile["resource_directory"]) / filename
+        source = Path(self.resources.value()).expanduser() / relative
+        effective = self._effective_resources_path() / relative
+        return source, effective, relative
+
+    @staticmethod
+    def _read_csv_table(path: Path):
+        with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+            reader = csv.reader(handle)
+            rows = list(reader)
+        if not rows:
+            raise RuntimeError(f"CSV is empty: {path}")
+        return rows[0], rows[1:]
+
+    @staticmethod
+    def _write_csv_table(path: Path, header, rows):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        with temporary.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle, lineterminator="\n")
+            writer.writerow(header)
+            writer.writerows(rows)
+        temporary.replace(path)
+
+    def _write_profile_point(self, curve_name: str, point_index: int, value: float):
+        source_path, effective_path, relative = self._current_profile_paths()
+        if source_path is None or self._profile_edit_x_column is None:
+            return
+
+        runtime_root = self._ensure_runtime_resources()
+        path = runtime_root / relative
+        header, rows = self._read_csv_table(path)
+        if curve_name not in header or self._profile_edit_x_column not in header:
+            raise RuntimeError(
+                f"Curve columns are unavailable in {path.name}: "
+                f"{self._profile_edit_x_column}, {curve_name}")
+
+        x_index = header.index(self._profile_edit_x_column)
+        y_index = header.index(curve_name)
+        valid_row_indices = []
+        for row_index, row in enumerate(rows):
+            if x_index >= len(row) or y_index >= len(row):
+                continue
+            try:
+                float(row[x_index])
+                float(row[y_index])
+            except (TypeError, ValueError):
+                continue
+            valid_row_indices.append(row_index)
+
+        if point_index < 0 or point_index >= len(valid_row_indices):
+            raise RuntimeError(
+                f"Point {point_index} is outside curve {curve_name} in {path.name}")
+
+        row_index = valid_row_indices[point_index]
+        while len(rows[row_index]) < len(header):
+            rows[row_index].append("")
+        rows[row_index][y_index] = format(float(value), ".12g")
+        self._write_csv_table(path, header, rows)
+        self._profile_edit_path = path
+        self.profile_reset_curve_button.setEnabled(True)
+        self.profile_reset_profile_button.setEnabled(True)
+        self.profile_save_button.setEnabled(True)
+
+    @Slot()
+    def _profile_edit_spacing_changed(self):
+        spacing = float(self.profile_edit_spacing.currentData() or 0.0)
+        self.profile_plot.set_edit_spacing_nm(spacing)
+        self.profile_selected_curve.setText("No point selected")
+        self.profile_point_x.setEnabled(False)
+        self.profile_point_y.setEnabled(False)
+
+    @Slot(int, int, str, float, float)
+    def _profile_point_selected(self, curve_index, point_index, name, x, y):
+        self.profile_selected_curve.setText(name)
+        self.profile_point_x.blockSignals(True)
+        self.profile_point_y.blockSignals(True)
+        self.profile_point_x.setValue(float(x))
+        self.profile_point_y.setValue(float(y))
+        self.profile_point_x.setEnabled(True)
+        self.profile_point_y.setEnabled(True)
+        self.profile_point_x.blockSignals(False)
+        self.profile_point_y.blockSignals(False)
+        self.profile_reset_curve_button.setEnabled(
+            self._runtime_resources is not None)
+        self.profile_reset_profile_button.setEnabled(
+            self._runtime_resources is not None)
+
+    def _write_profile_curve(self, curve_name: str, points):
+        source_path, effective_path, relative = self._current_profile_paths()
+        if source_path is None or self._profile_edit_x_column is None:
+            return
+
+        runtime_root = self._ensure_runtime_resources()
+        path = runtime_root / relative
+        header, rows = self._read_csv_table(path)
+        if curve_name not in header or self._profile_edit_x_column not in header:
+            raise RuntimeError(
+                f"Curve columns are unavailable in {path.name}: "
+                f"{self._profile_edit_x_column}, {curve_name}")
+
+        x_index = header.index(self._profile_edit_x_column)
+        y_index = header.index(curve_name)
+        point_by_x = {round(float(x), 9): float(y) for x, y in points}
+        for row in rows:
+            if x_index >= len(row):
+                continue
+            try:
+                x = float(row[x_index])
+            except (TypeError, ValueError):
+                continue
+            key = round(x, 9)
+            if key not in point_by_x:
+                continue
+            while len(row) < len(header):
+                row.append("")
+            row[y_index] = format(point_by_x[key], ".12g")
+
+        self._write_csv_table(path, header, rows)
+        self._profile_edit_path = path
+        self.profile_reset_curve_button.setEnabled(True)
+        self.profile_reset_profile_button.setEnabled(True)
+        self.profile_save_button.setEnabled(True)
+
+    @Slot(int, int, str, float, float)
+    def _profile_point_changed(self, curve_index, point_index, name, x, y):
+        try:
+            self._write_profile_curve(
+                name, self.profile_plot.curve_points(curve_index))
+        except Exception as error:
+            QMessageBox.warning(self, "Could not edit profile curve", str(error))
+            self._reload_profile_plot()
+            return
+
+        self.profile_point_y.blockSignals(True)
+        self.profile_point_y.setValue(float(y))
+        self.profile_point_y.blockSignals(False)
+        self._schedule_profile_metal_preview()
+
+    @Slot(float)
+    def _profile_numeric_y_changed(self, value: float):
+        if not self.profile_point_y.isEnabled():
+            return
+        self.profile_plot.set_selected_y(float(value))
+
+    @Slot()
+    def _reset_current_profile_curve(self):
+        selected = self.profile_plot.selected_point()
+        paths = self._current_profile_paths()
+        if selected is None or self._runtime_resources is None:
+            return
+
+        source_path, effective_path, relative = paths
+        curve_name = selected[2]
+        source_header, source_rows = self._read_csv_table(source_path)
+        runtime_header, runtime_rows = self._read_csv_table(effective_path)
+        if curve_name not in source_header or curve_name not in runtime_header:
+            return
+
+        source_index = source_header.index(curve_name)
+        runtime_index = runtime_header.index(curve_name)
+        for row_index in range(min(len(source_rows), len(runtime_rows))):
+            if source_index >= len(source_rows[row_index]):
+                continue
+            while len(runtime_rows[row_index]) < len(runtime_header):
+                runtime_rows[row_index].append("")
+            runtime_rows[row_index][runtime_index] = source_rows[row_index][source_index]
+
+        self._write_csv_table(effective_path, runtime_header, runtime_rows)
+        self._reload_profile_plot()
+        self._schedule_profile_metal_preview()
+
+    @Slot()
+    def _reset_current_profile(self):
+        if self._runtime_resources is None:
+            return
+        info = self._current_profile_info()
+        if info is None:
+            return
+        family, identifier, profile = info
+        relative_directory = Path(profile["resource_directory"])
+        source_directory = Path(self.resources.value()).expanduser() / relative_directory
+        runtime_directory = Path(self._runtime_resources.name) / relative_directory
+        if runtime_directory.exists():
+            shutil.rmtree(runtime_directory)
+        shutil.copytree(source_directory, runtime_directory)
+        self._reload_profile_plot()
+        self._schedule_profile_metal_preview()
+
+    @Slot()
+    def _save_current_profile(self):
+        if self._runtime_resources is None:
+            QMessageBox.information(
+                self,
+                "No runtime profile edits",
+                "Change at least one curve point before saving an edited profile.")
+            return
+
+        info = self._current_profile_info()
+        if info is None:
+            return
+
+        family, identifier, profile = info
+        relative_directory = Path(profile["resource_directory"])
+        runtime_directory = Path(self._runtime_resources.name) / relative_directory
+        if not runtime_directory.is_dir():
+            QMessageBox.warning(
+                self,
+                "Could not save profile",
+                f"Runtime profile directory is unavailable:\n{runtime_directory}")
+            return
+
+        suggested_root = Path(self.resources.value()).expanduser().parent
+        destination_root = QFileDialog.getExistingDirectory(
+            self,
+            "Choose folder for edited FilmViz profile",
+            str(suggested_root))
+        if not destination_root:
+            return
+
+        safe_identifier = str(identifier).replace("/", "_").replace("\\", "_")
+        destination = Path(destination_root) / f"{safe_identifier}_edited"
+
+        if destination.exists():
+            answer = QMessageBox.question(
+                self,
+                "Replace edited profile?",
+                f"The destination already exists:\n{destination}\n\nReplace it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            shutil.rmtree(destination)
+
+        try:
+            shutil.copytree(runtime_directory, destination)
+        except Exception as error:
+            QMessageBox.critical(
+                self,
+                "Could not save profile",
+                str(error))
+            return
+
+        QMessageBox.information(
+            self,
+            "Edited profile saved",
+            "Saved the complete edited profile directory.\n\n"
+            f"{destination}\n\n"
+            "The canonical resource CSV files were not changed.")
+
     @Slot()
     def _profile_family_changed(self):
         current_label = self.profile_curve_type.currentText()
@@ -4169,6 +5332,11 @@ class FilmVizWindow(QMainWindow):
     @Slot()
     def _reload_profile_plot(self):
         filename = self.profile_curve_type.currentData()
+        self.profile_selected_curve.setText("No point selected")
+        self.profile_point_x.setEnabled(False)
+        self.profile_point_y.setEnabled(False)
+        self._profile_edit_x_column = None
+
         if not filename:
             self.profile_plot.set_error("No profile curve selected.")
             return
@@ -4181,8 +5349,13 @@ class FilmVizWindow(QMainWindow):
             profile_directory = self.print_profiles_by_id[
                 identifier]["resource_directory"]
 
+        source_path = (
+            Path(self.resources.value()).expanduser()
+            / profile_directory
+            / filename
+        )
         path = (
-            Path(self.resources.value())
+            self._effective_resources_path()
             / profile_directory
             / filename
         )
@@ -4195,10 +5368,6 @@ class FilmVizWindow(QMainWindow):
             x_column = "wavelength_nm"
 
             if family == "negative":
-                # Camera-negative dye CSVs also contain scalar metadata such
-                # as source_spacing_nm and working_spacing_nm. Those are file
-                # metadata, not wavelength-varying curves; plotting them
-                # produces the bogus horizontal lines at 10 and 5.
                 y_columns = (
                     "minimum_density",
                     "midscale_neutral_density",
@@ -4222,20 +5391,14 @@ class FilmVizWindow(QMainWindow):
                     "curve_mid_density",
                     "curve_low_density",
                 )
-                # Both active camera-negative source tables carry camera stops
-                # and LogE together with stop 0 anchored at -0.515 LogE.
                 stop_axis = (-8.0, 8.0, -0.515)
-            else:
-                # Print sensitometry already uses log exposure as its
-                # first column. Keep the file's native axis and plot all
-                # remaining density channels. No photographic stop axis is
-                # shown because there is no single calibrated 0-stop anchor
-                # for the print stock.
-                x_column = None
-                y_columns = None
 
         x_label, curves = _read_curve_csv(
             path,
+            x_column=x_column,
+            y_columns=y_columns)
+        original_x_label, original_curves = _read_curve_csv(
+            source_path,
             x_column=x_column,
             y_columns=y_columns)
 
@@ -4244,21 +5407,281 @@ class FilmVizWindow(QMainWindow):
                 f"Could not load curve data:\n{path}")
             return
 
+        self._profile_edit_path = path
+        self._profile_edit_x_column = x_label
+
         title = (
             f"{self.profile_family.currentText()} — "
             f"{self.profile_curve_type.currentText()}"
         )
+        if self._runtime_resources is not None and path != source_path:
+            title += "  [runtime edited]"
 
         self.profile_plot.set_curves(
             title,
             x_label,
             curves,
-            stop_axis=stop_axis)
+            stop_axis=stop_axis,
+            original_curves=original_curves or curves)
 
+        # Edit spacing follows the actual X axis. Every curve remains editable;
+        # only the coarser anchor choices change with the axis units.
+        previous_spacing = float(self.profile_edit_spacing.currentData() or 0.0)
+        self.profile_edit_spacing.blockSignals(True)
+        self.profile_edit_spacing.clear()
+        self.profile_edit_spacing.addItem("All samples", 0.0)
+
+        if x_label == "wavelength_nm":
+            for label, spacing in ((
+                ("5 nm", 5.0),
+                ("10 nm", 10.0),
+                ("20 nm", 20.0),
+                ("25 nm", 25.0),
+                ("50 nm", 50.0),
+            )):
+                self.profile_edit_spacing.addItem(label, spacing)
+            self.profile_edit_spacing.setToolTip(
+                "Choose editable wavelength anchors. Samples between anchors "
+                "are linearly interpolated in wavelength.")
+
+        elif x_label == "log_exposure_lux_seconds":
+            # One photographic stop is log10(2) in LogE. Present the editor
+            # in camera-stop units while keeping the native LogE X values.
+            log10_two = 0.3010299956639812
+            for label, stops in ((
+                ("1/4 stop", 0.25),
+                ("1/2 stop", 0.5),
+                ("1 stop", 1.0),
+                ("2 stops", 2.0),
+            )):
+                self.profile_edit_spacing.addItem(label, stops * log10_two)
+            self.profile_edit_spacing.setToolTip(
+                "Choose editable exposure anchors. Samples between anchors "
+                "are linearly interpolated in LogE.")
+
+        else:
+            # For other numeric X axes, expose useful multiples of the native
+            # sample spacing rather than assuming wavelength units.
+            all_x = sorted({
+                float(x)
+                for _, points in curves
+                for x, _ in points
+            })
+            deltas = [
+                all_x[index] - all_x[index - 1]
+                for index in range(1, len(all_x))
+                if all_x[index] > all_x[index - 1]
+            ]
+            if deltas:
+                deltas.sort()
+                native = deltas[len(deltas) // 2]
+                for multiplier in (2, 4, 8):
+                    spacing = native * multiplier
+                    self.profile_edit_spacing.addItem(
+                        f"{multiplier}x sample spacing", spacing)
+            self.profile_edit_spacing.setToolTip(
+                "Choose editable anchors along the current X axis. Samples "
+                "between anchors are linearly interpolated.")
+
+        # Preserve an equivalent spacing when possible, otherwise default to
+        # All samples. This keeps profile/curve switching predictable.
+        best_index = 0
+        if previous_spacing > 0.0:
+            best_error = None
+            for index in range(1, self.profile_edit_spacing.count()):
+                spacing = float(self.profile_edit_spacing.itemData(index) or 0.0)
+                error = abs(spacing - previous_spacing)
+                if best_error is None or error < best_error:
+                    best_error = error
+                    best_index = index
+        self.profile_edit_spacing.setCurrentIndex(best_index)
+        self.profile_edit_spacing.setEnabled(True)
+        self.profile_edit_spacing.blockSignals(False)
+        self.profile_plot.set_edit_spacing_nm(
+            float(self.profile_edit_spacing.currentData() or 0.0))
+
+        self.profile_reset_curve_button.setEnabled(False)
+        self.profile_reset_profile_button.setEnabled(
+            self._runtime_resources is not None)
+
+
+    @Slot(bool)
+    def _realtime_metal_toggled(self, enabled: bool):
+        self._metal_preview_generation += 1
+        self._metal_preview_pending = False
+        self._metal_preview_timer.stop()
+
+        if not enabled:
+            return
+
+        try:
+            if self._metal_preview is None:
+                self._metal_preview = filmviz.MetalPreview()
+        except Exception as error:
+            self.realtime_metal.blockSignals(True)
+            self.realtime_metal.setChecked(False)
+            self.realtime_metal.setEnabled(False)
+            self.realtime_metal.blockSignals(False)
+            QMessageBox.warning(
+                self,
+                "Realtime Metal unavailable",
+                str(error))
+            return
+
+        self._schedule_metal_preview()
+
+    @Slot()
+    def _schedule_metal_preview(self, *_):
+        if not self.realtime_metal.isChecked():
+            return
+
+        # Every interaction invalidates the generation that is currently
+        # rendering. If Metal is busy, keep exactly one pending request for the
+        # newest state; the completion callback immediately renders that latest
+        # state. This makes curve dragging interactive without queueing every
+        # intermediate mouse-move.
+        self._metal_preview_generation += 1
+        self._metal_preview_pending = True
+
+        if self._metal_preview_busy:
+            return
+
+        self._metal_preview_timer.start()
+
+    def _schedule_profile_metal_preview(self):
+        self._metal_profiles_dirty = True
+        self._schedule_metal_preview()
+
+    def _metal_settings(self):
+        settings = self._common()
+        settings.update(
+            negative_grain=self.negative_grain.value(),
+            print_grain=self.print_grain.value(),
+            grain_size=self.grain_size.value(),
+            grain_chroma=self.grain_chroma.value(),
+            grain_seed=self.grain_seed.value(),
+            film_format=self.film_format.currentData(),
+            image_width_mm=self.image_width_mm.value(),
+            negative_mtf=self.negative_mtf.value() * 0.01,
+            print_mtf=self.print_mtf.value() * 0.01,
+            halation_strength=self.halation_strength.value(),
+            halation_radius=self.halation_radius.value(),
+            halation_threshold=self.halation_threshold.value(),
+        )
+        settings.pop("resources", None)
+        settings.pop("lut_size", None)
+        settings.pop("use_lut_acceleration", None)
+        settings.pop("threads", None)
+        return settings
+
+    @Slot()
+    def _start_metal_preview(self):
+        if not self.realtime_metal.isChecked():
+            self._metal_preview_pending = False
+            return
+
+        if self._metal_preview_busy:
+            # Do not lose an edit that arrives while Metal is rendering.
+            self._metal_preview_pending = True
+            return
+
+        input_filename = str(
+            Path(self.input_image.value()).expanduser().resolve())
+        if not Path(input_filename).is_file():
+            self.stage.setText("Realtime Metal input is unavailable")
+            return
+
+        if self._metal_preview is None:
+            try:
+                self._metal_preview = filmviz.MetalPreview()
+            except Exception as error:
+                self.stage.setText(f"Realtime Metal unavailable: {error}")
+                return
+
+        generation = self._metal_preview_generation
+        resources = str(self._effective_resources_path())
+        settings = self._metal_settings()
+        invalidate_profiles = self._metal_profiles_dirty
+        self._metal_profiles_dirty = False
+        self._metal_preview_busy = True
+        self._metal_preview_pending = False
+        self.stage.setText("Rendering Metal preview…")
+
+        def render_preview():
+            try:
+                if invalidate_profiles:
+                    self._metal_preview.invalidate_profiles()
+                result = self._metal_preview.render(
+                    input_filename=input_filename,
+                    resources=resources,
+                    settings=settings,
+                    max_dimension=1280,
+                    time=0.0)
+            except Exception:
+                self._metal_preview_bridge.failed.emit(
+                    generation,
+                    traceback.format_exc())
+            else:
+                self._metal_preview_bridge.finished.emit(
+                    generation,
+                    result)
+
+        threading.Thread(
+            target=render_preview,
+            name="FilmVizMetalPreview",
+            daemon=True).start()
+
+    @Slot(int, object)
+    def _metal_preview_finished(self, generation: int, result):
+        self._metal_preview_busy = False
+
+        if (
+            self.realtime_metal.isChecked()
+            and generation == self._metal_preview_generation
+        ):
+            width = int(result["width"])
+            height = int(result["height"])
+            rgb = bytes(result["rgb"])
+            scope_rgb = array.array("f")
+            scope_rgb.frombytes(bytes(result["scope_rgb"]))
+            identity = (
+                f"metal:{Path(self.input_image.value()).expanduser().resolve()}")
+
+            self.image_preview.set_rgb(
+                width,
+                height,
+                rgb,
+                image_identity=identity)
+            self._scope_width = width
+            self._scope_height = height
+            self._scope_rgb = scope_rgb
+            self.left_scope.set_rgb(width, height, scope_rgb)
+            self.right_scope.set_rgb(width, height, scope_rgb)
+            self._resample_probes()
+            self.stage.setText("Realtime Metal preview")
+
+        if self._metal_preview_pending and self.realtime_metal.isChecked():
+            # Render the newest UI/profile state immediately. Intermediate
+            # edits are deliberately collapsed into this single latest-state
+            # render so dragging remains responsive.
+            self._metal_preview_timer.start(0)
+
+    @Slot(int, str)
+    def _metal_preview_failed(self, generation: int, message: str):
+        self._metal_preview_busy = False
+        if generation == self._metal_preview_generation:
+            detail = message.strip().splitlines()
+            self.stage.setText(
+                detail[-1] if detail else "Realtime Metal preview failed")
+        if self._metal_preview_pending and self.realtime_metal.isChecked():
+            # Render the newest UI/profile state immediately. Intermediate
+            # edits are deliberately collapsed into this single latest-state
+            # render so dragging remains responsive.
+            self._metal_preview_timer.start(0)
 
     def _common(self):
         return dict(
-            resources=self.resources.value(),
+            resources=str(self._effective_resources_path()),
             input=self.input_profile.currentText(),
             negative=(
                 self.negative_profile.currentData()
@@ -4283,6 +5706,18 @@ class FilmVizWindow(QMainWindow):
             printer_temperature=self.printer_temperature.value(),
             threads=self.threads.value(),
         )
+
+    @Slot()
+    def _convert_from_shortcut(self):
+        focus = QApplication.focusWidget()
+
+        # Keep Enter usable for committing text/numeric edits. Everywhere else
+        # Return/Enter is the global "Convert image" shortcut.
+        if isinstance(focus, (QLineEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit)):
+            return
+
+        if self.convert_button.isEnabled():
+            self.convert_image()
 
     @Slot()
     def convert_image(self):
@@ -4559,6 +5994,8 @@ def main() -> int:
     QSurfaceFormat.setDefaultFormat(surface_format)
 
     application = QApplication(sys.argv)
+    application.setApplicationName("FilmViz")
+    application.setApplicationDisplayName("FilmViz")
 
     # Keep the entire application visually compact. Apply the reduction once
     # at QApplication level so diagnostics, toolbars, tabs, controls, status
