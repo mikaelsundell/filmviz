@@ -128,6 +128,9 @@ if(APPLE)
     target_compile_options(filmviz_ofx PRIVATE
         "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
     )
+    set_target_properties(filmviz_ofx PROPERTIES
+        XCODE_ATTRIBUTE_CLANG_LINK_OBJC_RUNTIME "NO"
+    )
 
     target_link_libraries(filmviz_ofx
         PRIVATE
@@ -151,6 +154,9 @@ if(APPLE)
     )
     target_compile_options(filmviz_metal_compare PRIVATE
         "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+    )
+    set_target_properties(filmviz_metal_compare PROPERTIES
+        XCODE_ATTRIBUTE_CLANG_LINK_OBJC_RUNTIME "NO"
     )
 else()
     target_compile_definitions(filmviz_ofx PRIVATE FILMVIZ_HAS_METAL=0)

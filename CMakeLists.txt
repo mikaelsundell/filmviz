@@ -240,6 +240,9 @@ if(BUILD_TESTING)
         target_compile_options(test_metal_direct PRIVATE
             "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
         )
+        set_target_properties(test_metal_direct PROPERTIES
+            XCODE_ATTRIBUTE_CLANG_LINK_OBJC_RUNTIME "NO"
+        )
         target_compile_definitions(test_metal_direct PRIVATE
             FILMVIZ_TEST_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources"
         )
@@ -428,6 +431,9 @@ if(FILMVIZ_BUILD_OFX)
             )
             target_compile_options(filmviz_python PRIVATE
                 "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+            )
+            set_target_properties(filmviz_python PROPERTIES
+                XCODE_ATTRIBUTE_CLANG_LINK_OBJC_RUNTIME "NO"
             )
         endif()
     else()

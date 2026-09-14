@@ -21,6 +21,7 @@
 #include <mutex>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <string>
 #include <unordered_map>
 
@@ -806,6 +807,29 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     render_x1=std::max(render_x1,destination.x1); render_y1=std::max(render_y1,destination.y1);
     render_x2=std::min(render_x2,destination.x2); render_y2=std::min(render_y2,destination.y2);
     if(render_x1>=render_x2||render_y1>=render_y2) return true;
+    const std::int64_t source_width_value=static_cast<std::int64_t>(source.x2)-source.x1;
+    const std::int64_t source_height_value=static_cast<std::int64_t>(source.y2)-source.y1;
+    const std::int64_t render_width_value=static_cast<std::int64_t>(render_x2)-render_x1;
+    const std::int64_t render_height_value=static_cast<std::int64_t>(render_y2)-render_y1;
+    const auto uint32_max=std::numeric_limits<std::uint32_t>::max();
+    const auto int_max=std::numeric_limits<int>::max();
+    if(source.row_bytes<=0||destination.row_bytes<=0
+        ||static_cast<std::uint64_t>(source.row_bytes)>uint32_max
+        ||static_cast<std::uint64_t>(destination.row_bytes)>uint32_max
+        ||source_width_value<=0||source_width_value>int_max
+        ||source_height_value<=0||source_height_value>uint32_max
+        ||render_width_value<=0||render_width_value>int_max
+        ||render_height_value<=0||render_height_value>uint32_max) {
+        error="FilmViz Metal frame dimensions exceed the GPU parameter layout"; return false;
+    }
+    const std::uint32_t source_width=static_cast<std::uint32_t>(source_width_value);
+    const std::uint32_t source_height=static_cast<std::uint32_t>(source_height_value);
+    const std::uint32_t render_width=static_cast<std::uint32_t>(render_width_value);
+    const std::uint32_t render_height=static_cast<std::uint32_t>(render_height_value);
+    const std::size_t granularity_count=impl_->data.negative_granularity_samples.size()/4u;
+    if(granularity_count>uint32_max) {
+        error="FilmViz granularity table exceeds the GPU parameter layout"; return false;
+    }
     FilmVizDirectParams p;
     p.spectral_count=impl_->data.spectral_count; p.rgb2spec_resolution=impl_->data.rgb2spec_resolution;
     p.rgb2spec_forward_count=impl_->data.rgb2spec_forward_count;
@@ -813,7 +837,8 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     p.source_x1=source.x1; p.source_y1=source.y1; p.source_x2=source.x2; p.source_y2=source.y2;
     p.destination_x1=destination.x1; p.destination_y1=destination.y1; p.destination_x2=destination.x2; p.destination_y2=destination.y2;
     p.render_x1=render_x1; p.render_y1=render_y1; p.render_x2=render_x2; p.render_y2=render_y2;
-    p.source_row_bytes=source.row_bytes; p.destination_row_bytes=destination.row_bytes;
+    p.source_row_bytes=static_cast<std::uint32_t>(source.row_bytes);
+    p.destination_row_bytes=static_cast<std::uint32_t>(destination.row_bytes);
     p.exposure_stops=settings.exposure_stops; p.negative_flash_percent=settings.negative_flash_percent;
     p.print_flash_percent=settings.print_flash_percent; p.push_pull_stops=settings.push_pull_stops;
     p.color_density=settings.color_density; p.color_depth=settings.color_depth;
@@ -822,7 +847,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     p.printer_light_blue=settings.printer_light_blue; p.printer_light_master=settings.printer_light_master;
     p.middle_gray=settings.middle_gray; p.printer_temperature=settings.printer_temperature;
     p.wavelength_min_nm=impl_->data.wavelength_min_nm; p.wavelength_step_nm=impl_->data.wavelength_step_nm;
-    p.granularity_count=impl_->data.negative_granularity_samples.size()/4u;
+    p.granularity_count=static_cast<std::uint32_t>(granularity_count);
     p.frame_seed=settings.grain_seed^static_cast<std::uint32_t>(std::llround(time*1000.0));
     p.grain_enabled=settings.grain_enabled?1u:0u; p.negative_grain=settings.negative_grain;
     p.print_grain=settings.print_grain; p.grain_size=settings.grain_size; p.grain_chroma=settings.grain_chroma;
@@ -844,8 +869,6 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     const bool use_halation=settings.halation_enabled&&settings.halation_strength>0.0f&&settings.halation_radius>0.0f;
     const bool use_mtf=settings.negative_mtf_amount>0.0f||settings.print_mtf_amount>0.0f;
     if(use_mtf&&!impl_->spatial_response_valid) { error="FilmViz measured MTF response is unavailable"; return false; }
-    const NSUInteger source_width=source.x2-source.x1,source_height=source.y2-source.y1;
-    const NSUInteger render_width=render_x2-render_x1,render_height=render_y2-render_y1;
     id<MTLCommandQueue> queue=(__bridge id<MTLCommandQueue>)command_queue;
     id<MTLDevice> device=queue.device;
     id<MTLCommandBuffer> command=[queue commandBuffer];
@@ -854,7 +877,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     id<MTLBuffer> highlight=nil,near_a=nil,near_b=nil,far_a=nil,far_b=nil;
     FilmVizDirectSpatialParams spatial;
     if(use_halation) {
-        const NSUInteger bytes=source_width*source_height*sizeof(float)*4u;
+        const NSUInteger bytes=static_cast<NSUInteger>(source_width)*source_height*sizeof(float)*4u;
         prepared=[device newBufferWithLength:bytes options:temporary_options];
         highlight=[device newBufferWithLength:bytes options:temporary_options];
         near_a=[device newBufferWithLength:bytes options:temporary_options]; near_b=[device newBufferWithLength:bytes options:temporary_options];
@@ -867,7 +890,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
             [e setBytes:&p length:sizeof(p) atIndex:7]; [e setBytes:&spatial length:sizeof(spatial) atIndex:8];
         })) { error="could not encode FilmViz Metal halation preparation"; return false; }
         auto blur_three=[&](id<MTLBuffer> initial,id<MTLBuffer> a,id<MTLBuffer> b,int radius) {
-            spatial.radius=radius;
+            spatial.radius=static_cast<std::uint32_t>(radius);
             for(int pass=0;pass<3;++pass) {
                 spatial.horizontal=1; id<MTLBuffer> input=pass==0?initial:a;
                 if(!encode_2d(command,impl_->box_blur,source_width,source_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:input offset:0 atIndex:0]; [e setBuffer:b offset:0 atIndex:1]; [e setBytes:&spatial length:sizeof(spatial) atIndex:2]; })) return false;
@@ -887,11 +910,14 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     FilmVizDirectParams direct_p=p;
     id<MTLBuffer> direct_destination=(__bridge id<MTLBuffer>)destination.buffer;
     if(use_mtf) {
-        const NSUInteger bytes=render_width*render_height*sizeof(float)*4u;
+        const NSUInteger bytes=static_cast<NSUInteger>(render_width)*render_height*sizeof(float)*4u;
+        const std::uint64_t dense_row_bytes=static_cast<std::uint64_t>(render_width)*sizeof(float)*4u;
+        if(dense_row_bytes>uint32_max) { error="FilmViz Metal render row exceeds the GPU parameter layout"; return false; }
         dense_a=[device newBufferWithLength:bytes options:temporary_options]; dense_b=[device newBufferWithLength:bytes options:temporary_options];
         if(!dense_a||!dense_b) { error="could not allocate FilmViz Metal MTF buffers"; return false; }
         direct_destination=dense_a; direct_p.destination_x1=render_x1; direct_p.destination_y1=render_y1;
-        direct_p.destination_x2=render_x2; direct_p.destination_y2=render_y2; direct_p.destination_row_bytes=render_width*sizeof(float)*4u;
+        direct_p.destination_x2=render_x2; direct_p.destination_y2=render_y2;
+        direct_p.destination_row_bytes=static_cast<std::uint32_t>(dense_row_bytes);
     }
     if(!encode_2d(command,impl_->pipeline,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){
         [e setBuffer:(__bridge id<MTLBuffer>)source.buffer offset:0 atIndex:0]; [e setBuffer:direct_destination offset:0 atIndex:1];
@@ -902,12 +928,15 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     })) { error="could not encode FilmViz direct Metal render"; return false; }
     if(use_mtf) {
         SpatialResponseModel::Settings s; s.image_width_mm=settings.image_width_mm; s.negative_amount=settings.negative_mtf_amount;
-        s.print_amount=settings.print_mtf_amount; s.sampling_width_pixels=source_width; s.gamma24_encoded=settings.output_profile==1;
+        s.print_amount=settings.print_mtf_amount; s.sampling_width_pixels=static_cast<int>(source_width); s.gamma24_encoded=settings.output_profile==1;
         std::array<std::vector<float>,3> channel_weights;
-        if(!impl_->spatial_response.kernels(render_width,s,channel_weights)) { error="could not generate FilmViz measured MTF kernels"; return false; }
+        if(!impl_->spatial_response.kernels(static_cast<int>(render_width),s,channel_weights)) { error="could not generate FilmViz measured MTF kernels"; return false; }
         std::vector<float> weights; for(const auto& channel:channel_weights) weights.insert(weights.end(),channel.begin(),channel.end());
         id<MTLBuffer> weight_buffer=make_buffer(device,weights); if(!weight_buffer) { error="could not upload FilmViz Metal MTF kernels"; return false; }
-        spatial.width=render_width; spatial.height=render_height; spatial.radius=channel_weights[0].size()/2u; spatial.gamma24=s.gamma24_encoded?1u:0u;
+        const std::size_t kernel_radius=channel_weights[0].size()/2u;
+        if(kernel_radius>uint32_max) { error="FilmViz MTF kernel exceeds the GPU parameter layout"; return false; }
+        spatial.width=render_width; spatial.height=render_height;
+        spatial.radius=static_cast<std::uint32_t>(kernel_radius); spatial.gamma24=s.gamma24_encoded?1u:0u;
         spatial.horizontal=1;
         if(!encode_2d(command,impl_->mtf,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_a offset:0 atIndex:0]; [e setBuffer:dense_b offset:0 atIndex:1]; [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3]; })) { error="could not encode FilmViz Metal horizontal MTF"; return false; }
         spatial.horizontal=0;

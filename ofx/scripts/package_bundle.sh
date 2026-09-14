@@ -22,6 +22,14 @@ if [ "$(uname -s)" = "Darwin" ]; then
     xattr -cr "$BUNDLE_DIR" 2>/dev/null || true
 fi
 
+# Xcode ad-hoc signs build products before this packaging step. Strip those
+# inherited signatures before changing load commands; the finished bundle is
+# signed again below after all dependency rewriting is complete.
+for target in "$OFX_BINARY" "$BUNDLE_LIBRARIES"/*.dylib; do
+    [ -f "$target" ] || continue
+    codesign --remove-signature "$target" 2>/dev/null || true
+done
+
 # Bundle non-system dylibs recursively and rewrite them to bundle-relative paths.
 changed=1
 while [ "$changed" -eq 1 ]; do
@@ -117,14 +125,6 @@ for target in "$BUNDLE_LIBRARIES"/*.dylib; do
     [ -f "$target" ] || continue
     install_name_tool -id \
         "@loader_path/../Libraries/$(basename "$target")" "$target"
-done
-
-
-# All dependency rewriting must happen before final signing. Remove inherited
-# signatures first so install_name_tool does not repeatedly invalidate them.
-for target in "$OFX_BINARY" "$BUNDLE_LIBRARIES"/*.dylib; do
-    [ -f "$target" ] || continue
-    codesign --remove-signature "$target" 2>/dev/null || true
 done
 
 # Normalize references between bundled dylibs. The OFX binary lives in
