@@ -49,6 +49,7 @@ set(FILMVIZ_CORE_SOURCES
     displaygamutcompressor.cpp
     diagramwriter.cpp
     filmdensitycalibration.cpp
+    filmdirectdata.cpp
     filmcolorresponse.cpp
     filmdyemodel.cpp
     filmformat.cpp
@@ -218,6 +219,31 @@ if(BUILD_TESTING)
         test_lut3d
         PROPERTIES LABELS "unit"
     )
+
+    if(APPLE AND FILMVIZ_BUILD_OFX)
+        enable_language(OBJCXX)
+        add_executable(test_metal_direct
+            tests/test_metal_direct.mm
+            ofx/filmvizdirectmetalprocessor.mm
+        )
+        target_include_directories(test_metal_direct PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/ofx
+        )
+        target_link_libraries(test_metal_direct PRIVATE
+            filmviz_core
+            filmviz_ofx_processing
+            "-framework Foundation"
+            "-framework Metal"
+        )
+        target_compile_options(test_metal_direct PRIVATE
+            "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        )
+        target_compile_definitions(test_metal_direct PRIVATE
+            FILMVIZ_TEST_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources"
+        )
+        add_test(NAME test_metal_direct COMMAND test_metal_direct)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -246,6 +272,7 @@ if(FILMVIZ_BUILD_EXAMPLES)
 
         target_compile_features(${example_name} PRIVATE cxx_std_17)
     endforeach()
+
 endif()
 
 # ---------------------------------------------------------------------------
@@ -417,6 +444,7 @@ install(
         filmviz.h
         filmdata.h
         filmdensitycalibration.h
+        filmdirectdata.h
         filmcolorresponse.h
         filmdyemodel.h
         filmformat.h

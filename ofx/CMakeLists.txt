@@ -57,8 +57,8 @@ if(APPLE)
 
     target_sources(filmviz_ofx
         PRIVATE
-            filmvizmetalprocessor.mm
-            filmvizmetalprocessor.h
+            filmvizdirectmetalprocessor.mm
+            filmvizdirectmetalprocessor.h
     )
 
     target_compile_definitions(filmviz_ofx PRIVATE FILMVIZ_HAS_METAL=1)
@@ -70,7 +70,24 @@ if(APPLE)
         PRIVATE
             "-framework Foundation"
             "-framework Metal"
-            "-framework MetalPerformanceShaders"
+    )
+
+    add_executable(filmviz_metal_compare
+        filmviz_metal_compare.mm
+        filmvizdirectmetalprocessor.mm
+    )
+    target_include_directories(filmviz_metal_compare PRIVATE
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_link_libraries(filmviz_metal_compare PRIVATE
+        filmviz_core
+        filmviz_ofx_processing
+        "-framework Foundation"
+        "-framework Metal"
+    )
+    target_compile_options(filmviz_metal_compare PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
     )
 else()
     target_compile_definitions(filmviz_ofx PRIVATE FILMVIZ_HAS_METAL=0)

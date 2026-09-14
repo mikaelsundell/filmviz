@@ -793,6 +793,227 @@ FilmPipeline::negative_density_calibration() const
     return negative_density_calibration_.get();
 }
 
+bool
+FilmPipeline::direct_data(
+    FilmDirectData& data) const
+{
+    data = FilmDirectData();
+
+    if (!valid_
+        || !reconstructor_
+        || !scene_illuminant_
+        || !negative_stock_
+        || !negative_dye_model_
+        || !negative_density_calibration_
+        || !print_stock_
+        || !print_processor_
+        || !viewer_) {
+        return false;
+    }
+
+    if (!reconstructor_->copy_model_data(
+            data.rgb2spec_resolution,
+            data.rgb2spec_scale,
+            data.rgb2spec_data,
+            data.rgb2spec_forward_count,
+            data.rgb2spec_forward)) {
+        return false;
+    }
+
+    data.wavelength_min_nm = settings_.wavelength_min_nm;
+    data.wavelength_step_nm = settings_.wavelength_step_nm;
+    data.spectral_count = static_cast<std::uint32_t>(
+        std::floor(
+            (settings_.wavelength_max_nm - settings_.wavelength_min_nm)
+            / settings_.wavelength_step_nm
+            + 0.5f)
+        + 1.0f);
+
+    const auto sample_log_linear =
+        [](const SampledCurve& curve, float wavelength) {
+            if (!curve.valid()
+                || wavelength < curve.x.front()
+                || wavelength > curve.x.back()) {
+                return 0.0f;
+            }
+            return std::pow(10.0f, curve.sample(wavelength, -20.0f));
+        };
+
+    const auto& negative_sensitivity = negative_stock_->sensitivity();
+    const auto& print_sensitivity = print_stock_->sensitivity();
+    const auto& print_dye = print_stock_->dye_density();
+    const SampledCurve scene_illuminant = scene_illuminant_->curve();
+
+    for (std::uint32_t i = 0; i < data.spectral_count; ++i) {
+        const float wavelength =
+            data.wavelength_min_nm
+            + static_cast<float>(i) * data.wavelength_step_nm;
+        const float scene = scene_illuminant.sample(wavelength, 0.0f);
+
+        data.negative_exposure_samples.insert(
+            data.negative_exposure_samples.end(), {
+                wavelength,
+                scene * sample_log_linear(
+                    negative_sensitivity.red_sensitive_log, wavelength)
+                    * data.wavelength_step_nm,
+                scene * sample_log_linear(
+                    negative_sensitivity.green_sensitive_log, wavelength)
+                    * data.wavelength_step_nm,
+                scene * sample_log_linear(
+                    negative_sensitivity.blue_sensitive_log, wavelength)
+                    * data.wavelength_step_nm
+            });
+
+        data.negative_density_samples.insert(
+            data.negative_density_samples.end(), {
+                negative_dye_model_->minimum_density().sample(wavelength, 0.0f),
+                negative_dye_model_->cyan_basis_per_record_density().sample(wavelength, 0.0f),
+                negative_dye_model_->magenta_basis_per_record_density().sample(wavelength, 0.0f),
+                negative_dye_model_->yellow_basis_per_record_density().sample(wavelength, 0.0f)
+            });
+
+        data.status_m_samples.insert(
+            data.status_m_samples.end(), {
+                static_cast<float>(StatusMDensitometer::weight(0, wavelength)),
+                static_cast<float>(StatusMDensitometer::weight(1, wavelength)),
+                static_cast<float>(StatusMDensitometer::weight(2, wavelength)),
+                0.0f
+            });
+
+        data.print_exposure_samples.insert(
+            data.print_exposure_samples.end(), {
+                sample_log_linear(print_sensitivity.cyan_forming_log, wavelength)
+                    * data.wavelength_step_nm,
+                sample_log_linear(print_sensitivity.magenta_forming_log, wavelength)
+                    * data.wavelength_step_nm,
+                sample_log_linear(print_sensitivity.yellow_forming_log, wavelength)
+                    * data.wavelength_step_nm,
+                reference_negative_transmittance_.sample(wavelength, 0.0f)
+            });
+
+        data.print_density_samples.insert(
+            data.print_density_samples.end(), {
+                static_cast<float>(settings_.print_cyan_amplitude)
+                    * print_dye.cyan_density.sample(wavelength, 0.0f),
+                static_cast<float>(settings_.print_magenta_amplitude)
+                    * print_dye.magenta_density.sample(wavelength, 0.0f),
+                static_cast<float>(settings_.print_yellow_amplitude)
+                    * print_dye.yellow_density.sample(wavelength, 0.0f),
+                0.0f
+            });
+
+        SampledCurve impulse;
+        impulse.x.reserve(data.spectral_count);
+        impulse.y.assign(data.spectral_count, 0.0f);
+        for (std::uint32_t j = 0; j < data.spectral_count; ++j) {
+            impulse.x.push_back(
+                data.wavelength_min_nm
+                + static_cast<float>(j) * data.wavelength_step_nm);
+        }
+        impulse.y[i] = 1.0f;
+        const auto contribution = viewer_->view(impulse).aces2065_1;
+        data.viewer_ap0_samples.insert(
+            data.viewer_ap0_samples.end(), {
+                contribution[0], contribution[1], contribution[2], 0.0f
+            });
+    }
+
+    const auto append_curve =
+        [&data](const SampledCurve& curve) {
+            FilmDirectData::Curve result;
+            result.offset = static_cast<std::uint32_t>(
+                data.characteristic_points.size() / 2u);
+            result.count = static_cast<std::uint32_t>(curve.x.size());
+            for (std::size_t i = 0; i < curve.x.size(); ++i) {
+                data.characteristic_points.push_back(curve.x[i]);
+                data.characteristic_points.push_back(curve.y[i]);
+            }
+            return result;
+        };
+
+    const auto& negative_curves = negative_stock_->characteristic();
+    data.negative_characteristic[0] = append_curve(negative_curves.red_density);
+    data.negative_characteristic[1] = append_curve(negative_curves.green_density);
+    data.negative_characteristic[2] = append_curve(negative_curves.blue_density);
+    const auto& print_curves = print_stock_->characteristic();
+    data.print_characteristic[0] = append_curve(print_curves.red_density);
+    data.print_characteristic[1] = append_curve(print_curves.green_density);
+    data.print_characteristic[2] = append_curve(print_curves.blue_density);
+
+    constexpr int granularity_samples = 256;
+    for (int i = 0; i < granularity_samples; ++i) {
+        const float density =
+            data.granularity_density_min
+            + (data.granularity_density_max - data.granularity_density_min)
+                * static_cast<float>(i)
+                / static_cast<float>(granularity_samples - 1);
+        const FilmDensity coordinate = {density, density, density};
+        const FilmDensity negative_sigma =
+            granularity_model_->negative_sigma(coordinate);
+        const FilmDensity print_sigma =
+            granularity_model_->print_sigma(coordinate);
+        data.negative_granularity_samples.insert(
+            data.negative_granularity_samples.end(), {
+                negative_sigma.red, negative_sigma.green,
+                negative_sigma.blue, 0.0f
+            });
+        data.print_granularity_samples.insert(
+            data.print_granularity_samples.end(), {
+                print_sigma.red, print_sigma.green,
+                print_sigma.blue, 0.0f
+            });
+    }
+
+    data.reference_negative_exposure = {{
+        reference_negative_exposure_.red,
+        reference_negative_exposure_.green,
+        reference_negative_exposure_.blue
+    }};
+    data.reference_negative_density = {{
+        reference_negative_density_.red,
+        reference_negative_density_.green,
+        reference_negative_density_.blue
+    }};
+
+    const auto& diagnostics = negative_dye_model_->diagnostics();
+    data.minimum_negative_coordinate = {{
+        diagnostics.minimum_record_density.red,
+        diagnostics.minimum_record_density.green,
+        diagnostics.minimum_record_density.blue
+    }};
+    data.neutral_negative_increment = {{
+        reference_calibrated_negative_density_.red
+            - diagnostics.minimum_record_density.red,
+        reference_calibrated_negative_density_.green
+            - diagnostics.minimum_record_density.green,
+        reference_calibrated_negative_density_.blue
+            - diagnostics.minimum_record_density.blue
+    }};
+
+    const auto copy_vec3 =
+        [](const FilmDensityCalibration::Vec3& source,
+           std::array<float, 3>& destination) {
+            for (int i = 0; i < 3; ++i) {
+                destination[i] = static_cast<float>(source[i]);
+            }
+        };
+    copy_vec3(negative_density_calibration_->zero_target(), data.calibration_zero_target);
+    copy_vec3(negative_density_calibration_->zero_measured(), data.calibration_zero_measured);
+    copy_vec3(negative_density_calibration_->minimum_status_m(), data.calibration_minimum_status_m);
+    const auto& jacobian = negative_density_calibration_->zero_jacobian();
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            data.calibration_zero_jacobian[row * 3 + column] =
+                static_cast<float>(jacobian[row][column]);
+        }
+    }
+
+    const auto& target = print_processor_->balance().target_log_exposure;
+    data.print_target_log_exposure = {{target.red, target.green, target.blue}};
+
+    return data.valid();
+}
+
 SampledCurve
 FilmPipeline::load_minimum_negative_density_curve(
     const std::string& filename) const

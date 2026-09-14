@@ -8,18 +8,18 @@ reference renderer and a Metal-accelerated renderer on macOS.
 
 The **Processing** control selects the render backend:
 
-- **Auto** — uses Metal when the OpenFX host supplies a Metal render, otherwise
-  uses the CPU reference renderer. This is the recommended setting.
-- **Metal** — prefers Metal and falls back to CPU when the host does not provide
-  a Metal render action.
+- **Auto** — uses direct spectral Metal for pointwise colour and grain, and
+  CPU when the host does not supply Metal or a CPU-only spatial effect is
+  enabled. This is the recommended setting.
 - **CPU** — forces the reference CPU implementation. In a Metal render this
   stages through shared buffers and is intended mainly for validation.
+- **Metal Direct** — evaluates rgb2spec, negative exposure/development,
+  Status-M closure, colour response, 2383 exposure/development and D55 viewing
+  in Metal without a colour-transform LUT.
 
-The CPU and Metal paths use the same cached FilmViz transform products. Color
-LUTs use tetrahedral interpolation; granularity sigma fields remain trilinear.
-The input-to-negative-exposure LUT uses the production exposure-separated
-rgb2spec reconstruction: AP0/D60 values above Y=0.18 are reconstructed at
-Y=0.18 and then spectrally rescaled.
+The former Metal colour-LUT renderer has been removed. Metal Direct consumes
+the measured/profile data exported by `FilmPipeline`; CPU remains the
+authoritative comparison and fallback implementation.
 
 ## Interactive transform behavior
 
@@ -59,6 +59,14 @@ ends, FilmViz generates or loads the exact parameter value at the fixed
 production LUT size. Runtime-only Exposure, MTF, grain, and halation changes
 continue to reuse the resident full-quality transform without entering preview
 mode.
+
+Metal Direct does not enter the preview-LUT path. Measured profile and rgb2spec
+tables are uploaded once per profile/device and shared across nodes; flash,
+push/pull, Color Separation, Color Depth, bleach bypass, printer lights, middle
+gray, input/output selection and grain remain live kernel parameters. MTF and
+halation currently select the established spatial paths under Auto; explicit
+Metal Direct reports that limitation instead of silently changing the requested
+implementation.
 
 ## Persistent and bundled caches
 
@@ -121,22 +129,27 @@ with:
 -DFILMVIZ_OFX_PREBAKE_CACHE=OFF
 ```
 
-## Metal cache
+## Metal profile cache
 
-On macOS, matching Resolve nodes on the same `MTLDevice` also share the uploaded
-Metal LUT/granularity buffers. The first matching node uploads the transform;
-subsequent nodes reuse the same GPU resources. Exposure changes do not trigger
-another upload.
+Direct Metal nodes separately share immutable measured spectral, sensitometric,
+dye, viewer, granularity and rgb2spec buffers. These resources are keyed only by
+device and stock selection, so creative control changes require no LUT build or
+GPU re-upload.
 
-Metal accelerates:
+Metal Direct currently accelerates the complete pointwise spectral colour path
+and negative/print grain. Halation and measured MTF use CPU fallback under Auto
+until their spatial passes are moved onto the direct backend.
 
-- tetrahedral final color LUT evaluation;
-- negative and print grain;
-- negative-stage halation extraction and development;
-- near/far Gaussian scatter through Metal Performance Shaders.
+## Standalone CPU/Metal comparison
 
-Profile parsing, calibration, and cache generation remain CPU tasks because
-they occur only on transform cache misses.
+`filmviz_metal_compare` reads a linear AP0 image, evaluates every pixel through
+both `FilmPipeline` and Metal Direct, writes `<prefix>_cpu.exr`,
+`<prefix>_metal.exr` and `<prefix>_side_by_side.exr`, and prints RMS and maximum
+AP0 error:
+
+```bash
+filmviz_metal_compare input.exr comparison/output /path/to/resources
+```
 
 ## Timeline/performance logging
 
@@ -234,14 +247,14 @@ Advanced:
 MTF, grain and halation are disabled by default. Enabling MTF uses the measured
 cycles/mm response and the selected active-image width. Because the current
 Metal kernel is pointwise, measured MTF automatically uses the CPU spatial
-bridge while retaining the cached colour transform.
+bridge.
 Color Separation operates in calibrated negative dye-coordinate space before
 spectral density synthesis. Increasing it progressively calms chroma. Zero is
 the accepted standard response, -4 is calibrated bypass, and +4 is twice the
 standard response. Color Depth independently scales chroma-weighted depth
 through print exposure; one is standard, zero removes chromatic darkening and
-negative values provide a controlled lift. Both change the spectral transform
-and therefore select or generate a distinct cached LUT. Fixed warm shaping
+negative values provide a controlled lift. Both are live parameters in Metal
+Direct. Fixed warm shaping
 retains more of the warm mid-density dye-coordinate branch and gently guides
 near-warm trajectories toward yellow/orange rather than magenta.
 The OFX production transform is fixed at 33^3 and the calibrated Kodak Vision

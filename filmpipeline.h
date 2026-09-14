@@ -5,6 +5,7 @@
 
 #include "filmcolorresponse.h"
 #include "filmdata.h"
+#include "filmdirectdata.h"
 #include "negativeprofile.h"
 #include "printprofile.h"
 
@@ -166,6 +167,11 @@ public:
     const std::string& error() const;
 
     const FilmDensityCalibration* negative_density_calibration() const;
+
+    // Export the initialized measured/profile state for direct renderers.
+    // Creative controls are intentionally not baked into this data.
+    bool direct_data(
+        FilmDirectData& data) const;
 
 private:
     SampledCurve load_minimum_negative_density_curve(

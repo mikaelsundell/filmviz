@@ -18,17 +18,21 @@ struct FilmVizOfxMetalFrame
     void* buffer = nullptr;
 };
 
-class FilmVizMetalProcessor
+// Direct spectral Metal backend. This renderer does not sample a transform
+// LUT: measured tables are uploaded once and the film pipeline is evaluated
+// for each pixel with live controls.
+class FilmVizDirectMetalProcessor
 {
 public:
-    FilmVizMetalProcessor();
-    ~FilmVizMetalProcessor();
+    FilmVizDirectMetalProcessor();
+    ~FilmVizDirectMetalProcessor();
 
-    FilmVizMetalProcessor(const FilmVizMetalProcessor&) = delete;
-    FilmVizMetalProcessor& operator=(const FilmVizMetalProcessor&) = delete;
+    FilmVizDirectMetalProcessor(const FilmVizDirectMetalProcessor&) = delete;
+    FilmVizDirectMetalProcessor& operator=(const FilmVizDirectMetalProcessor&) = delete;
 
     bool configure(
-        FilmVizOfxProcessor& cpu_processor,
+        const FilmVizOfxRenderSettings& settings,
+        const std::string& resources_directory,
         void* command_queue,
         std::string& error);
 
@@ -42,12 +46,6 @@ public:
         int render_x2,
         int render_y2,
         double time,
-        std::string& error);
-
-    bool copy(
-        void* command_queue,
-        const FilmVizOfxMetalFrame& source,
-        const FilmVizOfxMetalFrame& destination,
         std::string& error);
 
     bool render_cpu_bridge(

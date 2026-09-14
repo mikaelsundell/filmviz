@@ -7,7 +7,9 @@
 #include "mitsuba/rgb2spec.h"
 
 #include <array>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 class SpectralReconstructor
 {
@@ -74,6 +76,13 @@ public:
         const Spectrum& spectrum) const;
 
     bool has_forward_model() const;
+
+    bool copy_model_data(
+        std::uint32_t& resolution,
+        std::vector<float>& scale,
+        std::vector<float>& data,
+        std::uint32_t& forward_count,
+        std::vector<float>& forward) const;
 
 private:
     RGB2Spec* model_ = nullptr;

@@ -211,6 +211,41 @@ SpectralReconstructor::has_forward_model() const
         && model_->nfine > 0;
 }
 
+bool
+SpectralReconstructor::copy_model_data(
+    std::uint32_t& resolution,
+    std::vector<float>& scale,
+    std::vector<float>& data,
+    std::uint32_t& forward_count,
+    std::vector<float>& forward) const
+{
+    resolution = 0;
+    forward_count = 0;
+    scale.clear();
+    data.clear();
+    forward.clear();
+
+    if (!model_ || !model_->scale || !model_->data) {
+        return false;
+    }
+
+    resolution = model_->res;
+    forward_count = model_->nfine;
+    scale.assign(model_->scale, model_->scale + model_->res);
+    const std::size_t data_count =
+        static_cast<std::size_t>(model_->res)
+        * model_->res * model_->res * 9u;
+    data.assign(model_->data, model_->data + data_count);
+
+    if (model_->fwd && model_->nfine > 0) {
+        const std::size_t forward_size =
+            4u * static_cast<std::size_t>(model_->nfine) + 12u;
+        forward.assign(model_->fwd, model_->fwd + forward_size);
+    }
+
+    return true;
+}
+
 std::array<float, 3>
 SpectralReconstructor::forward_rgb(
     const Spectrum& spectrum) const

@@ -13,7 +13,7 @@
 #include "printprofile.h"
 
 #if FILMVIZ_HAS_METAL
-#include "filmvizmetalprocessor.h"
+#include "filmvizdirectmetalprocessor.h"
 #endif
 
 #include "ofxImageEffect.h"
@@ -189,7 +189,7 @@ struct InstanceData
     std::string resources_directory;
     FilmVizOfxProcessor processor;
 #if FILMVIZ_HAS_METAL
-    FilmVizMetalProcessor metal_processor;
+    FilmVizDirectMetalProcessor direct_metal_processor;
 #endif
 };
 
@@ -1013,7 +1013,7 @@ describe_in_context(
 #if FILMVIZ_HAS_METAL
     static const char* backends[] = {
         "Auto",
-        "Metal",
+        "Metal Direct",
         "CPU"
     };
     constexpr int backend_count = 3;
@@ -1343,7 +1343,15 @@ render(
         interactive_render != 0
         || draft_render != 0;
 
+    const bool direct_metal_candidate =
+        backend == 1
+        || (backend == 0
+            && settings.negative_mtf_amount <= 0.0f
+            && settings.print_mtf_amount <= 0.0f
+            && !settings.halation_enabled);
+
     if (interactive
+        && !direct_metal_candidate
         && !instance->processor.has_transform(
             settings,
             instance->resources_directory)) {
@@ -1435,23 +1443,51 @@ render(
         std::string error;
         bool rendered = false;
 
-        if (!instance->processor.configure(
-                settings,
-                instance->resources_directory,
-                error)) {
-
-            release_images();
-            return kOfxStatFailed;
-        }
-
         // Processing choices:
-        //   Auto  -> Metal when Resolve supplied Metal buffers.
-        //   Metal -> Metal when available, otherwise CPU fallback below.
-        //   CPU   -> explicitly stage through shared buffers so the CPU
-        //            reference path can still be compared in a Metal render.
-        if (backend == 2 || requires_cpu_spatial) {
+        // Auto and Metal Direct use the spectral kernel for pointwise colour
+        // and grain. CPU is retained as the reference/fallback path, including
+        // the spatial controls not yet implemented by the direct kernel.
+        const bool use_direct =
+            backend == 1
+            || (backend == 0
+                && !requires_cpu_spatial
+                && !settings.halation_enabled);
+
+        if (use_direct
+            && (requires_cpu_spatial
+                || settings.halation_enabled)) {
+            error =
+                "Metal Direct currently supports the pointwise colour pipeline; "
+                "select Auto or CPU for MTF or halation controls";
+        }
+        else if (use_direct) {
             rendered =
-                instance->metal_processor.render_cpu_bridge(
+                instance->direct_metal_processor.configure(
+                    settings,
+                    instance->resources_directory,
+                    metal_command_queue,
+                    error)
+                && instance->direct_metal_processor.render(
+                    settings,
+                    metal_command_queue,
+                    metal_source,
+                    metal_output,
+                    render_window[0],
+                    render_window[1],
+                    render_window[2],
+                    render_window[3],
+                    time,
+                    error);
+        }
+        else if (!instance->processor.configure(
+                    settings,
+                    instance->resources_directory,
+                    error)) {
+            rendered = false;
+        }
+        else {
+            rendered =
+                instance->direct_metal_processor.render_cpu_bridge(
                     instance->processor,
                     metal_command_queue,
                     metal_source,
@@ -1468,33 +1504,14 @@ render(
                     },
                     error);
         }
-        else {
-            rendered =
-                instance->metal_processor.configure(
-                    instance->processor,
-                    metal_command_queue,
-                    error)
-                && instance->metal_processor.render(
-                    settings,
-                    metal_command_queue,
-                    metal_source,
-                    metal_output,
-                    render_window[0],
-                    render_window[1],
-                    render_window[2],
-                    render_window[3],
-                    time,
-                    error);
-        }
-
         release_images();
 
         if (!rendered) {
             render_scope.finish(
                 std::string("backend=")
-                    + (backend == 2 || requires_cpu_spatial
-                        ? "cpu_bridge"
-                        : "metal")
+                    + (use_direct
+                        ? "metal_direct"
+                        : "cpu_bridge")
                     + " result=failed error=" + error);
 
             if (error == "render aborted") {
@@ -1508,9 +1525,9 @@ render(
 
         render_scope.finish(
             std::string("backend=")
-                + (backend == 2 || requires_cpu_spatial
-                    ? "cpu_bridge"
-                    : "metal")
+                + (use_direct
+                    ? "metal_direct"
+                    : "cpu_bridge")
                 + " result=ok");
         return kOfxStatOK;
     }

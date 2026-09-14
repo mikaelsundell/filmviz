@@ -230,6 +230,12 @@ pipeline.initialize(settings);
 FilmPipeline::Result result = pipeline.process(ap0_linear);
 ```
 
+`FilmPipeline::direct_data()` exports the same initialized measured tables and
+calibration anchors as renderer-neutral `FilmDirectData`. The OpenFX direct
+Metal backend uploads that immutable data once and evaluates the pointwise
+pipeline per pixel, while the CPU implementation remains authoritative and the
+standalone comparator can render both implementations side by side.
+
 ## Fixed production calibration
 
 The current Kodak Vision 2383/3383 spectral dye amplitudes are:
