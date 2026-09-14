@@ -5,8 +5,7 @@
 
 // Process-wide worker-thread configuration shared by LUT generation, image
 // processing, the command-line tool and the Python application.
-class FilmVizThreading
-{
+class FilmVizThreading {
 public:
     // Zero selects the hardware concurrency. Positive values set an explicit
     // worker count.

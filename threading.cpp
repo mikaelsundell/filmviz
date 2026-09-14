@@ -7,33 +7,26 @@
 #include <atomic>
 #include <thread>
 
-namespace
-{
+namespace {
 
 std::atomic<int> configured_thread_count(0);
 
-} // namespace
+}  // namespace
 
 void
-FilmVizThreading::set_thread_count(
-    int count)
+FilmVizThreading::set_thread_count(int count)
 {
-    configured_thread_count.store(
-        std::max(0, count),
-        std::memory_order_relaxed);
+    configured_thread_count.store(std::max(0, count), std::memory_order_relaxed);
 }
 
 int
 FilmVizThreading::thread_count()
 {
-    return
-        configured_thread_count.load(
-            std::memory_order_relaxed);
+    return configured_thread_count.load(std::memory_order_relaxed);
 }
 
 int
-FilmVizThreading::effective_thread_count(
-    int work_items)
+FilmVizThreading::effective_thread_count(int work_items)
 {
     if (work_items <= 0) {
         return 0;
@@ -42,13 +35,8 @@ FilmVizThreading::effective_thread_count(
     int count = thread_count();
 
     if (count == 0) {
-        count =
-            static_cast<int>(
-                std::thread::hardware_concurrency());
+        count = static_cast<int>(std::thread::hardware_concurrency());
     }
 
-    return
-        std::min(
-            work_items,
-            std::max(1, count));
+    return std::min(work_items, std::max(1, count));
 }

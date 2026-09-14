@@ -9,10 +9,8 @@
 
 // Flattened, renderer-neutral representation of an initialized FilmPipeline.
 // Measured/profile data lives here while image controls remain live parameters.
-struct FilmDirectData
-{
-    struct Curve
-    {
+struct FilmDirectData {
+    struct Curve {
         std::uint32_t offset = 0;
         std::uint32_t count = 0;
     };
@@ -43,15 +41,15 @@ struct FilmDirectData
     std::array<Curve, 3> negative_characteristic;
     std::array<Curve, 3> print_characteristic;
 
-    std::array<float, 3> reference_negative_exposure = {{0.0f, 0.0f, 0.0f}};
-    std::array<float, 3> reference_negative_density = {{0.0f, 0.0f, 0.0f}};
-    std::array<float, 3> minimum_negative_coordinate = {{0.0f, 0.0f, 0.0f}};
-    std::array<float, 3> neutral_negative_increment = {{0.0f, 0.0f, 0.0f}};
-    std::array<float, 3> calibration_zero_target = {{0.0f, 0.0f, 0.0f}};
-    std::array<float, 3> calibration_zero_measured = {{0.0f, 0.0f, 0.0f}};
-    std::array<float, 3> calibration_minimum_status_m = {{0.0f, 0.0f, 0.0f}};
-    std::array<float, 9> calibration_zero_jacobian = {{0.0f}};
-    std::array<float, 3> print_target_log_exposure = {{0.0f, 0.0f, 0.0f}};
+    std::array<float, 3> reference_negative_exposure = { { 0.0f, 0.0f, 0.0f } };
+    std::array<float, 3> reference_negative_density = { { 0.0f, 0.0f, 0.0f } };
+    std::array<float, 3> minimum_negative_coordinate = { { 0.0f, 0.0f, 0.0f } };
+    std::array<float, 3> neutral_negative_increment = { { 0.0f, 0.0f, 0.0f } };
+    std::array<float, 3> calibration_zero_target = { { 0.0f, 0.0f, 0.0f } };
+    std::array<float, 3> calibration_zero_measured = { { 0.0f, 0.0f, 0.0f } };
+    std::array<float, 3> calibration_minimum_status_m = { { 0.0f, 0.0f, 0.0f } };
+    std::array<float, 9> calibration_zero_jacobian = { { 0.0f } };
+    std::array<float, 3> print_target_log_exposure = { { 0.0f, 0.0f, 0.0f } };
 
     bool valid() const;
 };

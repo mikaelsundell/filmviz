@@ -8,91 +8,49 @@
 #include <algorithm>
 #include <cmath>
 
-FilmDensityCalibration::FilmDensityCalibration(
-    const FilmDyeModel& model,
-    const FilmDensity& zero_target,
-    const SampledCurve& minimum_spectral_density)
-    : FilmDensityCalibration(
-          model,
-          zero_target,
-          minimum_spectral_density,
-          Settings())
-{
-}
+FilmDensityCalibration::FilmDensityCalibration(const FilmDyeModel& model, const FilmDensity& zero_target,
+                                               const SampledCurve& minimum_spectral_density)
+    : FilmDensityCalibration(model, zero_target, minimum_spectral_density, Settings())
+{}
 
-FilmDensityCalibration::FilmDensityCalibration(
-    const FilmDyeModel& model,
-    const FilmDensity& zero_target,
-    const SampledCurve& minimum_spectral_density,
-    const Settings& settings)
+FilmDensityCalibration::FilmDensityCalibration(const FilmDyeModel& model, const FilmDensity& zero_target,
+                                               const SampledCurve& minimum_spectral_density, const Settings& settings)
     : model_(model)
     , settings_(settings)
-    , zero_target_(
-          to_vec3(
-              zero_target))
-    , minimum_status_m_(
-          densitometer_.measure(
-              minimum_spectral_density))
+    , zero_target_(to_vec3(zero_target))
+    , minimum_status_m_(densitometer_.measure(minimum_spectral_density))
 {
-    const SampledCurve zero_spectrum =
-        model_.synthesize_density(
-            zero_target);
+    const SampledCurve zero_spectrum = model_.synthesize_density(zero_target);
 
-    zero_measured_ =
-        densitometer_.measure(
-            zero_spectrum);
+    zero_measured_ = densitometer_.measure(zero_spectrum);
 
-    if (!zero_spectrum.valid()
-        || !finite(zero_measured_)
-        || !finite(minimum_status_m_)
+    if (!zero_spectrum.valid() || !finite(zero_measured_) || !finite(minimum_status_m_)
         || settings_.jacobian_step <= 0.0) {
-
         return;
     }
 
-    for (int input_channel = 0;
-         input_channel < 3;
-         ++input_channel) {
+    for (int input_channel = 0; input_channel < 3; ++input_channel) {
+        Vec3 perturbed = zero_target_;
 
-        Vec3 perturbed =
-            zero_target_;
+        perturbed[input_channel] += settings_.jacobian_step;
 
-        perturbed[input_channel] +=
-            settings_.jacobian_step;
+        const SampledCurve spectrum = model_.synthesize_density(to_density(perturbed));
 
-        const SampledCurve spectrum =
-            model_.synthesize_density(
-                to_density(
-                    perturbed));
+        const Vec3 measured = densitometer_.measure(spectrum);
 
-        const Vec3 measured =
-            densitometer_.measure(
-                spectrum);
-
-        if (!spectrum.valid()
-            || !finite(measured)) {
-
+        if (!spectrum.valid() || !finite(measured)) {
             return;
         }
 
-        for (int output_channel = 0;
-             output_channel < 3;
-             ++output_channel) {
-
-            zero_jacobian_[output_channel][input_channel] =
-                (measured[output_channel]
-                 - zero_measured_[output_channel])
-                / settings_.jacobian_step;
+        for (int output_channel = 0; output_channel < 3; ++output_channel) {
+            zero_jacobian_[output_channel][input_channel] = (measured[output_channel] - zero_measured_[output_channel])
+                                                            / settings_.jacobian_step;
         }
     }
 
     Vec3 probe;
 
-    valid_ =
-        solve_3x3(
-            zero_jacobian_,
-            {{1.0, 0.0, 0.0}},
-            probe);
+    valid_ = solve_3x3(zero_jacobian_, { { 1.0, 0.0, 0.0 } }, probe);
 }
 
 bool
@@ -102,8 +60,7 @@ FilmDensityCalibration::valid() const
 }
 
 FilmDensityCalibration::Result
-FilmDensityCalibration::solve(
-    const FilmDensity& target_status_m) const
+FilmDensityCalibration::solve(const FilmDensity& target_status_m) const
 {
     Result result;
 
@@ -111,90 +68,47 @@ FilmDensityCalibration::solve(
         return result;
     }
 
-    const Vec3 target =
-        to_vec3(
-            target_status_m);
+    const Vec3 target = to_vec3(target_status_m);
 
-    Vec3 desired =
-        add(
-            zero_measured_,
-            subtract(
-                target,
-                zero_target_));
+    Vec3 desired = add(zero_measured_, subtract(target, zero_target_));
 
-    for (int channel = 0;
-         channel < 3;
-         ++channel) {
-
-        if (desired[channel]
-            < minimum_status_m_[channel]) {
-
-            desired[channel] =
-                minimum_status_m_[channel];
+    for (int channel = 0; channel < 3; ++channel) {
+        if (desired[channel] < minimum_status_m_[channel]) {
+            desired[channel] = minimum_status_m_[channel];
 
             result.floor_projected = true;
         }
     }
 
-    result.desired_status_m =
-        desired;
+    result.desired_status_m = desired;
 
-    const Vec3 effective_delta =
-        subtract(
-            desired,
-            zero_measured_);
+    const Vec3 effective_delta = subtract(desired, zero_measured_);
 
     Vec3 input_delta;
 
-    if (!solve_3x3(
-            zero_jacobian_,
-            effective_delta,
-            input_delta)) {
-
+    if (!solve_3x3(zero_jacobian_, effective_delta, input_delta)) {
         return result;
     }
 
-    Vec3 input =
-        add(
-            zero_target_,
-            input_delta);
+    Vec3 input = add(zero_target_, input_delta);
 
-    for (int iteration = 0;
-         iteration < settings_.iterations;
-         ++iteration) {
+    for (int iteration = 0; iteration < settings_.iterations; ++iteration) {
+        const SampledCurve spectrum = model_.synthesize_density(to_density(input));
 
-        const SampledCurve spectrum =
-            model_.synthesize_density(
-                to_density(
-                    input));
+        const Vec3 measured = densitometer_.measure(spectrum);
 
-        const Vec3 measured =
-            densitometer_.measure(
-                spectrum);
-
-        if (!spectrum.valid()
-            || !finite(measured)) {
-
+        if (!spectrum.valid() || !finite(measured)) {
             return result;
         }
 
-        const Vec3 residual =
-            subtract(
-                desired,
-                measured);
+        const Vec3 residual = subtract(desired, measured);
 
-        if (max_abs(residual)
-            <= settings_.convergence_tolerance) {
+        if (max_abs(residual) <= settings_.convergence_tolerance) {
+            result.calibrated_density = to_density(input);
 
-            result.calibrated_density =
-                to_density(
-                    input);
+            result.measured_status_m = measured;
 
-            result.measured_status_m =
-                measured;
-
-            result.residual =
-                residual;
+            result.residual = residual;
 
             result.converged = true;
             result.valid = true;
@@ -202,155 +116,76 @@ FilmDensityCalibration::solve(
             return result;
         }
 
-        Mat3 jacobian = {{
-            {{0.0, 0.0, 0.0}},
-            {{0.0, 0.0, 0.0}},
-            {{0.0, 0.0, 0.0}}
-        }};
+        Mat3 jacobian = { { { { 0.0, 0.0, 0.0 } }, { { 0.0, 0.0, 0.0 } }, { { 0.0, 0.0, 0.0 } } } };
 
-        for (int input_channel = 0;
-             input_channel < 3;
-             ++input_channel) {
+        for (int input_channel = 0; input_channel < 3; ++input_channel) {
+            Vec3 perturbed = input;
 
-            Vec3 perturbed =
-                input;
+            perturbed[input_channel] += settings_.jacobian_step;
 
-            perturbed[input_channel] +=
-                settings_.jacobian_step;
+            const SampledCurve perturbed_spectrum = model_.synthesize_density(to_density(perturbed));
 
-            const SampledCurve perturbed_spectrum =
-                model_.synthesize_density(
-                    to_density(
-                        perturbed));
+            const Vec3 perturbed_measured = densitometer_.measure(perturbed_spectrum);
 
-            const Vec3 perturbed_measured =
-                densitometer_.measure(
-                    perturbed_spectrum);
-
-            if (!perturbed_spectrum.valid()
-                || !finite(perturbed_measured)) {
-
+            if (!perturbed_spectrum.valid() || !finite(perturbed_measured)) {
                 return result;
             }
 
-            for (int output_channel = 0;
-                 output_channel < 3;
-                 ++output_channel) {
-
-                jacobian[output_channel][input_channel] =
-                    (perturbed_measured[output_channel]
-                     - measured[output_channel])
-                    / settings_.jacobian_step;
+            for (int output_channel = 0; output_channel < 3; ++output_channel) {
+                jacobian[output_channel][input_channel]
+                    = (perturbed_measured[output_channel] - measured[output_channel]) / settings_.jacobian_step;
             }
         }
 
-        Mat3 normal = {{
-            {{0.0, 0.0, 0.0}},
-            {{0.0, 0.0, 0.0}},
-            {{0.0, 0.0, 0.0}}
-        }};
+        Mat3 normal = { { { { 0.0, 0.0, 0.0 } }, { { 0.0, 0.0, 0.0 } }, { { 0.0, 0.0, 0.0 } } } };
 
-        Vec3 rhs = {{0.0, 0.0, 0.0}};
+        Vec3 rhs = { { 0.0, 0.0, 0.0 } };
 
-        for (int row = 0;
-             row < 3;
-             ++row) {
-
-            for (int column = 0;
-                 column < 3;
-                 ++column) {
-
-                for (int output = 0;
-                     output < 3;
-                     ++output) {
-
-                    normal[row][column] +=
-                        jacobian[output][row]
-                        * jacobian[output][column];
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column) {
+                for (int output = 0; output < 3; ++output) {
+                    normal[row][column] += jacobian[output][row] * jacobian[output][column];
                 }
             }
 
-            for (int output = 0;
-                 output < 3;
-                 ++output) {
-
-                rhs[row] +=
-                    jacobian[output][row]
-                    * residual[output];
+            for (int output = 0; output < 3; ++output) {
+                rhs[row] += jacobian[output][row] * residual[output];
             }
         }
 
-        for (int channel = 0;
-             channel < 3;
-             ++channel) {
-
-            normal[channel][channel] +=
-                settings_.levenberg_marquardt_lambda;
+        for (int channel = 0; channel < 3; ++channel) {
+            normal[channel][channel] += settings_.levenberg_marquardt_lambda;
         }
 
         Vec3 update;
 
-        if (!solve_3x3(
-                normal,
-                rhs,
-                update)) {
-
+        if (!solve_3x3(normal, rhs, update)) {
             break;
         }
 
-        const double maximum_update =
-            std::max(
-                1e-12,
-                max_abs(
-                    update));
+        const double maximum_update = std::max(1e-12, max_abs(update));
 
-        double line_scale =
-            maximum_update > settings_.maximum_update
-                ? settings_.maximum_update / maximum_update
-                : 1.0;
+        double line_scale = maximum_update > settings_.maximum_update ? settings_.maximum_update / maximum_update : 1.0;
 
-        const double residual_before =
-            rms(
-                residual);
+        const double residual_before = rms(residual);
 
         bool accepted = false;
 
-        for (int line_search = 0;
-             line_search < settings_.line_search_steps;
-             ++line_search) {
+        for (int line_search = 0; line_search < settings_.line_search_steps; ++line_search) {
+            Vec3 candidate = input;
 
-            Vec3 candidate =
-                input;
-
-            for (int channel = 0;
-                 channel < 3;
-                 ++channel) {
-
-                candidate[channel] +=
-                    line_scale
-                    * update[channel];
+            for (int channel = 0; channel < 3; ++channel) {
+                candidate[channel] += line_scale * update[channel];
             }
 
-            const SampledCurve candidate_spectrum =
-                model_.synthesize_density(
-                    to_density(
-                        candidate));
+            const SampledCurve candidate_spectrum = model_.synthesize_density(to_density(candidate));
 
-            const Vec3 candidate_measured =
-                densitometer_.measure(
-                    candidate_spectrum);
+            const Vec3 candidate_measured = densitometer_.measure(candidate_spectrum);
 
-            if (candidate_spectrum.valid()
-                && finite(candidate_measured)) {
+            if (candidate_spectrum.valid() && finite(candidate_measured)) {
+                const Vec3 candidate_residual = subtract(desired, candidate_measured);
 
-                const Vec3 candidate_residual =
-                    subtract(
-                        desired,
-                        candidate_measured);
-
-                if (rms(candidate_residual)
-                    < residual_before) {
-
+                if (rms(candidate_residual) < residual_before) {
                     input = candidate;
                     accepted = true;
                     break;
@@ -369,55 +204,35 @@ FilmDensityCalibration::solve(
     // outside the spectral model's exactly invertible Status-M gamut. Keep
     // the best finite least-squares state rather than turning a physically
     // meaningful gamut projection into a hard failure.
-    const SampledCurve final_spectrum =
-        model_.synthesize_density(
-            to_density(
-                input));
+    const SampledCurve final_spectrum = model_.synthesize_density(to_density(input));
 
-    const Vec3 final_measured =
-        densitometer_.measure(
-            final_spectrum);
+    const Vec3 final_measured = densitometer_.measure(final_spectrum);
 
-    if (!final_spectrum.valid()
-        || !finite(final_measured)) {
-
+    if (!final_spectrum.valid() || !finite(final_measured)) {
         return result;
     }
 
-    result.calibrated_density =
-        to_density(
-            input);
+    result.calibrated_density = to_density(input);
 
-    result.measured_status_m =
-        final_measured;
+    result.measured_status_m = final_measured;
 
-    result.residual =
-        subtract(
-            desired,
-            final_measured);
+    result.residual = subtract(desired, final_measured);
 
-    result.valid =
-        finite(
-            result.residual);
+    result.valid = finite(result.residual);
 
     return result;
 }
 
 bool
-FilmDensityCalibration::calibrate(
-    const FilmDensity& target_status_m,
-    FilmDensity& calibrated_density) const
+FilmDensityCalibration::calibrate(const FilmDensity& target_status_m, FilmDensity& calibrated_density) const
 {
-    const Result result =
-        solve(
-            target_status_m);
+    const Result result = solve(target_status_m);
 
     if (!result.valid) {
         return false;
     }
 
-    calibrated_density =
-        result.calibrated_density;
+    calibrated_density = result.calibrated_density;
 
     return true;
 }
@@ -453,171 +268,98 @@ FilmDensityCalibration::settings() const
 }
 
 FilmDensityCalibration::Vec3
-FilmDensityCalibration::to_vec3(
-    const FilmDensity& density)
+FilmDensityCalibration::to_vec3(const FilmDensity& density)
 {
-    return {{
-        static_cast<double>(density.red),
-        static_cast<double>(density.green),
-        static_cast<double>(density.blue)
-    }};
+    return { { static_cast<double>(density.red), static_cast<double>(density.green),
+               static_cast<double>(density.blue) } };
 }
 
 FilmDensity
-FilmDensityCalibration::to_density(
-    const Vec3& value)
+FilmDensityCalibration::to_density(const Vec3& value)
 {
     FilmDensity result;
 
-    result.red =
-        static_cast<float>(
-            value[0]);
+    result.red = static_cast<float>(value[0]);
 
-    result.green =
-        static_cast<float>(
-            value[1]);
+    result.green = static_cast<float>(value[1]);
 
-    result.blue =
-        static_cast<float>(
-            value[2]);
+    result.blue = static_cast<float>(value[2]);
 
     return result;
 }
 
 bool
-FilmDensityCalibration::finite(
-    const Vec3& value)
+FilmDensityCalibration::finite(const Vec3& value)
 {
-    return
-        std::isfinite(value[0])
-        && std::isfinite(value[1])
-        && std::isfinite(value[2]);
+    return std::isfinite(value[0]) && std::isfinite(value[1]) && std::isfinite(value[2]);
 }
 
 FilmDensityCalibration::Vec3
-FilmDensityCalibration::add(
-    const Vec3& a,
-    const Vec3& b)
+FilmDensityCalibration::add(const Vec3& a, const Vec3& b)
 {
-    return {{
-        a[0] + b[0],
-        a[1] + b[1],
-        a[2] + b[2]
-    }};
+    return { { a[0] + b[0], a[1] + b[1], a[2] + b[2] } };
 }
 
 FilmDensityCalibration::Vec3
-FilmDensityCalibration::subtract(
-    const Vec3& a,
-    const Vec3& b)
+FilmDensityCalibration::subtract(const Vec3& a, const Vec3& b)
 {
-    return {{
-        a[0] - b[0],
-        a[1] - b[1],
-        a[2] - b[2]
-    }};
+    return { { a[0] - b[0], a[1] - b[1], a[2] - b[2] } };
 }
 
 double
-FilmDensityCalibration::rms(
-    const Vec3& value)
+FilmDensityCalibration::rms(const Vec3& value)
 {
-    return
-        std::sqrt(
-            (value[0] * value[0]
-             + value[1] * value[1]
-             + value[2] * value[2])
-            / 3.0);
+    return std::sqrt((value[0] * value[0] + value[1] * value[1] + value[2] * value[2]) / 3.0);
 }
 
 double
-FilmDensityCalibration::max_abs(
-    const Vec3& value)
+FilmDensityCalibration::max_abs(const Vec3& value)
 {
-    return
-        std::max(
-            std::abs(value[0]),
-            std::max(
-                std::abs(value[1]),
-                std::abs(value[2])));
+    return std::max(std::abs(value[0]), std::max(std::abs(value[1]), std::abs(value[2])));
 }
 
 bool
-FilmDensityCalibration::solve_3x3(
-    Mat3 matrix,
-    Vec3 rhs,
-    Vec3& solution)
+FilmDensityCalibration::solve_3x3(Mat3 matrix, Vec3 rhs, Vec3& solution)
 {
-    for (int column = 0;
-         column < 3;
-         ++column) {
-
+    for (int column = 0; column < 3; ++column) {
         int pivot = column;
 
-        for (int row = column + 1;
-             row < 3;
-             ++row) {
-
-            if (std::abs(matrix[row][column])
-                > std::abs(matrix[pivot][column])) {
-
+        for (int row = column + 1; row < 3; ++row) {
+            if (std::abs(matrix[row][column]) > std::abs(matrix[pivot][column])) {
                 pivot = row;
             }
         }
 
-        if (std::abs(matrix[pivot][column])
-            < 1e-12) {
-
+        if (std::abs(matrix[pivot][column]) < 1e-12) {
             return false;
         }
 
         if (pivot != column) {
-            std::swap(
-                matrix[pivot],
-                matrix[column]);
+            std::swap(matrix[pivot], matrix[column]);
 
-            std::swap(
-                rhs[pivot],
-                rhs[column]);
+            std::swap(rhs[pivot], rhs[column]);
         }
 
-        const double divisor =
-            matrix[column][column];
+        const double divisor = matrix[column][column];
 
-        for (int j = column;
-             j < 3;
-             ++j) {
-
-            matrix[column][j] /=
-                divisor;
+        for (int j = column; j < 3; ++j) {
+            matrix[column][j] /= divisor;
         }
 
-        rhs[column] /=
-            divisor;
+        rhs[column] /= divisor;
 
-        for (int row = 0;
-             row < 3;
-             ++row) {
-
+        for (int row = 0; row < 3; ++row) {
             if (row == column) {
                 continue;
             }
 
-            const double factor =
-                matrix[row][column];
+            const double factor = matrix[row][column];
 
-            for (int j = column;
-                 j < 3;
-                 ++j) {
-
-                matrix[row][j] -=
-                    factor
-                    * matrix[column][j];
+            for (int j = column; j < 3; ++j) {
+                matrix[row][j] -= factor * matrix[column][j];
             }
 
-            rhs[row] -=
-                factor
-                * rhs[column];
+            rhs[row] -= factor * rhs[column];
         }
     }
 

@@ -14,11 +14,9 @@
 // This class deliberately does no simulation. It owns the five digitized
 // Kodak source datasets so they can be validated and plotted independently
 // before they are connected to the print-film processing pipeline.
-class PrintFilmStock
-{
+class PrintFilmStock {
 public:
-    struct SpectralSensitivity
-    {
+    struct SpectralSensitivity {
         SampledCurve yellow_forming_log;
         SampledCurve magenta_forming_log;
         SampledCurve cyan_forming_log;
@@ -30,30 +28,26 @@ public:
         SampledCurve auxiliary_trace_b_log;
     };
 
-    struct CharacteristicCurves
-    {
+    struct CharacteristicCurves {
         SampledCurve red_density;
         SampledCurve green_density;
         SampledCurve blue_density;
     };
 
-    struct SpectralDyeDensity
-    {
+    struct SpectralDyeDensity {
         SampledCurve visual_neutral_density;
         SampledCurve cyan_density;
         SampledCurve magenta_density;
         SampledCurve yellow_density;
     };
 
-    struct ModulationTransferFunction
-    {
+    struct ModulationTransferFunction {
         SampledCurve red_response_percent;
         SampledCurve green_response_percent;
         SampledCurve blue_response_percent;
     };
 
-    struct DiffuseRMSGranularity
-    {
+    struct DiffuseRMSGranularity {
         // Density traces drawn on the left-hand axis of the Kodak graph.
         SampledCurve red_density;
         SampledCurve green_density;
@@ -66,55 +60,39 @@ public:
     };
 
     PrintFilmStock() = default;
-    explicit PrintFilmStock(
-        const std::string& name);
+    explicit PrintFilmStock(const std::string& name);
 
-    bool load(
-        const std::string& sensitivity_filename,
-        const std::string& characteristic_filename,
-        const std::string& dye_density_filename,
-        const std::string& mtf_filename,
-        const std::string& granularity_filename);
+    bool load(const std::string& sensitivity_filename, const std::string& characteristic_filename,
+              const std::string& dye_density_filename, const std::string& mtf_filename,
+              const std::string& granularity_filename);
 
     bool valid() const;
 
     const std::string& name() const;
 
-    const SpectralSensitivity&
-    sensitivity() const;
+    const SpectralSensitivity& sensitivity() const;
 
-    const CharacteristicCurves&
-    characteristic() const;
+    const CharacteristicCurves& characteristic() const;
 
-    const SpectralDyeDensity&
-    dye_density() const;
+    const SpectralDyeDensity& dye_density() const;
 
-    const ModulationTransferFunction&
-    mtf() const;
+    const ModulationTransferFunction& mtf() const;
 
-    const DiffuseRMSGranularity&
-    granularity() const;
+    const DiffuseRMSGranularity& granularity() const;
 
     // Validate SampledCurve interpolation at every original CSV knot.
-    std::vector<CurveValidationResult>
-    validate_interpolation(
-        float tolerance = 1e-6f) const;
+    std::vector<CurveValidationResult> validate_interpolation(float tolerance = 1e-6f) const;
 
 private:
-    bool load_sensitivity(
-        const std::string& filename);
+    bool load_sensitivity(const std::string& filename);
 
-    bool load_characteristic(
-        const std::string& filename);
+    bool load_characteristic(const std::string& filename);
 
-    bool load_dye_density(
-        const std::string& filename);
+    bool load_dye_density(const std::string& filename);
 
-    bool load_mtf(
-        const std::string& filename);
+    bool load_mtf(const std::string& filename);
 
-    bool load_granularity(
-        const std::string& filename);
+    bool load_granularity(const std::string& filename);
 
     std::string name_;
 

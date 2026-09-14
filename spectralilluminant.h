@@ -5,21 +5,16 @@
 
 #include "filmdata.h"
 
-class SpectralIlluminant
-{
+class SpectralIlluminant {
 public:
-    enum class Standard
-    {
-        D60
-    };
+    enum class Standard { D60 };
 
     SpectralIlluminant() = default;
     explicit SpectralIlluminant(Standard standard);
 
     bool valid() const;
 
-    const SampledCurve&
-    curve() const;
+    const SampledCurve& curve() const;
 
     // Apply this illuminant to a sampled spectral scene factor.
     //
@@ -31,8 +26,7 @@ public:
     //
     // For the rgb2spec path, spectral_factor is reflectance-like spectral
     // shape with the scene-linear magnitude restored by SpectralReconstructor.
-    SampledCurve illuminate(
-        const SampledCurve& spectral_factor) const;
+    SampledCurve illuminate(const SampledCurve& spectral_factor) const;
 
 private:
     SampledCurve m_curve;

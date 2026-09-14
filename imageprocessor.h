@@ -13,26 +13,15 @@
 
 class FilmPipeline;
 
-class ImageProcessor
-{
+class ImageProcessor {
 public:
-    enum class Output
-    {
-        AP0Linear,
-        Rec709Gamma24
-    };
+    enum class Output { AP0Linear, Rec709Gamma24 };
 
-    using Progress =
-        std::function<void(
-            const char* stage,
-            int completed,
-            int total)>;
+    using Progress = std::function<void(const char* stage, int completed, int total)>;
 
-    using Cancel =
-        std::function<bool()>;
+    using Cancel = std::function<bool()>;
 
-    struct Settings
-    {
+    struct Settings {
         int lut_size = 33;
         bool use_lut_acceleration = true;
         Output output = Output::Rec709Gamma24;
@@ -43,10 +32,8 @@ public:
         float grain_chroma = 1.0f;
         std::uint32_t grain_seed = 1u;
 
-        std::string film_format =
-            FilmFormatCatalog::default_format().identifier;
-        float image_width_mm =
-            FilmFormatCatalog::default_format().image_width_mm;
+        std::string film_format = FilmFormatCatalog::default_format().identifier;
+        float image_width_mm = FilmFormatCatalog::default_format().image_width_mm;
         float negative_mtf_amount = 0.0f;
         float print_mtf_amount = 0.0f;
 
@@ -61,18 +48,11 @@ public:
     // Keeps Rec.709-weighted grain luminance fixed while scaling only the
     // differences between channel noise. Zero is neutral grain; one preserves
     // the measured independent-channel result.
-    static std::array<float, 3> mix_grain_chroma(
-        const std::array<float, 3>& density_noise,
-        float chroma);
+    static std::array<float, 3> mix_grain_chroma(const std::array<float, 3>& density_noise, float chroma);
 
-    bool process(
-        const std::string& input_filename,
-        const std::string& output_filename,
-        const FilmPipeline& pipeline,
-        const InputTransform& input_transform,
-        const Settings& settings,
-        const Progress& progress = Progress(),
-        const Cancel& cancel = Cancel());
+    bool process(const std::string& input_filename, const std::string& output_filename, const FilmPipeline& pipeline,
+                 const InputTransform& input_transform, const Settings& settings, const Progress& progress = Progress(),
+                 const Cancel& cancel = Cancel());
 
     const std::string& error() const;
 

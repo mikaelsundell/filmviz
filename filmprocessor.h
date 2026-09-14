@@ -9,11 +9,9 @@
 
 #include <array>
 
-class FilmProcessor
-{
+class FilmProcessor {
 public:
-    struct Settings
-    {
+    struct Settings {
         float exposure_stops = 0.0f;
         float log_exposure_calibration = 0.0f;
 
@@ -24,11 +22,8 @@ public:
         bool neutral_balance = true;
     };
 
-    FilmProcessor(
-        RGB2Spec* rgb2spec_model,
-        const FilmStock& stock,
-        const SampledCurve& illuminant,
-        const Settings& settings);
+    FilmProcessor(RGB2Spec* rgb2spec_model, const FilmStock& stock, const SampledCurve& illuminant,
+                  const Settings& settings);
 
     // Integrate an already-illuminated scene spectrum against the stock's
     // measured R/G/B spectral sensitivities.
@@ -39,45 +34,33 @@ public:
     //
     // No log conversion, neutral balance, exposure-stop adjustment or
     // characteristic-curve development is applied here.
-    FilmExposure expose(
-        const SampledCurve& illuminated_spectrum) const;
+    FilmExposure expose(const SampledCurve& illuminated_spectrum) const;
 
-    FilmExposure expose(
-        const std::array<float, 3>& aces_rgb) const;
+    FilmExposure expose(const std::array<float, 3>& aces_rgb) const;
 
-    FilmLogExposure log_exposure(
-        const FilmExposure& exposure) const;
+    FilmLogExposure log_exposure(const FilmExposure& exposure) const;
 
     // Evaluate the stock characteristic curves. For the Verita production
     // profile these R/G/B values are Kodak sensitometric/Status-M density
     // coordinates; they are not passed directly to FilmDyeModel in production.
-    FilmDensity develop(
-        const FilmLogExposure& exposure) const;
+    FilmDensity develop(const FilmLogExposure& exposure) const;
 
-    FilmDensity process(
-        const std::array<float, 3>& aces_rgb) const;
+    FilmDensity process(const std::array<float, 3>& aces_rgb) const;
 
-    const FilmExposureBalance&
-    balance() const;
+    const FilmExposureBalance& balance() const;
 
-    const Settings&
-    settings() const;
+    const Settings& settings() const;
 
     // Return the illuminant exactly as sampled by the processor:
     // wavelength_min_nm .. wavelength_max_nm at wavelength_step_nm.
-    SampledCurve
-    sampled_illuminant() const;
+    SampledCurve sampled_illuminant() const;
 
 private:
     FilmExposureBalance derive_neutral_balance() const;
 
-    static float log_sensitivity_to_linear(
-        const SampledCurve& curve,
-        float wavelength_nm);
+    static float log_sensitivity_to_linear(const SampledCurve& curve, float wavelength_nm);
 
-    static float sample_characteristic_clamped(
-        const SampledCurve& curve,
-        float log_exposure);
+    static float sample_characteristic_clamped(const SampledCurve& curve, float log_exposure);
 
     RGB2Spec* rgb2spec_model_;
     const FilmStock& stock_;

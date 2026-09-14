@@ -7,8 +7,7 @@
 
 #include <string>
 
-class CIEObserver
-{
+class CIEObserver {
 public:
     CIEObserver() = default;
     explicit CIEObserver(const std::string& filename);

@@ -7,11 +7,9 @@
 #include <vector>
 
 // Canonical metadata for print-film profiles supported by FilmPipeline.
-class PrintProfileCatalog
-{
+class PrintProfileCatalog {
 public:
-    struct Profile
-    {
+    struct Profile {
         std::string identifier;
         std::string display_name;
         std::string resource_directory;
@@ -24,8 +22,7 @@ public:
 
     static const std::vector<Profile>& profiles();
 
-    static const Profile* find(
-        const std::string& identifier);
+    static const Profile* find(const std::string& identifier);
 
     static const Profile& default_profile();
 };

@@ -34,16 +34,12 @@ class SpectralReconstructor;
 // Important: the Rec.709 preview is only a matrix/transfer-function display
 // conversion. No ACES RRT/ODT is applied. The authoritative film result is the
 // viewed AP0 value returned by process().
-class FilmPipeline
-{
+class FilmPipeline {
 public:
-    struct Settings
-    {
+    struct Settings {
         std::string resources_directory = "resources";
-        std::string negative_profile =
-            NegativeProfileCatalog::default_profile().identifier;
-        std::string print_profile =
-            PrintProfileCatalog::default_profile().identifier;
+        std::string negative_profile = NegativeProfileCatalog::default_profile().identifier;
+        std::string print_profile = PrintProfileCatalog::default_profile().identifier;
 
         float middle_gray = 0.18f;
         float negative_zero_stop_log_exposure = -0.515f;
@@ -106,8 +102,7 @@ public:
         double print_yellow_amplitude = 1.14626;
     };
 
-    struct Result
-    {
+    struct Result {
         FilmExposure negative_exposure;
         FilmExposure print_exposure;
 
@@ -124,9 +119,9 @@ public:
         float negative_bleach_mean_density_delta = 0.0f;
         float print_bleach_mean_density_delta = 0.0f;
 
-        std::array<float, 3> ap0 = {{0.0f, 0.0f, 0.0f}};
-        std::array<float, 3> rec709_linear_unclamped = {{0.0f, 0.0f, 0.0f}};
-        std::array<float, 3> rec709_gamma24 = {{0.0f, 0.0f, 0.0f}};
+        std::array<float, 3> ap0 = { { 0.0f, 0.0f, 0.0f } };
+        std::array<float, 3> rec709_linear_unclamped = { { 0.0f, 0.0f, 0.0f } };
+        std::array<float, 3> rec709_gamma24 = { { 0.0f, 0.0f, 0.0f } };
 
         bool valid = false;
     };
@@ -139,29 +134,22 @@ public:
 
     bool initialize();
 
-    bool initialize(
-        const Settings& settings);
+    bool initialize(const Settings& settings);
 
     bool valid() const;
 
-    Result process(
-        const std::array<float, 3>& ap0_linear) const;
+    Result process(const std::array<float, 3>& ap0_linear) const;
 
     // Image-space effects such as halation need access to the developed film
     // path at the negative-exposure boundary. These helpers expose that
     // boundary without exposing stock/profile internals.
-    bool negative_exposure(
-        const std::array<float, 3>& ap0_linear,
-        FilmExposure& exposure) const;
+    bool negative_exposure(const std::array<float, 3>& ap0_linear, FilmExposure& exposure) const;
 
     // Diagnostic access to the exposure-separated rgb2spec scene factor used
     // immediately before D60 illumination.
-    bool scene_factor(
-        const std::array<float, 3>& ap0_linear,
-        SampledCurve& factor) const;
+    bool scene_factor(const std::array<float, 3>& ap0_linear, SampledCurve& factor) const;
 
-    Result process_negative_exposure(
-        const FilmExposure& negative_exposure) const;
+    Result process_negative_exposure(const FilmExposure& negative_exposure) const;
 
     const Settings& settings() const;
     const std::string& error() const;
@@ -170,30 +158,22 @@ public:
 
     // Export the initialized measured/profile state for direct renderers.
     // Creative controls are intentionally not baked into this data.
-    bool direct_data(
-        FilmDirectData& data) const;
+    bool direct_data(FilmDirectData& data) const;
 
 private:
-    SampledCurve load_minimum_negative_density_curve(
-        const std::string& filename) const;
+    SampledCurve load_minimum_negative_density_curve(const std::string& filename) const;
 
-    SampledCurve density_from_print_records(
-        const FilmDensity& record_density) const;
+    SampledCurve density_from_print_records(const FilmDensity& record_density) const;
 
-    static SampledCurve transmittance_from_density(
-        const SampledCurve& density);
+    static SampledCurve transmittance_from_density(const SampledCurve& density);
 
-    SampledCurve reconstruct_scene_factor(
-        const std::array<float, 3>& ap0_linear) const;
+    SampledCurve reconstruct_scene_factor(const std::array<float, 3>& ap0_linear) const;
 
-    FilmLogExposure relative_negative_log_exposure(
-        const FilmExposure& exposure) const;
+    FilmLogExposure relative_negative_log_exposure(const FilmExposure& exposure) const;
 
-    static bool finite_rgb(
-        const std::array<float, 3>& rgb);
+    static bool finite_rgb(const std::array<float, 3>& rgb);
 
-    std::string resource_path(
-        const std::string& filename) const;
+    std::string resource_path(const std::string& filename) const;
 
     Settings settings_;
     std::string error_;
@@ -216,5 +196,4 @@ private:
     FilmDensity reference_negative_density_;
     FilmDensity reference_calibrated_negative_density_;
     SampledCurve reference_negative_transmittance_;
-
 };

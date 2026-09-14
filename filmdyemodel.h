@@ -23,11 +23,9 @@
 //
 // Legacy tests may still call this class directly in order to reproduce and
 // compare earlier stages of the investigation.
-class FilmDyeModel
-{
+class FilmDyeModel {
 public:
-    struct Diagnostics
-    {
+    struct Diagnostics {
         // Stage 1 partition diagnostics.
         float rms_reconstruction_error = 0.0f;
         float max_abs_reconstruction_error = 0.0f;
@@ -63,13 +61,9 @@ public:
         float calibration_max_error_wavelength_nm = 0.0f;
     };
 
-    bool load_and_estimate(
-        const std::string& filename,
-        const FilmStock& stock,
-        float wavelength_min_nm = 380.0f,
-        float wavelength_max_nm = 700.0f,
-        float wavelength_step_nm = 5.0f,
-        float calibration_log_exposure = -0.515f);
+    bool load_and_estimate(const std::string& filename, const FilmStock& stock, float wavelength_min_nm = 380.0f,
+                           float wavelength_max_nm = 700.0f, float wavelength_step_nm = 5.0f,
+                           float calibration_log_exposure = -0.515f);
 
     bool valid() const;
     bool calibrated() const;
@@ -100,44 +94,28 @@ public:
     // Synthesize total diffuse spectral density from FilmDyeModel coordinates.
     // In the production pipeline these coordinates come from
     // FilmDensityCalibration, not directly from Kodak Status-M sensitometry.
-    SampledCurve synthesize_density(
-        const FilmDensity& spectral_coordinate) const;
+    SampledCurve synthesize_density(const FilmDensity& spectral_coordinate) const;
 
     // Spectral transmittance T(lambda) = 10^(-D(lambda)).
-    SampledCurve synthesize_transmittance(
-        const FilmDensity& spectral_coordinate) const;
+    SampledCurve synthesize_transmittance(const FilmDensity& spectral_coordinate) const;
 
     // Convenience helpers for a neutral sensitometric exposure where all
     // three film records receive the same log exposure.
-    FilmDensity neutral_record_density(
-        const FilmStock& stock,
-        float log_exposure) const;
+    FilmDensity neutral_record_density(const FilmStock& stock, float log_exposure) const;
 
-    SampledCurve synthesize_neutral_density(
-        const FilmStock& stock,
-        float log_exposure) const;
+    SampledCurve synthesize_neutral_density(const FilmStock& stock, float log_exposure) const;
 
-    SampledCurve synthesize_neutral_transmittance(
-        const FilmStock& stock,
-        float log_exposure) const;
+    SampledCurve synthesize_neutral_transmittance(const FilmStock& stock, float log_exposure) const;
 
 private:
-    bool load_reference_density_csv(
-        const std::string& filename);
+    bool load_reference_density_csv(const std::string& filename);
 
-    bool estimate_from_stock(
-        const FilmStock& stock,
-        float wavelength_min_nm,
-        float wavelength_max_nm,
-        float wavelength_step_nm);
+    bool estimate_from_stock(const FilmStock& stock, float wavelength_min_nm, float wavelength_max_nm,
+                             float wavelength_step_nm);
 
-    bool calibrate_to_characteristic(
-        const FilmStock& stock,
-        float calibration_log_exposure);
+    bool calibrate_to_characteristic(const FilmStock& stock, float calibration_log_exposure);
 
-    static float sample_characteristic_clamped(
-        const SampledCurve& curve,
-        float log_exposure);
+    static float sample_characteristic_clamped(const SampledCurve& curve, float log_exposure);
 
     SampledCurve minimum_density_;
     SampledCurve midscale_neutral_density_;

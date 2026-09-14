@@ -5,8 +5,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -15,48 +15,29 @@
 
 namespace {
 
-struct Matrix3
-{
+struct Matrix3 {
     double m[3][3];
 };
 
 std::array<double, 3>
-multiply(
-    const Matrix3& matrix,
-    const std::array<double, 3>& value)
+multiply(const Matrix3& matrix, const std::array<double, 3>& value)
 {
-    return {{
-        matrix.m[0][0] * value[0]
-            + matrix.m[0][1] * value[1]
-            + matrix.m[0][2] * value[2],
+    return { { matrix.m[0][0] * value[0] + matrix.m[0][1] * value[1] + matrix.m[0][2] * value[2],
 
-        matrix.m[1][0] * value[0]
-            + matrix.m[1][1] * value[1]
-            + matrix.m[1][2] * value[2],
+               matrix.m[1][0] * value[0] + matrix.m[1][1] * value[1] + matrix.m[1][2] * value[2],
 
-        matrix.m[2][0] * value[0]
-            + matrix.m[2][1] * value[1]
-            + matrix.m[2][2] * value[2]
-    }};
+               matrix.m[2][0] * value[0] + matrix.m[2][1] * value[1] + matrix.m[2][2] * value[2] } };
 }
 
 Matrix3
-multiply(
-    const Matrix3& a,
-    const Matrix3& b)
+multiply(const Matrix3& a, const Matrix3& b)
 {
-    Matrix3 result = {{
-        {0.0, 0.0, 0.0},
-        {0.0, 0.0, 0.0},
-        {0.0, 0.0, 0.0}
-    }};
+    Matrix3 result = { { { 0.0, 0.0, 0.0 }, { 0.0, 0.0, 0.0 }, { 0.0, 0.0, 0.0 } } };
 
     for (int row = 0; row < 3; ++row) {
         for (int col = 0; col < 3; ++col) {
             for (int k = 0; k < 3; ++k) {
-                result.m[row][col] +=
-                    a.m[row][k]
-                    * b.m[k][col];
+                result.m[row][col] += a.m[row][k] * b.m[k][col];
             }
         }
     }
@@ -65,160 +46,90 @@ multiply(
 }
 
 double
-determinant(
-    const Matrix3& a)
+determinant(const Matrix3& a)
 {
-    return
-        a.m[0][0]
-        * (a.m[1][1] * a.m[2][2]
-           - a.m[1][2] * a.m[2][1])
-        - a.m[0][1]
-        * (a.m[1][0] * a.m[2][2]
-           - a.m[1][2] * a.m[2][0])
-        + a.m[0][2]
-        * (a.m[1][0] * a.m[2][1]
-           - a.m[1][1] * a.m[2][0]);
+    return a.m[0][0] * (a.m[1][1] * a.m[2][2] - a.m[1][2] * a.m[2][1])
+           - a.m[0][1] * (a.m[1][0] * a.m[2][2] - a.m[1][2] * a.m[2][0])
+           + a.m[0][2] * (a.m[1][0] * a.m[2][1] - a.m[1][1] * a.m[2][0]);
 }
 
 Matrix3
-inverse(
-    const Matrix3& a)
+inverse(const Matrix3& a)
 {
-    const double det =
-        determinant(a);
+    const double det = determinant(a);
 
     if (std::abs(det) < 1e-15) {
-        Matrix3 identity = {{
-            {1.0, 0.0, 0.0},
-            {0.0, 1.0, 0.0},
-            {0.0, 0.0, 1.0}
-        }};
+        Matrix3 identity = { { { 1.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 }, { 0.0, 0.0, 1.0 } } };
         return identity;
     }
 
-    const double inv_det =
-        1.0 / det;
+    const double inv_det = 1.0 / det;
 
     Matrix3 result;
 
-    result.m[0][0] =
-        (a.m[1][1] * a.m[2][2]
-         - a.m[1][2] * a.m[2][1])
-        * inv_det;
+    result.m[0][0] = (a.m[1][1] * a.m[2][2] - a.m[1][2] * a.m[2][1]) * inv_det;
 
-    result.m[0][1] =
-        (a.m[0][2] * a.m[2][1]
-         - a.m[0][1] * a.m[2][2])
-        * inv_det;
+    result.m[0][1] = (a.m[0][2] * a.m[2][1] - a.m[0][1] * a.m[2][2]) * inv_det;
 
-    result.m[0][2] =
-        (a.m[0][1] * a.m[1][2]
-         - a.m[0][2] * a.m[1][1])
-        * inv_det;
+    result.m[0][2] = (a.m[0][1] * a.m[1][2] - a.m[0][2] * a.m[1][1]) * inv_det;
 
-    result.m[1][0] =
-        (a.m[1][2] * a.m[2][0]
-         - a.m[1][0] * a.m[2][2])
-        * inv_det;
+    result.m[1][0] = (a.m[1][2] * a.m[2][0] - a.m[1][0] * a.m[2][2]) * inv_det;
 
-    result.m[1][1] =
-        (a.m[0][0] * a.m[2][2]
-         - a.m[0][2] * a.m[2][0])
-        * inv_det;
+    result.m[1][1] = (a.m[0][0] * a.m[2][2] - a.m[0][2] * a.m[2][0]) * inv_det;
 
-    result.m[1][2] =
-        (a.m[0][2] * a.m[1][0]
-         - a.m[0][0] * a.m[1][2])
-        * inv_det;
+    result.m[1][2] = (a.m[0][2] * a.m[1][0] - a.m[0][0] * a.m[1][2]) * inv_det;
 
-    result.m[2][0] =
-        (a.m[1][0] * a.m[2][1]
-         - a.m[1][1] * a.m[2][0])
-        * inv_det;
+    result.m[2][0] = (a.m[1][0] * a.m[2][1] - a.m[1][1] * a.m[2][0]) * inv_det;
 
-    result.m[2][1] =
-        (a.m[0][1] * a.m[2][0]
-         - a.m[0][0] * a.m[2][1])
-        * inv_det;
+    result.m[2][1] = (a.m[0][1] * a.m[2][0] - a.m[0][0] * a.m[2][1]) * inv_det;
 
-    result.m[2][2] =
-        (a.m[0][0] * a.m[1][1]
-         - a.m[0][1] * a.m[1][0])
-        * inv_det;
+    result.m[2][2] = (a.m[0][0] * a.m[1][1] - a.m[0][1] * a.m[1][0]) * inv_det;
 
     return result;
 }
 
 Matrix3
-bradford_adaptation(
-    const std::array<double, 3>& source_white_xyz,
-    const std::array<double, 3>& target_white_xyz)
+bradford_adaptation(const std::array<double, 3>& source_white_xyz, const std::array<double, 3>& target_white_xyz)
 {
     // Same Bradford convention used by InputTransform.
-    const Matrix3 M = {{
-        { 0.8951,  0.2664, -0.1614},
-        {-0.7502,  1.7135,  0.0367},
-        { 0.0389, -0.0685,  1.0296}
-    }};
+    const Matrix3 M = { { { 0.8951, 0.2664, -0.1614 }, { -0.7502, 1.7135, 0.0367 }, { 0.0389, -0.0685, 1.0296 } } };
 
-    const auto source_lms =
-        multiply(M, source_white_xyz);
+    const auto source_lms = multiply(M, source_white_xyz);
 
-    const auto target_lms =
-        multiply(M, target_white_xyz);
+    const auto target_lms = multiply(M, target_white_xyz);
 
-    Matrix3 S = {{
-        {1.0, 0.0, 0.0},
-        {0.0, 1.0, 0.0},
-        {0.0, 0.0, 1.0}
-    }};
+    Matrix3 S = { { { 1.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 }, { 0.0, 0.0, 1.0 } } };
 
     for (int i = 0; i < 3; ++i) {
-        S.m[i][i] =
-            source_lms[i] != 0.0
-                ? target_lms[i] / source_lms[i]
-                : 1.0;
+        S.m[i][i] = source_lms[i] != 0.0 ? target_lms[i] / source_lms[i] : 1.0;
     }
 
-    return multiply(
-        multiply(
-            inverse(M),
-            S),
-        M);
+    return multiply(multiply(inverse(M), S), M);
 }
 
 std::array<double, 3>
-xy_to_xyz_white(
-    double x,
-    double y)
+xy_to_xyz_white(double x, double y)
 {
     if (std::abs(y) < 1e-15) {
-        return {{0.0, 1.0, 0.0}};
+        return { { 0.0, 1.0, 0.0 } };
     }
 
-    return {{
-        x / y,
-        1.0,
-        (1.0 - x - y) / y
-    }};
+    return { { x / y, 1.0, (1.0 - x - y) / y } };
 }
 
 const Matrix3&
 xyz_d60_to_ap0_matrix()
 {
     // Same matrix convention used by InputTransform.
-    static const Matrix3 matrix = {{
-        { 1.0498110175, 0.0000000000, -0.0000974845},
-        {-0.4959030231, 1.3733130458,  0.0982400361},
-        { 0.0000000000, 0.0000000000,  0.9912520182}
-    }};
+    static const Matrix3 matrix = { { { 1.0498110175, 0.0000000000, -0.0000974845 },
+                                      { -0.4959030231, 1.3733130458, 0.0982400361 },
+                                      { 0.0000000000, 0.0000000000, 0.9912520182 } } };
 
     return matrix;
 }
 
 std::vector<std::string>
-split_csv_line(
-    const std::string& line)
+split_csv_line(const std::string& line)
 {
     std::vector<std::string> fields;
     std::stringstream stream(line);
@@ -232,9 +143,7 @@ split_csv_line(
 }
 
 bool
-parse_float(
-    const std::string& text,
-    float& value)
+parse_float(const std::string& text, float& value)
 {
     if (text.empty()) {
         return false;
@@ -244,39 +153,27 @@ parse_float(
         std::size_t pos = 0;
         value = std::stof(text, &pos);
 
-        while (pos < text.size()
-               && std::isspace(
-                   static_cast<unsigned char>(
-                       text[pos]))) {
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
             ++pos;
         }
 
         return pos == text.size();
-    }
-    catch (...) {
+    } catch (...) {
         return false;
     }
 }
 
 bool
-range_covers(
-    const SampledCurve& curve,
-    float minimum_nm,
-    float maximum_nm)
+range_covers(const SampledCurve& curve, float minimum_nm, float maximum_nm)
 {
-    return
-        curve.valid()
-        && curve.x.front() <= minimum_nm
-        && curve.x.back() >= maximum_nm;
+    return curve.valid() && curve.x.front() <= minimum_nm && curve.x.back() >= maximum_nm;
 }
 
-} // namespace
+}  // namespace
 
 bool
-PrintViewer::load(
-    const std::string& cie_observer_filename,
-    const std::string& viewing_illuminant_filename,
-    const Settings& settings)
+PrintViewer::load(const std::string& cie_observer_filename, const std::string& viewing_illuminant_filename,
+                  const Settings& settings)
 {
     settings_ = settings;
     cie_observer_filename_ = cie_observer_filename;
@@ -292,11 +189,7 @@ PrintViewer::load(
     integration_weight_x_.clear();
     integration_weight_y_.clear();
     integration_weight_z_.clear();
-    adaptation_to_d60_ = {{
-        1.0, 0.0, 0.0,
-        0.0, 1.0, 0.0,
-        0.0, 0.0, 1.0
-    }};
+    adaptation_to_d60_ = { { 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 } };
     viewing_white_xyz_ = XYZ();
     viewing_white_xy_ = xy();
     target_d60_xyz_ = XYZ();
@@ -305,65 +198,36 @@ PrintViewer::load(
     illuminant_covers_integration_range_ = false;
     valid_ = false;
 
-    if (settings_.wavelength_step_nm <= 0.0f
-        || settings_.wavelength_max_nm
-            < settings_.wavelength_min_nm) {
-
-        std::cerr
-            << "error: invalid print viewing wavelength settings"
-            << std::endl;
+    if (settings_.wavelength_step_nm <= 0.0f || settings_.wavelength_max_nm < settings_.wavelength_min_nm) {
+        std::cerr << "error: invalid print viewing wavelength settings" << std::endl;
         return false;
     }
 
-    if (!load_cie_observer(
-            cie_observer_filename_)) {
+    if (!load_cie_observer(cie_observer_filename_)) {
         return false;
     }
 
-    if (!load_illuminant(
-            viewing_illuminant_filename_)) {
+    if (!load_illuminant(viewing_illuminant_filename_)) {
         return false;
     }
 
-    observer_covers_integration_range_ =
-        range_covers(
-            x_bar_,
-            settings_.wavelength_min_nm,
-            settings_.wavelength_max_nm)
-        && range_covers(
-            y_bar_,
-            settings_.wavelength_min_nm,
-            settings_.wavelength_max_nm)
-        && range_covers(
-            z_bar_,
-            settings_.wavelength_min_nm,
-            settings_.wavelength_max_nm);
+    observer_covers_integration_range_
+        = range_covers(x_bar_, settings_.wavelength_min_nm, settings_.wavelength_max_nm)
+          && range_covers(y_bar_, settings_.wavelength_min_nm, settings_.wavelength_max_nm)
+          && range_covers(z_bar_, settings_.wavelength_min_nm, settings_.wavelength_max_nm);
 
-    illuminant_covers_integration_range_ =
-        range_covers(
-            viewing_illuminant_,
-            settings_.wavelength_min_nm,
-            settings_.wavelength_max_nm);
+    illuminant_covers_integration_range_ = range_covers(viewing_illuminant_, settings_.wavelength_min_nm,
+                                                        settings_.wavelength_max_nm);
 
     if (!observer_covers_integration_range_) {
-        std::cerr
-            << "error: CIE observer does not cover requested integration range "
-            << settings_.wavelength_min_nm
-            << "-"
-            << settings_.wavelength_max_nm
-            << " nm"
-            << std::endl;
+        std::cerr << "error: CIE observer does not cover requested integration range " << settings_.wavelength_min_nm
+                  << "-" << settings_.wavelength_max_nm << " nm" << std::endl;
         return false;
     }
 
     if (!illuminant_covers_integration_range_) {
-        std::cerr
-            << "error: viewing illuminant does not cover requested integration range "
-            << settings_.wavelength_min_nm
-            << "-"
-            << settings_.wavelength_max_nm
-            << " nm"
-            << std::endl;
+        std::cerr << "error: viewing illuminant does not cover requested integration range "
+                  << settings_.wavelength_min_nm << "-" << settings_.wavelength_max_nm << " nm" << std::endl;
         return false;
     }
 
@@ -377,60 +241,40 @@ PrintViewer::valid() const
 }
 
 PrintViewer::Result
-PrintViewer::view(
-    const SampledCurve& print_transmittance) const
+PrintViewer::view(const SampledCurve& print_transmittance) const
 {
     Result result;
 
-    if (!valid_
-        || !print_transmittance.valid()
-        || print_transmittance.x.front()
-            > settings_.wavelength_min_nm
-        || print_transmittance.x.back()
-            < settings_.wavelength_max_nm) {
+    if (!valid_ || !print_transmittance.valid() || print_transmittance.x.front() > settings_.wavelength_min_nm
+        || print_transmittance.x.back() < settings_.wavelength_max_nm) {
         return result;
     }
 
-    result.viewed_xyz =
-        integrate_xyz(
-            &print_transmittance);
+    result.viewed_xyz = integrate_xyz(&print_transmittance);
 
-    result.viewed_xy =
-        xyz_to_xy(
-            result.viewed_xyz);
+    result.viewed_xy = xyz_to_xy(result.viewed_xyz);
 
-    result.adapted_xyz_d60 =
-        adapt_to_d60(
-            result.viewed_xyz);
+    result.adapted_xyz_d60 = adapt_to_d60(result.viewed_xyz);
 
-    result.aces2065_1 =
-        xyz_d60_to_ap0(
-            result.adapted_xyz_d60);
+    result.aces2065_1 = xyz_d60_to_ap0(result.adapted_xyz_d60);
 
     return result;
 }
 
 
 float
-PrintViewer::view_luminance(
-    const SampledCurve& print_transmittance) const
+PrintViewer::view_luminance(const SampledCurve& print_transmittance) const
 {
-    if (!valid_
-        || !print_transmittance.valid()
-        || print_transmittance.x.front()
-            > settings_.wavelength_min_nm
-        || print_transmittance.x.back()
-            < settings_.wavelength_max_nm) {
+    if (!valid_ || !print_transmittance.valid() || print_transmittance.x.front() > settings_.wavelength_min_nm
+        || print_transmittance.x.back() < settings_.wavelength_max_nm) {
         return 0.0f;
     }
 
-    return integrate_y(
-        &print_transmittance);
+    return integrate_y(&print_transmittance);
 }
 
 PrintViewer::Result
-PrintViewer::view_flat_transmittance(
-    float transmittance) const
+PrintViewer::view_flat_transmittance(float transmittance) const
 {
     SampledCurve flat;
 
@@ -438,10 +282,8 @@ PrintViewer::view_flat_transmittance(
         return Result();
     }
 
-    for (float wavelength = settings_.wavelength_min_nm;
-         wavelength <= settings_.wavelength_max_nm + 0.001f;
+    for (float wavelength = settings_.wavelength_min_nm; wavelength <= settings_.wavelength_max_nm + 0.001f;
          wavelength += settings_.wavelength_step_nm) {
-
         flat.x.push_back(wavelength);
         flat.y.push_back(transmittance);
     }
@@ -450,36 +292,22 @@ PrintViewer::view_flat_transmittance(
 }
 
 SampledCurve
-PrintViewer::viewed_spectrum(
-    const SampledCurve& print_transmittance) const
+PrintViewer::viewed_spectrum(const SampledCurve& print_transmittance) const
 {
     SampledCurve result;
 
-    if (!valid_
-        || !print_transmittance.valid()) {
+    if (!valid_ || !print_transmittance.valid()) {
         return result;
     }
 
-    for (float wavelength = settings_.wavelength_min_nm;
-         wavelength <= settings_.wavelength_max_nm + 0.001f;
+    for (float wavelength = settings_.wavelength_min_nm; wavelength <= settings_.wavelength_max_nm + 0.001f;
          wavelength += settings_.wavelength_step_nm) {
+        const float illuminant = viewing_illuminant_.sample(wavelength, 0.0f);
 
-        const float illuminant =
-            viewing_illuminant_.sample(
-                wavelength,
-                0.0f);
-
-        const float transmission =
-            print_transmittance.sample(
-                wavelength,
-                0.0f);
+        const float transmission = print_transmittance.sample(wavelength, 0.0f);
 
         result.x.push_back(wavelength);
-        result.y.push_back(
-            illuminant
-            * std::max(
-                0.0f,
-                transmission));
+        result.y.push_back(illuminant * std::max(0.0f, transmission));
     }
 
     return result;
@@ -570,25 +398,19 @@ PrintViewer::illuminant_covers_integration_range() const
 }
 
 bool
-PrintViewer::load_cie_observer(
-    const std::string& filename)
+PrintViewer::load_cie_observer(const std::string& filename)
 {
-    std::ifstream file(
-        filename.c_str());
+    std::ifstream file(filename.c_str());
 
     if (!file) {
-        std::cerr
-            << "error: could not open CIE observer CSV: "
-            << filename
-            << std::endl;
+        std::cerr << "error: could not open CIE observer CSV: " << filename << std::endl;
         return false;
     }
 
     std::string line;
 
     while (std::getline(file, line)) {
-        const auto fields =
-            split_csv_line(line);
+        const auto fields = split_csv_line(line);
 
         if (fields.size() < 4) {
             continue;
@@ -599,9 +421,7 @@ PrintViewer::load_cie_observer(
         float y = 0.0f;
         float z = 0.0f;
 
-        if (!parse_float(fields[0], wavelength)
-            || !parse_float(fields[1], x)
-            || !parse_float(fields[2], y)
+        if (!parse_float(fields[0], wavelength) || !parse_float(fields[1], x) || !parse_float(fields[2], y)
             || !parse_float(fields[3], z)) {
             continue;
         }
@@ -616,13 +436,8 @@ PrintViewer::load_cie_observer(
         z_bar_.y.push_back(z);
     }
 
-    if (!x_bar_.valid()
-        || !y_bar_.valid()
-        || !z_bar_.valid()) {
-
-        std::cerr
-            << "error: CIE observer CSV did not contain usable xbar/ybar/zbar data"
-            << std::endl;
+    if (!x_bar_.valid() || !y_bar_.valid() || !z_bar_.valid()) {
+        std::cerr << "error: CIE observer CSV did not contain usable xbar/ybar/zbar data" << std::endl;
         return false;
     }
 
@@ -630,25 +445,19 @@ PrintViewer::load_cie_observer(
 }
 
 bool
-PrintViewer::load_illuminant(
-    const std::string& filename)
+PrintViewer::load_illuminant(const std::string& filename)
 {
-    std::ifstream file(
-        filename.c_str());
+    std::ifstream file(filename.c_str());
 
     if (!file) {
-        std::cerr
-            << "error: could not open viewing illuminant CSV: "
-            << filename
-            << std::endl;
+        std::cerr << "error: could not open viewing illuminant CSV: " << filename << std::endl;
         return false;
     }
 
     std::string line;
 
     while (std::getline(file, line)) {
-        const auto fields =
-            split_csv_line(line);
+        const auto fields = split_csv_line(line);
 
         if (fields.size() < 2) {
             continue;
@@ -657,8 +466,7 @@ PrintViewer::load_illuminant(
         float wavelength = 0.0f;
         float power = 0.0f;
 
-        if (!parse_float(fields[0], wavelength)
-            || !parse_float(fields[1], power)) {
+        if (!parse_float(fields[0], wavelength) || !parse_float(fields[1], power)) {
             continue;
         }
 
@@ -667,9 +475,7 @@ PrintViewer::load_illuminant(
     }
 
     if (!viewing_illuminant_.valid()) {
-        std::cerr
-            << "error: viewing illuminant CSV did not contain usable SPD data"
-            << std::endl;
+        std::cerr << "error: viewing illuminant CSV did not contain usable SPD data" << std::endl;
         return false;
     }
 
@@ -681,41 +487,21 @@ PrintViewer::initialize_colorimetry()
 {
     double denominator = 0.0;
 
-    for (float wavelength = settings_.wavelength_min_nm;
-         wavelength <= settings_.wavelength_max_nm + 0.001f;
+    for (float wavelength = settings_.wavelength_min_nm; wavelength <= settings_.wavelength_max_nm + 0.001f;
          wavelength += settings_.wavelength_step_nm) {
+        const double illuminant = static_cast<double>(viewing_illuminant_.sample(wavelength, 0.0f));
 
-        const double illuminant =
-            static_cast<double>(
-                viewing_illuminant_.sample(
-                    wavelength,
-                    0.0f));
+        const double ybar = static_cast<double>(y_bar_.sample(wavelength, 0.0f));
 
-        const double ybar =
-            static_cast<double>(
-                y_bar_.sample(
-                    wavelength,
-                    0.0f));
-
-        denominator +=
-            illuminant
-            * ybar
-            * static_cast<double>(
-                settings_.wavelength_step_nm);
+        denominator += illuminant * ybar * static_cast<double>(settings_.wavelength_step_nm);
     }
 
-    if (!std::isfinite(denominator)
-        || denominator <= 0.0) {
-
-        std::cerr
-            << "error: viewing illuminant / CIE observer normalization is non-positive"
-            << std::endl;
+    if (!std::isfinite(denominator) || denominator <= 0.0) {
+        std::cerr << "error: viewing illuminant / CIE observer normalization is non-positive" << std::endl;
         return false;
     }
 
-    normalization_k_ =
-        static_cast<float>(
-            1.0 / denominator);
+    normalization_k_ = static_cast<float>(1.0 / denominator);
 
     // optimized production synthesis: precompute the complete normalized XYZ integration
     // weights on the active wavelength grid. The print dye model emits this
@@ -726,127 +512,62 @@ PrintViewer::initialize_colorimetry()
     integration_weight_y_.clear();
     integration_weight_z_.clear();
 
-    for (float wavelength = settings_.wavelength_min_nm;
-         wavelength <= settings_.wavelength_max_nm + 0.001f;
+    for (float wavelength = settings_.wavelength_min_nm; wavelength <= settings_.wavelength_max_nm + 0.001f;
          wavelength += settings_.wavelength_step_nm) {
+        const float illuminant = viewing_illuminant_.sample(wavelength, 0.0f);
 
-        const float illuminant =
-            viewing_illuminant_.sample(
-                wavelength,
-                0.0f);
+        const double scale = static_cast<double>(illuminant) * static_cast<double>(settings_.wavelength_step_nm);
 
-        const double scale =
-            static_cast<double>(illuminant)
-            * static_cast<double>(
-                settings_.wavelength_step_nm);
+        integration_wavelengths_.push_back(wavelength);
 
-        integration_wavelengths_.push_back(
-            wavelength);
+        integration_weight_x_.push_back(scale * static_cast<double>(x_bar_.sample(wavelength, 0.0f)));
 
-        integration_weight_x_.push_back(
-            scale
-            * static_cast<double>(
-                x_bar_.sample(
-                    wavelength,
-                    0.0f)));
+        integration_weight_y_.push_back(scale * static_cast<double>(y_bar_.sample(wavelength, 0.0f)));
 
-        integration_weight_y_.push_back(
-            scale
-            * static_cast<double>(
-                y_bar_.sample(
-                    wavelength,
-                    0.0f)));
-
-        integration_weight_z_.push_back(
-            scale
-            * static_cast<double>(
-                z_bar_.sample(
-                    wavelength,
-                    0.0f)));
+        integration_weight_z_.push_back(scale * static_cast<double>(z_bar_.sample(wavelength, 0.0f)));
     }
 
-    viewing_white_xyz_ =
-        integrate_xyz(nullptr);
+    viewing_white_xyz_ = integrate_xyz(nullptr);
 
-    viewing_white_xy_ =
-        xyz_to_xy(
-            viewing_white_xyz_);
+    viewing_white_xy_ = xyz_to_xy(viewing_white_xyz_);
 
-    const auto d60 =
-        xy_to_xyz_white(
-            0.32168,
-            0.33767);
+    const auto d60 = xy_to_xyz_white(0.32168, 0.33767);
 
-    target_d60_xyz_.x =
-        static_cast<float>(d60[0]);
-    target_d60_xyz_.y =
-        static_cast<float>(d60[1]);
-    target_d60_xyz_.z =
-        static_cast<float>(d60[2]);
+    target_d60_xyz_.x = static_cast<float>(d60[0]);
+    target_d60_xyz_.y = static_cast<float>(d60[1]);
+    target_d60_xyz_.z = static_cast<float>(d60[2]);
 
     target_d60_xy_.x = 0.32168f;
     target_d60_xy_.y = 0.33767f;
 
-    const std::array<double, 3> source_white = {{
-        viewing_white_xyz_.x,
-        viewing_white_xyz_.y,
-        viewing_white_xyz_.z
-    }};
+    const std::array<double, 3> source_white = { { viewing_white_xyz_.x, viewing_white_xyz_.y, viewing_white_xyz_.z } };
 
-    const std::array<double, 3> destination_white = {{
-        target_d60_xyz_.x,
-        target_d60_xyz_.y,
-        target_d60_xyz_.z
-    }};
+    const std::array<double, 3> destination_white = { { target_d60_xyz_.x, target_d60_xyz_.y, target_d60_xyz_.z } };
 
-    const Matrix3 cached_adaptation =
-        bradford_adaptation(
-            source_white,
-            destination_white);
+    const Matrix3 cached_adaptation = bradford_adaptation(source_white, destination_white);
 
     for (int row = 0; row < 3; ++row) {
         for (int col = 0; col < 3; ++col) {
-            adaptation_to_d60_[row * 3 + col] =
-                cached_adaptation.m[row][col];
+            adaptation_to_d60_[row * 3 + col] = cached_adaptation.m[row][col];
         }
     }
 
-    if (!std::isfinite(viewing_white_xyz_.x)
-        || !std::isfinite(viewing_white_xyz_.y)
-        || !std::isfinite(viewing_white_xyz_.z)
-        || std::abs(viewing_white_xyz_.y - 1.0f) > 1e-4f) {
-
-        std::cerr
-            << "error: viewing-white normalization validation failed; Y="
-            << viewing_white_xyz_.y
-            << std::endl;
+    if (!std::isfinite(viewing_white_xyz_.x) || !std::isfinite(viewing_white_xyz_.y)
+        || !std::isfinite(viewing_white_xyz_.z) || std::abs(viewing_white_xyz_.y - 1.0f) > 1e-4f) {
+        std::cerr << "error: viewing-white normalization validation failed; Y=" << viewing_white_xyz_.y << std::endl;
         return false;
     }
 
     valid_ = true;
 
-    const Result flat =
-        view_flat_transmittance(1.0f);
+    const Result flat = view_flat_transmittance(1.0f);
 
-    const float neutral_span =
-        std::max(
-            flat.aces2065_1[0],
-            std::max(
-                flat.aces2065_1[1],
-                flat.aces2065_1[2]))
-        - std::min(
-            flat.aces2065_1[0],
-            std::min(
-                flat.aces2065_1[1],
-                flat.aces2065_1[2]));
+    const float neutral_span = std::max(flat.aces2065_1[0], std::max(flat.aces2065_1[1], flat.aces2065_1[2]))
+                               - std::min(flat.aces2065_1[0], std::min(flat.aces2065_1[1], flat.aces2065_1[2]));
 
-    if (!std::isfinite(neutral_span)
-        || neutral_span > 5e-4f) {
-
-        std::cerr
-            << "error: flat-transmittance D60 adaptation validation failed; AP0 span="
-            << neutral_span
-            << std::endl;
+    if (!std::isfinite(neutral_span) || neutral_span > 5e-4f) {
+        std::cerr << "error: flat-transmittance D60 adaptation validation failed; AP0 span=" << neutral_span
+                  << std::endl;
         valid_ = false;
         return false;
     }
@@ -855,13 +576,11 @@ PrintViewer::initialize_colorimetry()
 }
 
 PrintViewer::XYZ
-PrintViewer::integrate_xyz(
-    const SampledCurve* transmittance) const
+PrintViewer::integrate_xyz(const SampledCurve* transmittance) const
 {
     XYZ result;
 
-    if (normalization_k_ <= 0.0f
-        || integration_weight_x_.empty()
+    if (normalization_k_ <= 0.0f || integration_weight_x_.empty()
         || integration_weight_y_.size() != integration_weight_x_.size()
         || integration_weight_z_.size() != integration_weight_x_.size()) {
         return result;
@@ -880,11 +599,7 @@ PrintViewer::integrate_xyz(
     }
     else if (transmittance_matches_integration_grid(*transmittance)) {
         for (std::size_t i = 0; i < integration_weight_x_.size(); ++i) {
-            const double T =
-                static_cast<double>(
-                    std::max(
-                        0.0f,
-                        transmittance->y[i]));
+            const double T = static_cast<double>(std::max(0.0f, transmittance->y[i]));
 
             X += integration_weight_x_[i] * T;
             Y += integration_weight_y_[i] * T;
@@ -893,13 +608,8 @@ PrintViewer::integrate_xyz(
     }
     else {
         for (std::size_t i = 0; i < integration_wavelengths_.size(); ++i) {
-            const double T =
-                static_cast<double>(
-                    std::max(
-                        0.0f,
-                        transmittance->sample(
-                            integration_wavelengths_[i],
-                            0.0f)));
+            const double T = static_cast<double>(
+                std::max(0.0f, transmittance->sample(integration_wavelengths_[i], 0.0f)));
 
             X += integration_weight_x_[i] * T;
             Y += integration_weight_y_[i] * T;
@@ -907,27 +617,19 @@ PrintViewer::integrate_xyz(
         }
     }
 
-    result.x =
-        normalization_k_
-        * static_cast<float>(X);
+    result.x = normalization_k_ * static_cast<float>(X);
 
-    result.y =
-        normalization_k_
-        * static_cast<float>(Y);
+    result.y = normalization_k_ * static_cast<float>(Y);
 
-    result.z =
-        normalization_k_
-        * static_cast<float>(Z);
+    result.z = normalization_k_ * static_cast<float>(Z);
 
     return result;
 }
 
 float
-PrintViewer::integrate_y(
-    const SampledCurve* transmittance) const
+PrintViewer::integrate_y(const SampledCurve* transmittance) const
 {
-    if (normalization_k_ <= 0.0f
-        || integration_weight_y_.empty()) {
+    if (normalization_k_ <= 0.0f || integration_weight_y_.empty()) {
         return 0.0f;
     }
 
@@ -940,37 +642,24 @@ PrintViewer::integrate_y(
     }
     else if (transmittance_matches_integration_grid(*transmittance)) {
         for (std::size_t i = 0; i < integration_weight_y_.size(); ++i) {
-            Y += integration_weight_y_[i]
-                * static_cast<double>(
-                    std::max(
-                        0.0f,
-                        transmittance->y[i]));
+            Y += integration_weight_y_[i] * static_cast<double>(std::max(0.0f, transmittance->y[i]));
         }
     }
     else {
         for (std::size_t i = 0; i < integration_wavelengths_.size(); ++i) {
             Y += integration_weight_y_[i]
-                * static_cast<double>(
-                    std::max(
-                        0.0f,
-                        transmittance->sample(
-                            integration_wavelengths_[i],
-                            0.0f)));
+                 * static_cast<double>(std::max(0.0f, transmittance->sample(integration_wavelengths_[i], 0.0f)));
         }
     }
 
-    return normalization_k_
-        * static_cast<float>(Y);
+    return normalization_k_ * static_cast<float>(Y);
 }
 
 bool
-PrintViewer::transmittance_matches_integration_grid(
-    const SampledCurve& transmittance) const
+PrintViewer::transmittance_matches_integration_grid(const SampledCurve& transmittance) const
 {
-    if (!transmittance.valid()
-        || transmittance.x.size() != integration_wavelengths_.size()
-        || transmittance.y.size() != integration_wavelengths_.size()
-        || integration_wavelengths_.empty()) {
+    if (!transmittance.valid() || transmittance.x.size() != integration_wavelengths_.size()
+        || transmittance.y.size() != integration_wavelengths_.size() || integration_wavelengths_.empty()) {
         return false;
     }
 
@@ -978,19 +667,13 @@ PrintViewer::transmittance_matches_integration_grid(
     // checks keep the fast path safe for external diagnostic curves.
     const float eps = 1e-4f;
 
-    if (std::abs(
-            transmittance.x.front()
-            - integration_wavelengths_.front()) > eps
-        || std::abs(
-            transmittance.x.back()
-            - integration_wavelengths_.back()) > eps) {
+    if (std::abs(transmittance.x.front() - integration_wavelengths_.front()) > eps
+        || std::abs(transmittance.x.back() - integration_wavelengths_.back()) > eps) {
         return false;
     }
 
     if (transmittance.x.size() > 1
-        && std::abs(
-            (transmittance.x[1] - transmittance.x[0])
-            - settings_.wavelength_step_nm) > eps) {
+        && std::abs((transmittance.x[1] - transmittance.x[0]) - settings_.wavelength_step_nm) > eps) {
         return false;
     }
 
@@ -998,37 +681,28 @@ PrintViewer::transmittance_matches_integration_grid(
 }
 
 PrintViewer::XYZ
-PrintViewer::adapt_to_d60(
-    const XYZ& xyz) const
+PrintViewer::adapt_to_d60(const XYZ& xyz) const
 {
     XYZ result;
 
-    result.x = static_cast<float>(
-        adaptation_to_d60_[0] * xyz.x
-        + adaptation_to_d60_[1] * xyz.y
-        + adaptation_to_d60_[2] * xyz.z);
+    result.x = static_cast<float>(adaptation_to_d60_[0] * xyz.x + adaptation_to_d60_[1] * xyz.y
+                                  + adaptation_to_d60_[2] * xyz.z);
 
-    result.y = static_cast<float>(
-        adaptation_to_d60_[3] * xyz.x
-        + adaptation_to_d60_[4] * xyz.y
-        + adaptation_to_d60_[5] * xyz.z);
+    result.y = static_cast<float>(adaptation_to_d60_[3] * xyz.x + adaptation_to_d60_[4] * xyz.y
+                                  + adaptation_to_d60_[5] * xyz.z);
 
-    result.z = static_cast<float>(
-        adaptation_to_d60_[6] * xyz.x
-        + adaptation_to_d60_[7] * xyz.y
-        + adaptation_to_d60_[8] * xyz.z);
+    result.z = static_cast<float>(adaptation_to_d60_[6] * xyz.x + adaptation_to_d60_[7] * xyz.y
+                                  + adaptation_to_d60_[8] * xyz.z);
 
     return result;
 }
 
 PrintViewer::xy
-PrintViewer::xyz_to_xy(
-    const XYZ& xyz)
+PrintViewer::xyz_to_xy(const XYZ& xyz)
 {
     xy result;
 
-    const float sum =
-        xyz.x + xyz.y + xyz.z;
+    const float sum = xyz.x + xyz.y + xyz.z;
 
     if (std::abs(sum) <= 1e-20f) {
         return result;
@@ -1040,23 +714,11 @@ PrintViewer::xyz_to_xy(
 }
 
 std::array<float, 3>
-PrintViewer::xyz_d60_to_ap0(
-    const XYZ& xyz)
+PrintViewer::xyz_d60_to_ap0(const XYZ& xyz)
 {
-    const std::array<double, 3> value = {{
-        xyz.x,
-        xyz.y,
-        xyz.z
-    }};
+    const std::array<double, 3> value = { { xyz.x, xyz.y, xyz.z } };
 
-    const auto rgb =
-        multiply(
-            xyz_d60_to_ap0_matrix(),
-            value);
+    const auto rgb = multiply(xyz_d60_to_ap0_matrix(), value);
 
-    return {{
-        static_cast<float>(rgb[0]),
-        static_cast<float>(rgb[1]),
-        static_cast<float>(rgb[2])
-    }};
+    return { { static_cast<float>(rgb[0]), static_cast<float>(rgb[1]), static_cast<float>(rgb[2]) } };
 }

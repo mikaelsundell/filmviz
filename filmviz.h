@@ -7,8 +7,8 @@
 // for specialized diagnostics and integration work.
 
 #include "bleachbypass.h"
-#include "filmdensitycalibration.h"
 #include "filmcolorresponse.h"
+#include "filmdensitycalibration.h"
 #include "filmformat.h"
 #include "filmpipeline.h"
 #include "halationmodel.h"

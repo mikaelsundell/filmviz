@@ -12,8 +12,7 @@
 // a claimed reconstruction of interimage chemistry. Its internal amount zero
 // is a strict calibrated bypass; public interfaces expose the signed trim
 // mapped by amount_from_trim().
-class FilmColorResponse
-{
+class FilmColorResponse {
 public:
     static constexpr float minimum_trim = -4.0f;
     static constexpr float standard_trim = 0.0f;
@@ -23,8 +22,7 @@ public:
     static constexpr float standard_color_depth = 1.0f;
     static constexpr float maximum_color_depth = 2.0f;
 
-    struct Settings
-    {
+    struct Settings {
         float amount = 0.0f;
         float chroma_compression = 0.22f;
         float density_depth = 0.08f;
@@ -32,17 +30,13 @@ public:
         float chroma_knee = 0.50f;
     };
 
-    FilmColorResponse(
-        const FilmDensity& minimum_coordinate,
-        const FilmDensity& neutral_reference_coordinate);
+    FilmColorResponse(const FilmDensity& minimum_coordinate, const FilmDensity& neutral_reference_coordinate);
 
     bool valid() const;
 
     static float amount_from_trim(float trim);
 
-    FilmDensity apply(
-        const FilmDensity& coordinate,
-        const Settings& settings) const;
+    FilmDensity apply(const FilmDensity& coordinate, const Settings& settings) const;
 
 private:
     FilmDensity minimum_;

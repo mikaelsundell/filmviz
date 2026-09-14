@@ -9,11 +9,9 @@
 // Physical active-image widths used to map measured cycles/mm responses into
 // image-pixel frequencies. Exact camera apertures and crops vary, so every
 // preset resolves to a shared physical width and Custom remains available.
-class FilmFormatCatalog
-{
+class FilmFormatCatalog {
 public:
-    struct Format
-    {
+    struct Format {
         std::string identifier;
         std::string display_name;
         float image_width_mm = 0.0f;
@@ -21,8 +19,7 @@ public:
 
     static const std::vector<Format>& formats();
 
-    static const Format* find(
-        const std::string& identifier);
+    static const Format* find(const std::string& identifier);
 
     static const Format& default_format();
 };

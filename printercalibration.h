@@ -11,28 +11,18 @@
 
 #include <array>
 
-class PrinterCalibration
-{
+class PrinterCalibration {
 public:
-    struct Target
-    {
+    struct Target {
         // Final ACES2065-1 / AP0 linear target after PrintViewer.
         // The calibration target is intentionally expressed in AP0 rather
         // than a display encoding or transfer function.
-        std::array<double, 3> ap0 = {{
-            0.18,
-            0.18,
-            0.18
-        }};
+        std::array<double, 3> ap0 = { { 0.18, 0.18, 0.18 } };
 
-        Colorimetry::XYZ xyz_d60() const
-        {
-            return Colorimetry::ap0_to_xyz_d60(ap0);
-        }
+        Colorimetry::XYZ xyz_d60() const { return Colorimetry::ap0_to_xyz_d60(ap0); }
     };
 
-    struct Settings
-    {
+    struct Settings {
         int maximum_iterations = 40;
         double finite_difference_step = 1e-4;
         double damping = 0.75;
@@ -41,8 +31,7 @@ public:
         double singular_determinant_tolerance = 1e-16;
     };
 
-    struct Result
-    {
+    struct Result {
         bool converged = false;
 
         FilmLogExposure log_offset;
@@ -50,11 +39,7 @@ public:
 
         PrintViewer::Result solved_view;
 
-        std::array<double, 3> residual = {{
-            0.0,
-            0.0,
-            0.0
-        }};
+        std::array<double, 3> residual = { { 0.0, 0.0, 0.0 } };
 
         double residual_norm = 0.0;
         double jacobian_determinant = 0.0;
@@ -65,30 +50,17 @@ public:
 
     // Convenience overload using the default AP0 0.18 target and
     // default solver settings.
-    static Result solve(
-        const SampledCurve& reference_negative_transmittance,
-        const PrintFilmProcessor& processor,
-        const PrintDyeModel& print_dye_model,
-        const PrintViewer& print_viewer);
+    static Result solve(const SampledCurve& reference_negative_transmittance, const PrintFilmProcessor& processor,
+                        const PrintDyeModel& print_dye_model, const PrintViewer& print_viewer);
 
     // Convenience overload using an explicit target and default settings.
-    static Result solve(
-        const SampledCurve& reference_negative_transmittance,
-        const PrintFilmProcessor& processor,
-        const PrintDyeModel& print_dye_model,
-        const PrintViewer& print_viewer,
-        const Target& target);
+    static Result solve(const SampledCurve& reference_negative_transmittance, const PrintFilmProcessor& processor,
+                        const PrintDyeModel& print_dye_model, const PrintViewer& print_viewer, const Target& target);
 
     // Full solver API.
-    static Result solve(
-        const SampledCurve& reference_negative_transmittance,
-        const PrintFilmProcessor& processor,
-        const PrintDyeModel& print_dye_model,
-        const PrintViewer& print_viewer,
-        const Target& target,
-        const Settings& settings);
+    static Result solve(const SampledCurve& reference_negative_transmittance, const PrintFilmProcessor& processor,
+                        const PrintDyeModel& print_dye_model, const PrintViewer& print_viewer, const Target& target,
+                        const Settings& settings);
 
-    static bool apply(
-        PrintFilmProcessor& processor,
-        const Result& result);
+    static bool apply(PrintFilmProcessor& processor, const Result& result);
 };

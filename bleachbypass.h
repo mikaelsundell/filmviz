@@ -18,11 +18,9 @@
 //   - print bypass preserves mean spectral density while contracting spectral
 //     density differences, reducing colour saturation without adding a neutral
 //     density veil or a large contrast change.
-class BleachBypass
-{
+class BleachBypass {
 public:
-    struct Result
-    {
+    struct Result {
         SampledCurve spectral_density;
         float mean_density_before = 0.0f;
         float mean_density_after = 0.0f;
@@ -32,19 +30,13 @@ public:
     };
 
     // Zero is normal processing; one is the full modeled negative-bypass look.
-    static Result apply_negative(
-        const SampledCurve& spectral_density,
-        float amount);
+    static Result apply_negative(const SampledCurve& spectral_density, float amount);
 
     // Zero is normal processing; one is the full modeled print-bypass look.
-    static Result apply_print(
-        const SampledCurve& spectral_density,
-        float amount);
+    static Result apply_print(const SampledCurve& spectral_density, float amount);
 
 private:
-    static float mean_density(
-        const SampledCurve& spectral_density);
+    static float mean_density(const SampledCurve& spectral_density);
 
-    static float spectral_span(
-        const SampledCurve& spectral_density);
+    static float spectral_span(const SampledCurve& spectral_density);
 };

@@ -10,8 +10,7 @@
 #include <vector>
 
 
-struct CurveValidationResult
-{
+struct CurveValidationResult {
     std::string name;
 
     std::size_t sample_count = 0;
@@ -25,15 +24,12 @@ struct CurveValidationResult
     bool passed = true;
 };
 
-class FilmStock
-{
+class FilmStock {
 public:
     FilmStock() = default;
     explicit FilmStock(const std::string& name);
 
-    bool load(
-        const std::string& sensitivity_filename,
-        const std::string& characteristic_filename);
+    bool load(const std::string& sensitivity_filename, const std::string& characteristic_filename);
 
     bool valid() const;
 
@@ -45,16 +41,12 @@ public:
     //
     // Because FilmViz currently uses piecewise-linear interpolation, every
     // source knot should be reproduced exactly apart from floating-point noise.
-    std::vector<CurveValidationResult>
-    validate_interpolation(
-        float tolerance = 1e-6f) const;
+    std::vector<CurveValidationResult> validate_interpolation(float tolerance = 1e-6f) const;
 
 private:
-    bool load_sensitivity(
-        const std::string& filename);
+    bool load_sensitivity(const std::string& filename);
 
-    bool load_characteristic(
-        const std::string& filename);
+    bool load_characteristic(const std::string& filename);
 
     std::string name_;
     FilmSpectralSensitivity sensitivity_;

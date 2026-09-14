@@ -25,13 +25,11 @@ class FilmDyeModel;
 // colour-look control. Targets outside the spectral model's achievable gamut
 // are mapped to the nearest finite least-squares state; the measured spectral
 // D-min is enforced as the lower physical boundary.
-class FilmDensityCalibration
-{
+class FilmDensityCalibration {
 public:
     using Vec3 = std::array<double, 3>;
 
-    struct Settings
-    {
+    struct Settings {
         int iterations = 24;
         int line_search_steps = 8;
         double jacobian_step = 1e-3;
@@ -40,36 +38,27 @@ public:
         double maximum_update = 0.5;
     };
 
-    struct Result
-    {
+    struct Result {
         FilmDensity calibrated_density;
-        Vec3 desired_status_m = {{0.0, 0.0, 0.0}};
-        Vec3 measured_status_m = {{0.0, 0.0, 0.0}};
-        Vec3 residual = {{0.0, 0.0, 0.0}};
+        Vec3 desired_status_m = { { 0.0, 0.0, 0.0 } };
+        Vec3 measured_status_m = { { 0.0, 0.0, 0.0 } };
+        Vec3 residual = { { 0.0, 0.0, 0.0 } };
         bool floor_projected = false;
         bool converged = false;
         bool valid = false;
     };
 
-    FilmDensityCalibration(
-        const FilmDyeModel& model,
-        const FilmDensity& zero_target,
-        const SampledCurve& minimum_spectral_density);
+    FilmDensityCalibration(const FilmDyeModel& model, const FilmDensity& zero_target,
+                           const SampledCurve& minimum_spectral_density);
 
-    FilmDensityCalibration(
-        const FilmDyeModel& model,
-        const FilmDensity& zero_target,
-        const SampledCurve& minimum_spectral_density,
-        const Settings& settings);
+    FilmDensityCalibration(const FilmDyeModel& model, const FilmDensity& zero_target,
+                           const SampledCurve& minimum_spectral_density, const Settings& settings);
 
     bool valid() const;
 
-    Result solve(
-        const FilmDensity& target_status_m) const;
+    Result solve(const FilmDensity& target_status_m) const;
 
-    bool calibrate(
-        const FilmDensity& target_status_m,
-        FilmDensity& calibrated_density) const;
+    bool calibrate(const FilmDensity& target_status_m, FilmDensity& calibrated_density) const;
 
     const Vec3& zero_target() const;
     const Vec3& zero_measured() const;
@@ -80,44 +69,28 @@ public:
 private:
     using Mat3 = std::array<std::array<double, 3>, 3>;
 
-    static Vec3 to_vec3(
-        const FilmDensity& density);
+    static Vec3 to_vec3(const FilmDensity& density);
 
-    static FilmDensity to_density(
-        const Vec3& value);
+    static FilmDensity to_density(const Vec3& value);
 
-    static bool finite(
-        const Vec3& value);
+    static bool finite(const Vec3& value);
 
-    static Vec3 add(
-        const Vec3& a,
-        const Vec3& b);
+    static Vec3 add(const Vec3& a, const Vec3& b);
 
-    static Vec3 subtract(
-        const Vec3& a,
-        const Vec3& b);
+    static Vec3 subtract(const Vec3& a, const Vec3& b);
 
-    static double rms(
-        const Vec3& value);
+    static double rms(const Vec3& value);
 
-    static double max_abs(
-        const Vec3& value);
+    static double max_abs(const Vec3& value);
 
-    static bool solve_3x3(
-        Mat3 matrix,
-        Vec3 rhs,
-        Vec3& solution);
+    static bool solve_3x3(Mat3 matrix, Vec3 rhs, Vec3& solution);
 
     const FilmDyeModel& model_;
     StatusMDensitometer densitometer_;
     Settings settings_;
-    Vec3 zero_target_ = {{0.0, 0.0, 0.0}};
-    Vec3 zero_measured_ = {{0.0, 0.0, 0.0}};
-    Vec3 minimum_status_m_ = {{0.0, 0.0, 0.0}};
-    Mat3 zero_jacobian_ = {{
-        {{0.0, 0.0, 0.0}},
-        {{0.0, 0.0, 0.0}},
-        {{0.0, 0.0, 0.0}}
-    }};
+    Vec3 zero_target_ = { { 0.0, 0.0, 0.0 } };
+    Vec3 zero_measured_ = { { 0.0, 0.0, 0.0 } };
+    Vec3 minimum_status_m_ = { { 0.0, 0.0, 0.0 } };
+    Mat3 zero_jacobian_ = { { { { 0.0, 0.0, 0.0 } }, { { 0.0, 0.0, 0.0 } }, { { 0.0, 0.0, 0.0 } } } };
     bool valid_ = false;
 };

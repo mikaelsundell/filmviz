@@ -13,13 +13,11 @@
 // Applies the cascaded, measured negative and print modulation-transfer
 // responses to an image. The source MTFs are expressed in cycles/mm; the
 // active image width supplies the physical-to-pixel mapping.
-class SpatialResponseModel
-{
+class SpatialResponseModel {
 public:
     using Cancel = std::function<bool()>;
 
-    struct Settings
-    {
+    struct Settings {
         float image_width_mm = 24.89f;
         float negative_amount = 0.0f;
         float print_amount = 0.0f;
@@ -28,28 +26,16 @@ public:
         bool gamma24_encoded = false;
     };
 
-    bool load(
-        const std::string& negative_mtf_filename,
-        const std::string& print_mtf_filename);
+    bool load(const std::string& negative_mtf_filename, const std::string& print_mtf_filename);
 
     bool valid() const;
 
-    bool apply(
-        std::vector<float>& rgb,
-        int width,
-        int height,
-        const Settings& settings,
-        const Cancel& cancel = Cancel()) const;
+    bool apply(std::vector<float>& rgb, int width, int height, const Settings& settings,
+               const Cancel& cancel = Cancel()) const;
 
-    bool kernels(
-        int width,
-        const Settings& settings,
-        std::array<std::vector<float>, 3>& result) const
+    bool kernels(int width, const Settings& settings, std::array<std::vector<float>, 3>& result) const
     {
-        if (!valid_
-            || width <= 0
-            || settings.image_width_mm <= 0.0f
-            || settings.negative_amount < 0.0f
+        if (!valid_ || width <= 0 || settings.image_width_mm <= 0.0f || settings.negative_amount < 0.0f
             || settings.print_amount < 0.0f) {
             return false;
         }
@@ -62,18 +48,11 @@ public:
     }
 
 private:
-    static bool load_curves(
-        const std::string& filename,
-        std::array<SampledCurve, 3>& curves);
+    static bool load_curves(const std::string& filename, std::array<SampledCurve, 3>& curves);
 
-    static float response(
-        const SampledCurve& curve,
-        float cycles_per_mm);
+    static float response(const SampledCurve& curve, float cycles_per_mm);
 
-    std::vector<float> kernel(
-        int channel,
-        int width,
-        const Settings& settings) const;
+    std::vector<float> kernel(int channel, int width, const Settings& settings) const;
 
     std::array<SampledCurve, 3> negative_;
     std::array<SampledCurve, 3> print_;

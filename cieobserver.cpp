@@ -35,24 +35,19 @@ parse_double(const std::string& text, double& value)
         std::size_t pos = 0;
         value = std::stod(text, &pos);
 
-        while (pos < text.size()
-               && std::isspace(static_cast<unsigned char>(text[pos]))) {
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
             ++pos;
         }
 
         return pos == text.size();
-    }
-    catch (...) {
+    } catch (...) {
         return false;
     }
 }
 
-} // namespace
+}  // namespace
 
-CIEObserver::CIEObserver(const std::string& filename)
-{
-    load(filename);
-}
+CIEObserver::CIEObserver(const std::string& filename) { load(filename); }
 
 bool
 CIEObserver::load(const std::string& filename)
@@ -77,9 +72,7 @@ CIEObserver::load(const std::string& filename)
         double y = 0.0;
         double z = 0.0;
 
-        if (!parse_double(fields[0], wavelength)
-            || !parse_double(fields[1], x)
-            || !parse_double(fields[2], y)
+        if (!parse_double(fields[0], wavelength) || !parse_double(fields[1], x) || !parse_double(fields[2], y)
             || !parse_double(fields[3], z)) {
             continue;
         }
@@ -117,9 +110,7 @@ CIEObserver::clear()
 bool
 CIEObserver::valid() const
 {
-    return xbar_.valid()
-        && ybar_.valid()
-        && zbar_.valid();
+    return xbar_.valid() && ybar_.valid() && zbar_.valid();
 }
 
 const std::string&

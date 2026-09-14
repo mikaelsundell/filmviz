@@ -5,9 +5,7 @@
 
 #include <array>
 
-class DisplayGamutCompressor
-{
+class DisplayGamutCompressor {
 public:
-    static std::array<float, 3> compress_rec709(
-        const std::array<float, 3>& linear_rgb);
+    static std::array<float, 3> compress_rec709(const std::array<float, 3>& linear_rgb);
 };

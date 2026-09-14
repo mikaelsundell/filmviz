@@ -9,24 +9,15 @@
 #include <cstddef>
 #include <vector>
 
-struct SampledCurve
-{
+struct SampledCurve {
     std::vector<float> x;
     std::vector<float> y;
 
-    bool empty() const
-    {
-        return x.empty() || y.empty();
-    }
+    bool empty() const { return x.empty() || y.empty(); }
 
-    bool valid() const
-    {
-        return !empty() && x.size() == y.size();
-    }
+    bool valid() const { return !empty() && x.size() == y.size(); }
 
-    float sample(
-        float position,
-        float outside_value = 0.0f) const
+    float sample(float position, float outside_value = 0.0f) const
     {
         if (!valid()) {
             return outside_value;
@@ -36,11 +27,7 @@ struct SampledCurve
             return outside_value;
         }
 
-        const auto upper =
-            std::lower_bound(
-                x.begin(),
-                x.end(),
-                position);
+        const auto upper = std::lower_bound(x.begin(), x.end(), position);
 
         if (upper == x.begin()) {
             return y.front();
@@ -50,9 +37,7 @@ struct SampledCurve
             return y.back();
         }
 
-        const std::size_t i1 =
-            static_cast<std::size_t>(
-                upper - x.begin());
+        const std::size_t i1 = static_cast<std::size_t>(upper - x.begin());
 
         const std::size_t i0 = i1 - 1;
 
@@ -65,51 +50,43 @@ struct SampledCurve
             return y0;
         }
 
-        const float t =
-            (position - x0)
-            / (x1 - x0);
+        const float t = (position - x0) / (x1 - x0);
 
         return y0 + t * (y1 - y0);
     }
 };
 
-struct FilmSpectralSensitivity
-{
+struct FilmSpectralSensitivity {
     SampledCurve blue_sensitive_log;
     SampledCurve green_sensitive_log;
     SampledCurve red_sensitive_log;
 };
 
-struct FilmCharacteristicCurves
-{
+struct FilmCharacteristicCurves {
     SampledCurve blue_density;
     SampledCurve green_density;
     SampledCurve red_density;
 };
 
-struct FilmExposure
-{
+struct FilmExposure {
     float red = 0.0f;
     float green = 0.0f;
     float blue = 0.0f;
 };
 
-struct FilmLogExposure
-{
+struct FilmLogExposure {
     float red = 0.0f;
     float green = 0.0f;
     float blue = 0.0f;
 };
 
-struct FilmDensity
-{
+struct FilmDensity {
     float red = 0.0f;
     float green = 0.0f;
     float blue = 0.0f;
 };
 
-struct FilmExposureBalance
-{
+struct FilmExposureBalance {
     float red_log_offset = 0.0f;
     float green_log_offset = 0.0f;
     float blue_log_offset = 0.0f;
