@@ -1,24 +1,50 @@
-# FilmViz
+# <img src="resources/logo/logo.png" alt="FilmViz spectral film layers" width="128" style="vertical-align: middle;"> FilmViz
 
-<img src="resources/ofx/icon.png" alt="FilmViz spectral film layers" width="480">
+FilmViz is an experimental spectral colour-negative and print-film
+simulator. It uses measured stock data to make the processing stages
+inspectable: spectral exposure, densitometric development, dye-density
+synthesis, print exposure and viewing, along with measured image-space grain,
+halation and MTF rendering.
 
-FilmViz is experimental software for learning about spectral colour-negative
-and print-film processing. It is a research and education project, not a
-production-certified film-stock or colour-management product. The simulator
-uses measured stock data to make each stage inspectable: spectral exposure,
-densitometric development, dye-density synthesis, print exposure, viewing,
-LUT generation and measured image-space grain/MTF rendering.
+## Project status
+
+FilmViz is a research, learning and educational project. It is not a
+production-certified film-stock emulation or colour-management product, and
+its output should be evaluated accordingly. Interfaces, profiles and results
+may change while the model is refined.
+
+The project is updated from time to time as new measurements, validation work
+and implementation improvements are completed. There is no fixed release
+schedule.
 
 FilmViz grew from a few late-night experiments into a useful working tool.
-Codex was used throughout as an AI development collaborator for implementation,
-investigation and documentation. The underlying model is based on established
+Codex has been used as an AI development collaborator for implementation,
+investigation and documentation. The model itself is based on established
 colour-science mathematics, published references and measured film data rather
-than AI-generated colour recipes. Careful testing, visual inspection, learning,
-hands-on training and iteration have all been part of the process, but the
-project remains experimental and its results should be evaluated accordingly.
+than AI-generated colour recipes.
 
-The current pipeline is derived from documented Status-M validation work and is
-split into reusable C++ classes, a command-line application and a Python GUI.
+## Main functionality
+
+- **C++ spectral core and command-line application** — processes individual
+  values and images, generates `.cube` LUTs, exposes film controls and supports
+  linear ACES2065-1 or direct Rec.709/Gamma 2.4 preview output.
+- **OpenFX plug-in for DaVinci Resolve** — provides interactive direct spectral
+  processing with live negative, print, printer-light, grain, halation and MTF
+  controls. It follows Resolve's GPU mode, using Metal on macOS and OpenCL when
+  available. CUDA is not currently supported.
+- **Python API** — a pybind11 module for profile discovery, LUT generation,
+  image processing, pixel probes, preview loading, thread control and direct
+  Metal preview rendering on macOS.
+- **Python desktop application** — a PySide6 interface for processing images
+  and LUTs, inspecting profiles, editing runtime curve data, comparing images,
+  probing pixels and viewing diagnostic scopes. Its optional realtime Metal
+  mode regenerates the preview as controls or profile curves change.
+- **Validation tools and regression tests** — CPU/Metal/OpenCL comparison
+  utilities, profile diagrams and deterministic tests for the measured model.
+
+The current pipeline is derived from documented Status-M validation work and
+is shared by reusable C++ classes, the command-line application, Python tools
+and the OpenFX plug-in.
 
 The default production profile is:
 
@@ -286,13 +312,35 @@ keeps the measured spectral D-min as the lower physical boundary.
 
 There is no empirical `1.5x` contrast multiplier in the production path.
 
-## Python application
+## OpenFX plug-in
 
-The PySide6 application uses the same C++ spectral pipeline as the command-line
-tool. In addition to image and LUT processing controls, it provides interactive
-display selection, direct/no-print processing, pixel probes and diagnostic
-scopes. It calls the `filmviz_python` pybind11 module directly without launching
-a subprocess. Build its target and use the generated environment-aware launcher:
+The OpenFX plug-in exposes the direct spectral FilmViz pipeline in DaVinci
+Resolve. Creative controls remain interactive because measured profile data is
+cached on the GPU while per-frame parameters are evaluated directly; the colour
+transform is not approximated with a preview LUT.
+
+FilmViz follows the GPU API supplied by Resolve. Metal is preferred on macOS,
+with OpenCL available where supported. OpenCL is currently the Windows backend;
+CUDA is not yet implemented. The plug-in does not silently fall back to CPU if
+the selected GPU API is unavailable.
+
+See [ofx/README.md](ofx/README.md) for backend details, controls, build,
+installation and standalone comparison tools.
+
+## Python API and application
+
+The `filmviz_python` pybind11 module exposes profile discovery, LUT generation,
+image processing, pixel probes, preview loading and process-wide thread control.
+On macOS it also exposes the direct Metal renderer used by the realtime preview.
+
+The PySide6 application uses this module directly without launching a
+subprocess. In addition to image and LUT processing controls, it provides
+interactive display selection, direct/no-print processing, editable runtime
+profile curves, pixel probes, image comparison and diagnostic scopes. Enable
+**Realtime Metal preview** to regenerate the current image as supported controls
+or runtime profile curves change.
+
+Build its target and use the generated environment-aware launcher:
 
 ```bash
 cmake --build build --config Debug --target python_filmviz_app
@@ -304,8 +352,37 @@ configuration directory, such as `build/Debug/python_filmviz_app.sh`.
 
 The launcher uses the Python executable, dependency prefix, module path and
 macOS Qt framework suffix selected during CMake configuration. The worker-count
-field controls the same global C++ thread setting as `filmviz --threads`. See
-[python/README.md](python/README.md) for complete build and launch details.
+field controls the same global C++ thread setting as `filmviz --threads`.
+
+## Copyright, third-party software and trademarks
+
+FilmViz source code is Copyright © 2025–present Mikael Sundell and is provided
+under the [BSD 3-Clause License](LICENSE.txt). Third-party software and reference
+material retain their own copyright and licensing terms:
+
+- The `rgb2spec` implementation under `mitsuba/` is based on *A
+  Low-Dimensional Function Space for Efficient Spectral Upsampling* by Wenzel
+  Jakob and Johannes Hanika. The included implementation is Copyright © 2020
+  Wenzel Jakob and is distributed under its accompanying
+  [BSD 3-Clause license](mitsuba/LICENSE.txt). See
+  [mitsuba/README.md](mitsuba/README.md) for attribution and the paper reference.
+- The OpenFX SDK is Copyright © 2025 OpenFX and contributors to the OpenFX
+  project. It is an Academy Software Foundation project distributed under the
+  [BSD 3-Clause License](external/openfx/LICENSE.md).
+- ARRI-created reference images and footage remain copyright of the ARRI Group
+  and/or their respective rights holders and are used here as technical colour
+  pipeline test material. Their inclusion does not grant additional
+  redistribution rights. See the official
+  [ARRI sample-footage information](https://www.arri.com/en/learn-help/learn-help-camera-system/camera-sample-footage-reference-image).
+
+ARRI, ALEXA, ARRIRAW, Log C and other ARRI product names and marks belong to the
+ARRI Group. Kodak and Kodak product names belong to their respective trademark
+owners. DaVinci Resolve is a trademark of Blackmagic Design. All other product
+names and trademarks are the property of their respective owners.
+
+FilmViz is an independent research project. It is not affiliated with,
+sponsored by or endorsed by ARRI, Kodak, Blackmagic Design, OpenFX, the Academy
+Software Foundation or the authors of `rgb2spec`.
 
 ## Source layout
 
@@ -324,7 +401,7 @@ field controls the same global C++ thread setting as `filmviz --threads`. See
 - `imageprocessor.*` — image I/O, LUT application, grain and spatial response
 - `threading.*` — process-wide worker configuration
 - `python/` — pybind11 module and PySide6 image/LUT application
-- `ofx/` — OpenFX front end, shared transform cache and Metal renderer
+- `ofx/` — OpenFX front end, shared transform cache and Metal/OpenCL renderers
 - `filmprocessor.*` — negative spectral exposure + characteristic development
 - `filmdyemodel.*` — negative spectral-density synthesis
 - `printfilmprocessor.*` — print exposure/development

@@ -47,7 +47,7 @@ namespace
 {
 
 constexpr const char* kPluginIdentifier = "com.github.mikaelsundell.filmviz";
-constexpr const char* kPluginLabel = "FilmViz";
+constexpr const char* kPluginLabel = "FilmViz " FILMVIZ_VERSION_STRING;
 constexpr const char* kPluginGrouping = "FilmViz";
 
 constexpr const char* kParamInputProfile = "inputProfile";
@@ -1595,8 +1595,8 @@ OfxPlugin gPlugin = {
     kOfxImageEffectPluginApi,
     1,
     kPluginIdentifier,
-    1,
-    1,
+    FILMVIZ_OFX_VERSION_MAJOR,
+    FILMVIZ_OFX_VERSION_MINOR,
     set_host,
     plugin_main
 };
