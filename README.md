@@ -1,4 +1,6 @@
-# <img src="resources/logo/logo.png" alt="FilmViz spectral film layers" width="128" style="vertical-align: middle;"> FilmViz
+<img src="resources/logo/logo.png" alt="FilmViz spectral film layers" width="128">
+
+# FilmViz
 
 FilmViz is an experimental spectral colour-negative and print-film
 simulator. It uses measured stock data to make the processing stages
