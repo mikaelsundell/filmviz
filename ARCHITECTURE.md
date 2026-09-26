@@ -25,9 +25,10 @@ measurement-validation diagnostics demonstrated that domains 2 and 3 are not num
 
 ### `InputTransform`
 
-Converts supported encoded camera RGB into linear ACES2065-1/AP0. The current
-production input is AWG3/LogC3 EI800. It also accepts AP0 directly for tests and
-future workflows.
+Uses OpenColorIO 2.5 and the bundled ACES Studio config to convert input colour
+spaces into linear ACES2065-1/AP0. CLI, Python and OFX share its colour-space
+catalog; ARRI LogC3 EI800 remains the default. Metal and OpenCL stage the input
+through the same OCIO CPU processor before their spectral kernels.
 
 ### `SpectralReconstructor`
 

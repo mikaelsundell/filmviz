@@ -1,35 +1,29 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell.
-
 #pragma once
 
 #include <array>
+#include <cstddef>
+#include <memory>
 #include <string>
+#include <vector>
 
-// Camera/input encoding transforms used before the spectral pipeline.
-//
-// Production FilmViz currently supports the validated production reference input:
-// ARRI Wide Gamut 3 / LogC3 EI800. The output of this class is always
-// linear ACES2065-1 (AP0, D60), which is the scene RGB domain used by the
-// spectral reconstructor.
+// OCIO input colour spaces -> scene-linear ACES2065-1 (AP0/D60).
 class InputTransform {
 public:
-    enum class Encoding { AWG3_LogC3_EI800, ACES2065_1_Linear };
-
-    explicit InputTransform(Encoding encoding = Encoding::AWG3_LogC3_EI800);
-
-    std::array<float, 3> to_ap0(const std::array<float, 3>& encoded_rgb) const;
-
+    // The first two catalog indices retain compatibility with existing callers.
+    enum class Encoding : int { AWG3_LogC3_EI800 = 0, ACES2065_1_Linear = 1 };
+    explicit InputTransform(Encoding encoding = Encoding::AWG3_LogC3_EI800,
+                            const std::string& resources = "");
+    std::array<float, 3> to_ap0(const std::array<float, 3>& rgb) const;
+    void apply_rgba(float* pixels, int width, int height, std::ptrdiff_t row_bytes) const;
     Encoding encoding() const;
-
-    static bool parse_encoding(const std::string& name, Encoding& encoding);
-
+    static const std::vector<std::string>& profiles(const std::string& resources = "");
+    static bool parse_encoding(const std::string& name, Encoding& encoding,
+                               const std::string& resources = "");
     static const char* name(Encoding encoding);
-
 private:
-    static std::array<float, 3> arri_logc3_ei800_to_linear(const std::array<float, 3>& value);
-
-    static std::array<float, 3> awg3_linear_to_ap0(const std::array<float, 3>& awg3);
-
+    struct Impl;
+    std::shared_ptr<const Impl> impl_;
     Encoding encoding_;
 };

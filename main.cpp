@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell.
 
+#include "colorprofilecatalog.h"
+#include <stdexcept>
 #include "filmcolorresponse.h"
 #include "filmformat.h"
 #include "filmpipeline.h"
@@ -68,6 +70,10 @@ struct FilmVizTool {
     std::string resources;
     std::string input = "awg3-logc3-ei800";
     std::string output = "ap0-linear";
+    std::string input_color_space;
+    std::string input_transfer_function;
+    std::string output_color_space;
+    std::string output_transfer_function;
     std::string film_format = FilmFormatCatalog::default_format().identifier;
     std::string negative = NegativeProfileCatalog::default_profile().identifier;
     std::string print = PrintProfileCatalog::default_profile().identifier;
@@ -137,10 +143,12 @@ void
 print_profiles()
 {
     std::cout << "FilmViz production profiles:\n"
-              << "  input:\n"
-              << "    awg3-logc3-ei800   ARRI Wide Gamut 3 / LogC3 EI800\n"
-              << "    ap0-linear         ACES2065-1 AP0 linear\n"
-              << "  negative:\n";
+              << "  input:\n";
+    for (const auto& entry : ColorProfileCatalog::profiles(false, tool.resources)) {
+        std::cout << "    " << entry.color_space << " / " << entry.transfer_function
+                  << "  [" << entry.profile << "]\n";
+    }
+    std::cout << "  negative:\n";
 
     for (const auto& profile : NegativeProfileCatalog::profiles()) {
         std::cout << "    " << std::left << std::setw(20) << profile.identifier << profile.display_name << "\n";
@@ -161,15 +169,17 @@ print_profiles()
                   << format.image_width_mm << " mm)\n";
     }
 
-    std::cout << "  output:\n"
-              << "    ap0-linear         viewed print as ACES2065-1 AP0 linear\n"
-              << "    rec709-gamma24     direct Rec.709/Gamma 2.4 preview (no ACES RRT)\n";
+    std::cout << "  output:\n";
+    for (const auto& entry : ColorProfileCatalog::profiles(true, tool.resources)) {
+        std::cout << "    " << entry.color_space << " / " << entry.transfer_function
+                  << "  [" << entry.profile << "]\n";
+    }
 }
 
 bool
 validate_profile_options(ArgParse& ap, InputTransform::Encoding& encoding)
 {
-    if (!InputTransform::parse_encoding(tool.input, encoding)) {
+    if (!InputTransform::parse_encoding(tool.input, encoding, tool.resources)) {
         print_error("unknown input profile: ", tool.input);
 
         ap.briefusage();
@@ -188,7 +198,8 @@ validate_profile_options(ArgParse& ap, InputTransform::Encoding& encoding)
         return false;
     }
 
-    if (tool.output != "ap0-linear" && tool.output != "rec709-gamma24") {
+    OutputTransform::Encoding output_encoding;
+    if (!OutputTransform::parse_encoding(tool.output, output_encoding, tool.resources)) {
         print_error("unknown output profile: ", tool.output);
 
         return false;
@@ -301,7 +312,7 @@ validate_profile_options(ArgParse& ap, InputTransform::Encoding& encoding)
 
 int
 main(int argc, const char* argv[])
-{
+try {
     Sysutil::setup_crash_stacktrace("stdout");
     Filesystem::convert_native_arguments(argc, (const char**)argv);
 
@@ -332,13 +343,18 @@ main(int argc, const char* argv[])
 
     ap.separator("Pipeline flags:");
 
-    ap.arg("--input %s:PROFILE", &tool.input).help("Input profile: awg3-logc3-ei800 (default), ap0-linear");
+    ap.arg("--input-color-space %s:SPACE", &tool.input_color_space).help("Input Color Space; use with --input-transfer-function");
+    ap.arg("--input-transfer-function %s:CURVE", &tool.input_transfer_function).help("Input Transfer Function; see --profiles");
+    ap.arg("--output-color-space %s:SPACE", &tool.output_color_space).help("Output Color Space; use with --output-transfer-function");
+    ap.arg("--output-transfer-function %s:CURVE", &tool.output_transfer_function).help("Output Transfer Function; see --profiles");
+
+    ap.arg("--input %s:PROFILE", &tool.input).help("OCIO input colour space (see --profiles); default: ARRI LogC3 (EI800)");
 
     ap.arg("--negative %s:PROFILE", &tool.negative).help("Negative profile identifier; use --profiles to list choices");
 
     ap.arg("--print %s:PROFILE", &tool.print).help("Print profile identifier; use --profiles to list choices");
 
-    ap.arg("--output %s:PROFILE", &tool.output).help("Output: ap0-linear (default), rec709-gamma24");
+    ap.arg("--output %s:PROFILE", &tool.output).help("Output colour space (see --profiles); default: ap0-linear");
 
     ap.arg("--middlegray %f:VALUE", &tool.middle_gray).help("Scene middle-gray reference (default: 0.18)");
 
@@ -453,6 +469,16 @@ main(int argc, const char* argv[])
         return EXIT_SUCCESS;
     }
 
+    const auto resolve_pair = [&](bool output, const std::string& space, const std::string& transfer,
+                                  std::string& profile) {
+        if (space.empty() && transfer.empty()) return;
+        if (space.empty() || transfer.empty())
+            throw std::invalid_argument("Specify both color space and transfer function");
+        profile = ColorProfileCatalog::resolve(output, space, transfer, tool.resources);
+    };
+    resolve_pair(false, tool.input_color_space, tool.input_transfer_function, tool.input);
+    resolve_pair(true, tool.output_color_space, tool.output_transfer_function, tool.output);
+
     InputTransform::Encoding input_encoding;
 
     if (!validate_profile_options(ap, input_encoding)) {
@@ -531,7 +557,10 @@ main(int argc, const char* argv[])
         return EXIT_FAILURE;
     }
 
-    InputTransform input_transform(input_encoding);
+    InputTransform input_transform(input_encoding, tool.resources);
+    OutputTransform::Encoding output_encoding;
+    OutputTransform::parse_encoding(tool.output, output_encoding, tool.resources);
+    const OutputTransform output_transform(output_encoding, tool.resources);
 
     if (!tool.input_image.empty()) {
         print_info("input image: ", tool.input_image);
@@ -549,8 +578,7 @@ main(int argc, const char* argv[])
 
         ImageProcessor::Settings image_settings;
         image_settings.lut_size = tool.lut_size;
-        image_settings.output = tool.output == "rec709-gamma24" ? ImageProcessor::Output::Rec709Gamma24
-                                                                : ImageProcessor::Output::AP0Linear;
+        image_settings.output = output_encoding;
         image_settings.negative_grain_strength = tool.negative_grain;
         image_settings.print_grain_strength = tool.print_grain;
         image_settings.grain_size_pixels = tool.grain_size;
@@ -640,7 +668,7 @@ main(int argc, const char* argv[])
             return false;
         }
 
-        output = tool.output == "rec709-gamma24" ? result.rec709_gamma24 : result.ap0;
+        output = output_transform.from_ap0(result.ap0);
 
         return true;
     };
@@ -711,4 +739,9 @@ main(int argc, const char* argv[])
     print_info("writing output cube: ", tool.output_cube);
 
     return EXIT_SUCCESS;
+}
+
+catch (const std::exception& exception) {
+    print_error("FilmViz: ", exception.what());
+    return EXIT_FAILURE;
 }

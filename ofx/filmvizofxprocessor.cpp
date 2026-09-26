@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell.
 
+#include "outputtransform.h"
 #include "filmvizofxprocessor.h"
 
 #include "filmvizofxcache.h"
@@ -256,10 +257,7 @@ InputTransform::Encoding
 input_encoding(
     int input_profile)
 {
-    return
-        input_profile == 0
-            ? InputTransform::Encoding::AWG3_LogC3_EI800
-            : InputTransform::Encoding::ACES2065_1_Linear;
+    return static_cast<InputTransform::Encoding>(input_profile);
 }
 
 FilmVizOfxTransformKey
@@ -389,6 +387,7 @@ struct FilmVizOfxProcessor::Cache
     std::string resources_directory;
     std::shared_ptr<FilmPipeline> pipeline;
     std::unique_ptr<InputTransform> input_transform;
+    std::unique_ptr<OutputTransform> output_transform;
     std::unique_ptr<SpatialResponseModel> spatial_response;
     // Two-stage cached transform:
     // encoded input -> raw negative exposure -> developed/viewed output.
@@ -623,7 +622,14 @@ FilmVizOfxProcessor::configure(
         next->resources_directory = resources_directory;
         next->input_transform =
             std::make_unique<InputTransform>(
-                input_encoding(settings.input_profile));
+                input_encoding(settings.input_profile), resources_directory);
+        try {
+            next->output_transform = std::make_unique<OutputTransform>(
+                static_cast<OutputTransform::Encoding>(settings.output_profile), resources_directory);
+        } catch (const std::exception& exception) {
+            error = exception.what();
+            return false;
+        }
 
         const auto* negative_profile =
             NegativeProfileCatalog::find(settings.negative_profile);
@@ -1713,6 +1719,16 @@ FilmVizOfxProcessor::render(
                 pixel[1] = rgb[index + 1u];
                 pixel[2] = rgb[index + 2u];
             }
+        }
+    }
+
+    if (settings.output_profile > 1) {
+        try {
+            cache->output_transform->apply(destination_pixel(destination, render_x1, render_y1),
+                render_x2 - render_x1, render_y2 - render_y1, 4, destination.row_bytes);
+        } catch (const std::exception& exception) {
+            error = exception.what();
+            return false;
         }
     }
 

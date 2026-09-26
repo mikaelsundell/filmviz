@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell.
 
+#include "colorprofilecatalog.h"
 #include "filmpipeline.h"
 #include "filmformat.h"
 #include "imageprocessor.h"
@@ -35,11 +36,12 @@ namespace
 
 InputTransform::Encoding
 input_encoding(
-    const std::string& name)
+    const std::string& name,
+    const std::string& resources = "")
 {
     InputTransform::Encoding encoding;
 
-    if (!InputTransform::parse_encoding(name, encoding)) {
+    if (!InputTransform::parse_encoding(name, encoding, resources)) {
         throw std::invalid_argument(
             "unknown input profile: " + name);
     }
@@ -48,19 +50,12 @@ input_encoding(
 }
 
 ImageProcessor::Output
-image_output(
-    const std::string& name)
+image_output(const std::string& name, const std::string& resources)
 {
-    if (name == "ap0-linear") {
-        return ImageProcessor::Output::AP0Linear;
-    }
-
-    if (name == "rec709-gamma24") {
-        return ImageProcessor::Output::Rec709Gamma24;
-    }
-
-    throw std::invalid_argument(
-        "unknown output profile: " + name);
+    OutputTransform::Encoding encoding;
+    if (!OutputTransform::parse_encoding(name, encoding, resources))
+        throw std::invalid_argument("unknown output profile: " + name);
+    return encoding;
 }
 
 void
@@ -197,8 +192,8 @@ generate_lut(
     }
 
     const InputTransform::Encoding encoding =
-        input_encoding(input);
-    image_output(output);
+        input_encoding(input, resources);
+    image_output(output, resources);
     FilmVizThreading::set_thread_count(threads);
 
     FilmPipeline pipeline;
@@ -228,7 +223,8 @@ generate_lut(
             + pipeline.error());
     }
 
-    const InputTransform transform(encoding);
+    const InputTransform transform(encoding, resources);
+    const OutputTransform output_transform(image_output(output, resources), resources);
     Lut3D lut;
     const bool has_progress = !progress.is_none();
     const bool has_cancel = !cancel.is_none();
@@ -257,9 +253,7 @@ generate_lut(
                     }
 
                     converted =
-                        output == "rec709-gamma24"
-                            ? result.rec709_gamma24
-                            : result.ap0;
+                        output_transform.from_ap0(result.ap0);
                     return true;
                 },
                 [&](int completed,
@@ -373,8 +367,8 @@ process_image(
     const py::object& cancel)
 {
     validate_stock_profiles(negative, print);
-    const InputTransform::Encoding encoding = input_encoding(input);
-    const ImageProcessor::Output output_encoding = image_output(output);
+    const InputTransform::Encoding encoding = input_encoding(input, resources);
+    const ImageProcessor::Output output_encoding = image_output(output, resources);
     FilmVizThreading::set_thread_count(threads);
 
     FilmPipeline pipeline;
@@ -421,7 +415,7 @@ process_image(
     settings.halation_radius_pixels = halation_radius;
     settings.halation_threshold = halation_threshold;
 
-    const InputTransform transform(encoding);
+    const InputTransform transform(encoding, resources);
     ImageProcessor processor;
     const bool has_progress = !progress.is_none();
     const bool has_cancel = !cancel.is_none();
@@ -687,7 +681,7 @@ probe_image_pixel(
 
     const InputTransform transform(
         input_encoding(
-            input));
+            input, resources), resources);
 
     const std::array<float, 3> ap0 =
         transform.to_ap0(
@@ -869,7 +863,8 @@ dictionary_value(
 
 FilmVizOfxRenderSettings
 metal_preview_settings(
-    const py::dict& values)
+    const py::dict& values,
+    const std::string& resources)
 {
     FilmVizOfxRenderSettings settings;
     const std::string input =
@@ -883,12 +878,12 @@ metal_preview_settings(
             "output",
             "rec709-gamma24");
 
-    const InputTransform::Encoding encoding = input_encoding(input);
-    image_output(output);
+    const InputTransform::Encoding encoding = input_encoding(input, resources);
+    image_output(output, resources);
 
     settings.input_profile =
-        encoding == InputTransform::Encoding::ACES2065_1_Linear ? 1 : 0;
-    settings.output_profile = output == "ap0-linear" ? 0 : 1;
+        static_cast<int>(encoding);
+    settings.output_profile = static_cast<int>(image_output(output, resources));
     settings.negative_profile =
         dictionary_value<std::string>(
             values,
@@ -1009,7 +1004,7 @@ PYBIND11_MODULE(filmviz_python, module)
                 double time) {
 
                 const FilmVizOfxRenderSettings settings =
-                    metal_preview_settings(values);
+                    metal_preview_settings(values, resources);
                 FilmVizMetalPreviewResult result;
                 std::string error;
                 bool rendered = false;
@@ -1053,13 +1048,25 @@ PYBIND11_MODULE(filmviz_python, module)
     module.attr("metal_preview_available") = false;
 #endif
 
+    module.def("resolve_color_profile", &ColorProfileCatalog::resolve,
+        py::arg("output"), py::arg("color_space"), py::arg("transfer_function"), py::arg("resources") = "");
+
     module.def(
         "profiles",
-        []() {
+        [](const std::string& resources) {
             py::dict result;
-            result["input"] = py::make_tuple(
-                "awg3-logc3-ei800",
-                "ap0-linear");
+            result["input"] = py::cast(InputTransform::profiles(resources));
+            for (bool output : {false, true}) {
+                py::list details;
+                for (const auto& entry : ColorProfileCatalog::profiles(output, resources)) {
+                    py::dict detail;
+                    detail["color_space"] = entry.color_space;
+                    detail["transfer_function"] = entry.transfer_function;
+                    detail["profile"] = entry.profile;
+                    details.append(detail);
+                }
+                result[output ? "output_details" : "input_details"] = details;
+            }
             py::list negative_identifiers;
             py::list negative_details;
 
@@ -1112,11 +1119,9 @@ PYBIND11_MODULE(filmviz_python, module)
             }
 
             result["film_formats"] = film_formats;
-            result["output"] = py::make_tuple(
-                "ap0-linear",
-                "rec709-gamma24");
+            result["output"] = py::cast(OutputTransform::profiles(resources));
             return result;
-        });
+        }, py::arg("resources") = "");
 
     module.def(
         "generate_lut",

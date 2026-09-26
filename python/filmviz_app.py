@@ -277,6 +277,69 @@ def _scope_rgb_at(width: int, height: int, rgb, u: float, v: float):
     )
 
 
+class ColorProfileSelector(QObject):
+    """Two linked controls retaining the canonical profile as their value."""
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, entries, parent=None):
+        super().__init__(parent)
+        self.color_space = QComboBox()
+        self.transfer_function = QComboBox()
+        self._entries = []
+        self.color_space.currentIndexChanged.connect(self._space_changed)
+        self.transfer_function.currentIndexChanged.connect(self._transfer_changed)
+        self.setProfiles(entries)
+
+    def currentText(self):
+        return self.transfer_function.currentData() or ""
+
+    def setProfiles(self, entries):
+        selected = self.currentText()
+        self._entries = [dict(entry) for entry in entries]
+        blocked = self.blockSignals(True)
+        self.color_space.blockSignals(True)
+        self.color_space.clear()
+        self.color_space.addItems(list(dict.fromkeys(e["color_space"] for e in self._entries)))
+        self.color_space.blockSignals(False)
+        self._space_changed()
+        self.setCurrentText(selected)
+        self.blockSignals(blocked)
+        self._transfer_changed()
+
+    def _space_changed(self, *_):
+        previous = self.transfer_function.currentText()
+        self.transfer_function.blockSignals(True)
+        self.transfer_function.clear()
+        for entry in self._entries:
+            if entry["color_space"] == self.color_space.currentText():
+                self.transfer_function.addItem(entry["transfer_function"], entry["profile"])
+        index = self.transfer_function.findText(previous)
+        self.transfer_function.setCurrentIndex(max(0, index))
+        self.transfer_function.blockSignals(False)
+        self._transfer_changed()
+
+    def _transfer_changed(self, *_):
+        self.currentIndexChanged.emit(next(
+            (i for i, e in enumerate(self._entries) if e["profile"] == self.currentText()), -1))
+
+    def setCurrentIndex(self, index):
+        if 0 <= index < len(self._entries):
+            self.setCurrentText(self._entries[index]["profile"])
+
+    def setCurrentText(self, profile):
+        entry = next((e for e in self._entries if e["profile"] == profile), None)
+        if entry is None:
+            return
+        blocked = self.blockSignals(True)
+        self.color_space.blockSignals(True)
+        self.color_space.setCurrentText(entry["color_space"])
+        self.color_space.blockSignals(False)
+        self._space_changed()
+        self.transfer_function.setCurrentIndex(self.transfer_function.findData(profile))
+        self.blockSignals(blocked)
+        self._transfer_changed()
+
+
 class OperationWorker(QObject):
     progress = Signal(str, int, int)
     finished = Signal(str)
@@ -3450,7 +3513,7 @@ class FilmVizWindow(QMainWindow):
         workspace.setStretchFactor(1, 1)
         workspace.setSizes([1180, 420])
 
-        profiles = filmviz.profiles()
+        profiles = filmviz.profiles(str(PROJECT_ROOT / "resources"))
         self.negative_profiles = [
             dict(profile)
             for profile in profiles["negative_details"]
@@ -3504,9 +3567,10 @@ class FilmVizWindow(QMainWindow):
             minimum_width=0)
         common_form.addRow("Resource directory", self.resources)
 
-        self.input_profile = QComboBox()
-        self.input_profile.addItems(profiles["input"])
-        common_form.addRow("Input profile", self.input_profile)
+        self.input_profile = ColorProfileSelector(profiles["input_details"], self)
+        self.input_profile.setCurrentText("ARRI LogC3 (EI800)")
+        common_form.addRow("Input Color Space", self.input_profile.color_space)
+        common_form.addRow("Input Transfer Function", self.input_profile.transfer_function)
 
         self.negative_profile = QComboBox()
         for profile in self.negative_profiles:
@@ -3523,10 +3587,10 @@ class FilmVizWindow(QMainWindow):
         self.print_profile.addItem("None — view negative", "none")
         common_form.addRow("Print", self.print_profile)
 
-        self.output_profile = QComboBox()
-        self.output_profile.addItems(profiles["output"])
+        self.output_profile = ColorProfileSelector(profiles["output_details"], self)
         self.output_profile.setCurrentText("rec709-gamma24")
-        common_form.addRow("Output profile", self.output_profile)
+        common_form.addRow("Output Color Space", self.output_profile.color_space)
+        common_form.addRow("Output Transfer Function", self.output_profile.transfer_function)
 
         self.realtime_metal = QCheckBox()
         metal_available = bool(
@@ -4217,7 +4281,7 @@ class FilmVizWindow(QMainWindow):
 
     @Slot()
     def _reset_pipeline(self):
-        self.input_profile.setCurrentIndex(0)
+        self.input_profile.setCurrentText("ARRI LogC3 (EI800)")
         if self.negative_profile.count() > 0:
             self.negative_profile.setCurrentIndex(0)
 
@@ -4979,6 +5043,13 @@ class FilmVizWindow(QMainWindow):
 
     @Slot()
     def _resources_changed(self):
+        try:
+            profiles = filmviz.profiles(str(Path(self.resources.value()).expanduser()))
+        except Exception as error:
+            QMessageBox.warning(self, "OCIO configuration", str(error))
+            return
+        self.input_profile.setProfiles(profiles["input_details"])
+        self.output_profile.setProfiles(profiles["output_details"])
         source = str(Path(self.resources.value()).expanduser().resolve())
         if (
             self._runtime_resources is not None

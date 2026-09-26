@@ -4,6 +4,12 @@
 // FilmViz OpenFX front end with Metal and OpenCL render backends.
 
 
+#include "colorprofilecatalog.h"
+#include "outputtransform.h"
+#include "inputtransform.h"
+#include <exception>
+#include <stdexcept>
+
 #include "ofxCore.h"
 #include "filmvizofxprocessor.h"
 #include "filmvizofxlog.h"
@@ -51,6 +57,10 @@ constexpr const char* kPluginLabel = "FilmViz " FILMVIZ_VERSION_STRING;
 constexpr const char* kPluginGrouping = "FilmViz";
 
 constexpr const char* kParamInputProfile = "inputProfile";
+constexpr const char* kParamInputSpace = "inputColorSpace";
+constexpr const char* kParamInputTransfer = "inputTransferFunction";
+constexpr const char* kParamOutputSpace = "outputColorSpace";
+constexpr const char* kParamOutputTransfer = "outputTransferFunction";
 constexpr const char* kParamNegativeProfile = "negativeProfile";
 constexpr const char* kParamPrintProfile = "printProfile";
 constexpr const char* kParamOutputProfile = "outputProfile";
@@ -136,6 +146,13 @@ struct InstanceData
     OfxImageClipHandle output_clip = nullptr;
 
     OfxParamHandle input = nullptr;
+    OfxParamHandle input_space = nullptr;
+    OfxParamHandle input_transfer = nullptr;
+    OfxParamHandle output_space = nullptr;
+    OfxParamHandle output_transfer = nullptr;
+    std::vector<ColorProfileCatalog::Entry> input_entries;
+    std::vector<ColorProfileCatalog::Entry> output_entries;
+    bool syncing_color_controls = false;
     OfxParamHandle negative = nullptr;
     OfxParamHandle print = nullptr;
     OfxParamHandle output = nullptr;
@@ -273,6 +290,86 @@ fetch_param(
             &handle,
             nullptr) == kOfxStatOK
         && handle;
+}
+
+// The persistent profile remains authoritative for rendering and old projects.
+// The two visible selectors are derived, non-animating UI controls.
+void
+sync_color_controls(InstanceData& instance, bool output)
+{
+    const auto& entries = output ? instance.output_entries : instance.input_entries;
+    const auto spaces = ColorProfileCatalog::color_spaces(entries);
+    const auto profile = output ? instance.output : instance.input;
+    const auto space = output ? instance.output_space : instance.input_space;
+    const auto transfer = output ? instance.output_transfer : instance.input_transfer;
+    int index = output ? 1 : 0;
+    gParameterSuite->paramGetValue(profile, &index);
+    const auto* entry = ColorProfileCatalog::find(entries, index);
+    if (!entry) throw std::runtime_error("Unknown saved OCIO profile index");
+    OfxPropertySetHandle properties = nullptr;
+    gParameterSuite->paramGetPropertySet(transfer, &properties);
+    gPropertySuite->propReset(properties, kOfxParamPropChoiceOption);
+    int transfer_index = 0, selected_transfer = 0;
+    int selected_space = 0;
+    for (std::size_t i = 0; i < spaces.size(); ++i)
+        if (spaces[i] == entry->color_space) selected_space = static_cast<int>(i);
+    for (const auto& choice : entries) {
+        if (choice.color_space != entry->color_space) continue;
+        gPropertySuite->propSetString(properties, kOfxParamPropChoiceOption,
+            transfer_index, choice.transfer_function.c_str());
+        if (choice.transfer_function == entry->transfer_function) selected_transfer = transfer_index;
+        ++transfer_index;
+    }
+    gParameterSuite->paramSetValue(space, selected_space);
+    gParameterSuite->paramSetValue(transfer, selected_transfer);
+}
+
+OfxStatus
+color_controls_changed(OfxImageEffectHandle effect, OfxPropertySetHandle in_args)
+{
+    auto* instance = instance_data(effect);
+    if (!instance || instance->syncing_color_controls) return kOfxStatReplyDefault;
+    char* name = nullptr;
+    if (gPropertySuite->propGetString(in_args, kOfxPropName, 0, &name) != kOfxStatOK || !name)
+        return kOfxStatReplyDefault;
+    const bool output = std::strcmp(name, kParamOutputSpace) == 0
+        || std::strcmp(name, kParamOutputTransfer) == 0 || std::strcmp(name, kParamOutputProfile) == 0;
+    if (!output && std::strcmp(name, kParamInputSpace) != 0
+        && std::strcmp(name, kParamInputTransfer) != 0 && std::strcmp(name, kParamInputProfile) != 0)
+        return kOfxStatReplyDefault;
+    struct Guard {
+        bool& flag;
+        explicit Guard(bool& value) : flag(value) { flag = true; }
+        ~Guard() { flag = false; }
+    } guard(instance->syncing_color_controls);
+    const auto& entries = output ? instance->output_entries : instance->input_entries;
+    const auto profile = output ? instance->output : instance->input;
+    if (std::strcmp(name, output ? kParamOutputProfile : kParamInputProfile) != 0) {
+        const auto spaces = ColorProfileCatalog::color_spaces(entries);
+        int space_index = 0, transfer_index = 0, old_profile = 0;
+        gParameterSuite->paramGetValue(output ? instance->output_space : instance->input_space, &space_index);
+        gParameterSuite->paramGetValue(output ? instance->output_transfer : instance->input_transfer, &transfer_index);
+        gParameterSuite->paramGetValue(profile, &old_profile);
+        const auto* previous = ColorProfileCatalog::find(entries, old_profile);
+        const auto& selected_space = spaces.at(static_cast<std::size_t>(space_index));
+        const bool space_changed = std::strcmp(name, output ? kParamOutputSpace : kParamInputSpace) == 0;
+        const ColorProfileCatalog::Entry* selected = nullptr;
+        int index = 0;
+        for (const auto& entry : entries) {
+            if (entry.color_space != selected_space) continue;
+            if (!selected) selected = &entry;
+            if ((space_changed && previous && entry.transfer_function == previous->transfer_function)
+                || (!space_changed && index == transfer_index)) {
+                selected = &entry;
+                break;
+            }
+            ++index;
+        }
+        if (!selected) return kOfxStatFailed;
+        gParameterSuite->paramSetValue(profile, selected->profile_index);
+    }
+    sync_color_controls(*instance, output);
+    return kOfxStatOK;
 }
 
 bool
@@ -462,6 +559,10 @@ create_instance(
 
     const bool ok =
         fetch_param(parameter_set, kParamInputProfile, instance->input)
+        && fetch_param(parameter_set, kParamInputSpace, instance->input_space)
+        && fetch_param(parameter_set, kParamInputTransfer, instance->input_transfer)
+        && fetch_param(parameter_set, kParamOutputSpace, instance->output_space)
+        && fetch_param(parameter_set, kParamOutputTransfer, instance->output_transfer)
         && fetch_param(parameter_set, kParamNegativeProfile, instance->negative)
         && fetch_param(parameter_set, kParamPrintProfile, instance->print)
         && fetch_param(parameter_set, kParamOutputProfile, instance->output)
@@ -507,6 +608,13 @@ create_instance(
 
         return kOfxStatFailed;
     }
+
+    instance->input_entries = ColorProfileCatalog::profiles(false, instance->resources_directory);
+    instance->output_entries = ColorProfileCatalog::profiles(true, instance->resources_directory);
+    instance->syncing_color_controls = true;
+    sync_color_controls(*instance, false);
+    sync_color_controls(*instance, true);
+    instance->syncing_color_controls = false;
 
     InstanceData* instance_pointer =
         instance.get();
@@ -890,7 +998,44 @@ define_choice_parameter(
             options[i]);
     }
 
+    if (std::strcmp(name, kParamInputProfile) == 0 || std::strcmp(name, kParamOutputProfile) == 0) {
+        gPropertySuite->propSetInt(properties, kOfxParamPropSecret, 0, 1);
+    } else if (std::strcmp(name, kParamInputSpace) == 0 || std::strcmp(name, kParamInputTransfer) == 0
+        || std::strcmp(name, kParamOutputSpace) == 0 || std::strcmp(name, kParamOutputTransfer) == 0) {
+        gPropertySuite->propSetInt(properties, kOfxParamPropAnimates, 0, 0);
+        gPropertySuite->propSetInt(properties, kOfxParamPropPersistant, 0, 0);
+        gPropertySuite->propSetInt(properties, kOfxParamPropEvaluateOnChange, 0, 0);
+        gPropertySuite->propSetInt(properties, kOfxParamPropCanUndo, 0, 0);
+    }
+
     return set_parameter_parent(properties, parent);
+}
+
+bool
+define_color_selectors(OfxParamSetHandle parameters, bool output)
+{
+    const auto entries = ColorProfileCatalog::profiles(output, bundle_resources_directory());
+    const auto spaces = ColorProfileCatalog::color_spaces(entries);
+    const auto* initial = ColorProfileCatalog::find(entries, output ? 1 : 0);
+    if (!initial) return false;
+    std::vector<const char*> options, transfers;
+    int default_space = 0, default_transfer = 0;
+    for (std::size_t i = 0; i < spaces.size(); ++i) {
+        options.push_back(spaces[i].c_str());
+        if (spaces[i] == initial->color_space) default_space = static_cast<int>(i);
+    }
+    for (const auto& entry : entries) {
+        if (entry.color_space != initial->color_space) continue;
+        if (entry.transfer_function == initial->transfer_function) default_transfer = static_cast<int>(transfers.size());
+        transfers.push_back(entry.transfer_function.c_str());
+    }
+    const char* space_name = output ? kParamOutputSpace : kParamInputSpace;
+    const char* transfer_name = output ? kParamOutputTransfer : kParamInputTransfer;
+    if (!define_choice_parameter(parameters, space_name, output ? "Output Color Space" : "Input Color Space",
+            options.data(), static_cast<int>(options.size()), default_space, kGroupSetup)
+        || !define_choice_parameter(parameters, transfer_name, output ? "Output Transfer Function" : "Input Transfer Function",
+            transfers.data(), static_cast<int>(transfers.size()), default_transfer, kGroupSetup)) return false;
+    return true;
 }
 
 bool
@@ -1024,10 +1169,9 @@ describe_in_context(
         return kOfxStatFailed;
     }
 
-    static const char* input_profiles[] = {
-        "ARRI Wide Gamut 3 / LogC3 EI800",
-        "ACES2065-1 / AP0"
-    };
+    const auto& inputs = InputTransform::profiles(bundle_resources_directory());
+    std::vector<const char*> input_profiles;
+    for (const auto& input : inputs) input_profiles.push_back(input.c_str());
 
     const auto& supported_negatives =
         NegativeProfileCatalog::profiles();
@@ -1066,10 +1210,9 @@ describe_in_context(
         }
     }
 
-    static const char* output_profiles[] = {
-        "ACES2065-1 / AP0",
-        "Rec.709 / Gamma 2.4"
-    };
+    const auto& outputs = OutputTransform::profiles(bundle_resources_directory());
+    std::vector<const char*> output_profiles;
+    for (const auto& output : outputs) output_profiles.push_back(output.c_str());
 
     if (!define_group_parameter(parameter_set, kGroupSetup, "Setup", true)
         || !define_group_parameter(parameter_set, kGroupNegative, "Negative", true)
@@ -1078,7 +1221,8 @@ describe_in_context(
         || !define_group_parameter(parameter_set, kGroupGrain, "Grain", false)
         || !define_group_parameter(parameter_set, kGroupHalation, "Halation", false)
         || !define_group_parameter(parameter_set, kGroupAdvanced, "Advanced", false)
-        || !define_choice_parameter(parameter_set, kParamInputProfile, "Input", input_profiles, 2, 0, kGroupSetup)
+        || !define_choice_parameter(parameter_set, kParamInputProfile, "Input profile", input_profiles.data(), static_cast<int>(input_profiles.size()), 0, kGroupSetup)
+        || !define_color_selectors(parameter_set, false)
         || !define_choice_parameter(parameter_set, kParamNegativeProfile, "Stock", negative_options.data(), static_cast<int>(negative_options.size()), 0, kGroupNegative)
         || !define_double_parameter(parameter_set, kParamExposure, "Exposure", 0.0, -8.0, 8.0, kGroupNegative)
         || !define_double_parameter(parameter_set, kParamNegativeFlash, "Flash (%)", 0.0, 0.0, 25.0, kGroupNegative)
@@ -1093,7 +1237,8 @@ describe_in_context(
         || !define_double_parameter(parameter_set, kParamPrinterLightGreen, "Printer Light Green", 25.0, 0.0, 50.0, kGroupPrint)
         || !define_double_parameter(parameter_set, kParamPrinterLightBlue, "Printer Light Blue", 25.0, 0.0, 50.0, kGroupPrint)
         || !define_double_parameter(parameter_set, kParamPrinterLightMaster, "Printer Light Master", 0.0, -25.0, 25.0, kGroupPrint)
-        || !define_choice_parameter(parameter_set, kParamOutputProfile, "Output", output_profiles, 2, 1, kGroupSetup)
+        || !define_choice_parameter(parameter_set, kParamOutputProfile, "Output profile", output_profiles.data(), static_cast<int>(output_profiles.size()), 1, kGroupSetup)
+        || !define_color_selectors(parameter_set, true)
         || !define_choice_parameter(parameter_set, kParamFilmFormat, "Film Format", format_options.data(), static_cast<int>(format_options.size()), format_default, kGroupSpatial)
         || !define_double_parameter(parameter_set, kParamImageWidthMm, "Custom Image Width (mm)", 24.89, 1.0, 100.0, kGroupSpatial)
         || !define_double_parameter(parameter_set, kParamNegativeMtf, "Negative MTF", 0.0, 0.0, 2.0, kGroupSpatial)
@@ -1520,7 +1665,7 @@ plugin_main(
     const void* handle,
     OfxPropertySetHandle in_args,
     OfxPropertySetHandle)
-{
+try {
     const OfxImageEffectHandle effect =
         reinterpret_cast<OfxImageEffectHandle>(
             const_cast<void*>(handle));
@@ -1559,6 +1704,10 @@ plugin_main(
             effect);
     }
 
+    if (std::strcmp(action, kOfxActionInstanceChanged) == 0) {
+        return color_controls_changed(effect, in_args);
+    }
+
     if (std::strcmp(
             action,
             kOfxImageEffectActionRender) == 0) {
@@ -1582,6 +1731,11 @@ plugin_main(
     }
 
     return kOfxStatReplyDefault;
+}
+
+catch (const std::exception& exception) {
+    FilmVizOfxLog::write("error", exception.what());
+    return kOfxStatFailed;
 }
 
 void

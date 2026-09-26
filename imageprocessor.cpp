@@ -663,6 +663,17 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
         }
     }
 
+    if (static_cast<int>(settings.output) > 1) {
+        try {
+            OutputTransform(settings.output, pipeline.settings().resources_directory).apply(
+                output_pixels.data(), input_spec.width, input_spec.height, 3,
+                input_spec.width * 3 * sizeof(float));
+        } catch (const std::exception& exception) {
+            error_ = exception.what();
+            return false;
+        }
+    }
+
     const std::filesystem::path output_path(output_filename);
     std::error_code filesystem_error;
 
@@ -680,7 +691,9 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
     output_spec.y = input_spec.y;
     output_spec.channelnames = { "R", "G", "B" };
     output_spec.attribute("oiio:ColorSpace",
-                          settings.output == Output::Rec709Gamma24 ? "Rec.709 Gamma 2.4" : "ACES2065-1 linear");
+                          settings.output == Output::AP0Linear ? std::string("ACES2065-1")
+                          : settings.output == Output::Rec709Gamma24 ? std::string("Rec.709 Gamma 2.4")
+                          : OutputTransform::profiles(pipeline.settings().resources_directory).at(static_cast<std::size_t>(settings.output)));
     output_spec.attribute("filmviz:negative_grain_strength", settings.negative_grain_strength);
     output_spec.attribute("filmviz:print_grain_strength", settings.print_grain_strength);
     output_spec.attribute("filmviz:grain_seed", static_cast<int>(settings.grain_seed));

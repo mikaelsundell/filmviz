@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell.
 
+#include "outputtransform.h"
+#include "inputtransform.h"
+#include <exception>
+
 #include "filmvizdirectmetalprocessor.h"
 
 #include "filmvizdirectparams.h"
@@ -87,19 +91,6 @@ inline void write_pixel(device uchar* bytes, uint row_bytes, int x, int y, int x
 {
     device float4* row = reinterpret_cast<device float4*>(bytes + uint(y-y1)*row_bytes);
     row[x-x1] = value;
-}
-
-inline float3 logc3_to_ap0(float3 encoded)
-{
-    const float cut=0.010591f, a=5.555556f, b=0.052272f, c=0.247190f;
-    const float d=0.385537f, e=5.367655f, f=0.092809f;
-    const float encoded_cut=e*cut+f;
-    float3 linear;
-    for (int i=0;i<3;++i) linear[i]=max(0.0f,encoded[i]>encoded_cut?(pow(10.0f,(encoded[i]-d)/c)-b)/a:(encoded[i]-f)/e);
-    return float3(
-        0.6803455111f*linear.x+0.2346762511f*linear.y+0.0849783114f*linear.z,
-        0.0857666276f*linear.x+1.0154255663f*linear.y-0.1011922071f*linear.z,
-        0.0021230984f*linear.x-0.0582098498f*linear.y+1.0560869795f*linear.z);
 }
 
 inline uint find_interval(device const float* scale, uint size, float value)
@@ -422,7 +413,7 @@ kernel void filmviz_direct(
         uint width=uint(p.source_x2-p.source_x1);
         negative_exposure=prepared_exposure[uint(y-p.source_y1)*width+uint(x-p.source_x1)].xyz;
     } else {
-        float3 ap0=p.input_profile==0?logc3_to_ap0(src.xyz):src.xyz;
+        float3 ap0=src.xyz;
         float luminance=dot(float3(0.34396645f,0.72816610f,-0.07213255f),ap0);
         float scene_scale=isfinite(luminance)&&luminance>0.18f?luminance/0.18f:1.0f;
         float3 reconstruction=ap0/scene_scale;
@@ -518,7 +509,7 @@ kernel void filmviz_prepare_halation(
     if(gid.x>=spatial.width||gid.y>=spatial.height) return;
     int x=p.source_x1+int(gid.x), y=p.source_y1+int(gid.y);
     float4 src=read_pixel(source,p.source_row_bytes,x,y,p.source_x1,p.source_y1);
-    float3 ap0=p.input_profile==0?logc3_to_ap0(src.xyz):src.xyz;
+    float3 ap0=src.xyz;
     float exposure_scale=exp2(p.exposure_stops);
     ap0*=exposure_scale;
     float luminance=dot(float3(0.34396645f,0.72816610f,-0.07213255f),ap0);
@@ -652,6 +643,10 @@ std::unordered_map<std::string,std::weak_ptr<DirectResources>> gDirectCache;
 
 struct FilmVizDirectMetalProcessor::Impl
 {
+    std::unique_ptr<InputTransform> input_transform;
+    std::string input_key;
+    std::unique_ptr<OutputTransform> output_transform;
+    std::string output_key;
     id<MTLDevice> device=nil;
     id<MTLLibrary> library=nil;
     id<MTLComputePipelineState> pipeline=nil;
@@ -697,6 +692,24 @@ bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& sett
     const std::string& resources_directory, void* command_queue, std::string& error)
 {
     error.clear();
+    try {
+        const std::string output_key = resources_directory + ':' + std::to_string(settings.output_profile);
+        if (!impl_->output_transform || impl_->output_key != output_key) {
+            impl_->output_transform = std::make_unique<OutputTransform>(
+                static_cast<OutputTransform::Encoding>(settings.output_profile), resources_directory);
+            impl_->output_key = output_key;
+        }
+        const std::string input_key = resources_directory + ':' + std::to_string(settings.input_profile);
+        if (!impl_->input_transform || impl_->input_key != input_key) {
+            impl_->input_transform = std::make_unique<InputTransform>(
+                static_cast<InputTransform::Encoding>(settings.input_profile), resources_directory);
+            impl_->input_key = input_key;
+        }
+    } catch (const std::exception& exception) {
+        error = std::string("OCIO colour transform: ") + exception.what();
+        return false;
+    }
+
     if(!command_queue) { error="Resolve did not provide a Metal command queue"; return false; }
     id<MTLCommandQueue> queue=(__bridge id<MTLCommandQueue>)command_queue;
     id<MTLDevice> device=queue.device;
@@ -833,7 +846,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     FilmVizDirectParams p;
     p.spectral_count=impl_->data.spectral_count; p.rgb2spec_resolution=impl_->data.rgb2spec_resolution;
     p.rgb2spec_forward_count=impl_->data.rgb2spec_forward_count;
-    p.input_profile=settings.input_profile; p.output_profile=settings.output_profile;
+    p.input_profile=1; p.output_profile=settings.output_profile;
     p.source_x1=source.x1; p.source_y1=source.y1; p.source_x2=source.x2; p.source_y2=source.y2;
     p.destination_x1=destination.x1; p.destination_y1=destination.y1; p.destination_x2=destination.x2; p.destination_y2=destination.y2;
     p.render_x1=render_x1; p.render_y1=render_y1; p.render_x2=render_x2; p.render_y2=render_y2;
@@ -871,9 +884,22 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     if(use_mtf&&!impl_->spatial_response_valid) { error="FilmViz measured MTF response is unavailable"; return false; }
     id<MTLCommandQueue> queue=(__bridge id<MTLCommandQueue>)command_queue;
     id<MTLDevice> device=queue.device;
+    // OCIO evaluates the selected config transform before the spectral GPU pass.
+    id<MTLBuffer> input_buffer=(__bridge id<MTLBuffer>)source.buffer;
+    id<MTLBuffer> converted=[device newBufferWithLength:input_buffer.length options:MTLResourceStorageModeShared];
+    if(!converted) { error="could not allocate OCIO input buffer"; return false; }
+    id<MTLCommandBuffer> download=[queue commandBuffer];
+    id<MTLBlitCommandEncoder> blit=[download blitCommandEncoder];
+    [blit copyFromBuffer:input_buffer sourceOffset:0 toBuffer:converted destinationOffset:0 size:input_buffer.length];
+    [blit endEncoding]; [download commit]; [download waitUntilCompleted];
+    if(download.status==MTLCommandBufferStatusError) { error="could not download OCIO input buffer"; return false; }
+    try {
+        impl_->input_transform->apply_rgba(static_cast<float*>(converted.contents),
+            static_cast<int>(source_width), static_cast<int>(source_height), source.row_bytes);
+    } catch(const std::exception& exception) { error=exception.what(); return false; }
     id<MTLCommandBuffer> command=[queue commandBuffer];
     const MTLResourceOptions temporary_options=MTLResourceStorageModePrivate;
-    id<MTLBuffer> prepared=(__bridge id<MTLBuffer>)source.buffer;
+    id<MTLBuffer> prepared=converted;
     id<MTLBuffer> highlight=nil,near_a=nil,near_b=nil,far_a=nil,far_b=nil;
     FilmVizDirectSpatialParams spatial;
     if(use_halation) {
@@ -885,7 +911,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         if(!prepared||!highlight||!near_a||!near_b||!far_a||!far_b) { error="could not allocate FilmViz Metal halation buffers"; return false; }
         spatial.width=source_width; spatial.height=source_height; spatial.strength=settings.halation_strength; spatial.threshold=settings.halation_threshold;
         if(!encode_2d(command,impl_->prepare_halation,source_width,source_height,[&](id<MTLComputeCommandEncoder> e){
-            [e setBuffer:(__bridge id<MTLBuffer>)source.buffer offset:0 atIndex:0]; [e setBuffer:prepared offset:0 atIndex:1]; [e setBuffer:highlight offset:0 atIndex:2];
+            [e setBuffer:converted offset:0 atIndex:0]; [e setBuffer:prepared offset:0 atIndex:1]; [e setBuffer:highlight offset:0 atIndex:2];
             [e setBuffer:impl_->negative_exposure offset:0 atIndex:3]; [e setBuffer:impl_->rgb_scale offset:0 atIndex:4]; [e setBuffer:impl_->rgb_data offset:0 atIndex:5]; [e setBuffer:impl_->rgb_forward offset:0 atIndex:6];
             [e setBytes:&p length:sizeof(p) atIndex:7]; [e setBytes:&spatial length:sizeof(spatial) atIndex:8];
         })) { error="could not encode FilmViz Metal halation preparation"; return false; }
@@ -920,7 +946,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         direct_p.destination_row_bytes=static_cast<std::uint32_t>(dense_row_bytes);
     }
     if(!encode_2d(command,impl_->pipeline,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){
-        [e setBuffer:(__bridge id<MTLBuffer>)source.buffer offset:0 atIndex:0]; [e setBuffer:direct_destination offset:0 atIndex:1];
+        [e setBuffer:converted offset:0 atIndex:0]; [e setBuffer:direct_destination offset:0 atIndex:1];
         [e setBuffer:impl_->negative_exposure offset:0 atIndex:2]; [e setBuffer:impl_->negative_density offset:0 atIndex:3]; [e setBuffer:impl_->status_m offset:0 atIndex:4]; [e setBuffer:impl_->print_exposure offset:0 atIndex:5];
         [e setBuffer:impl_->print_density offset:0 atIndex:6]; [e setBuffer:impl_->viewer offset:0 atIndex:7]; [e setBuffer:impl_->curves offset:0 atIndex:8]; [e setBuffer:impl_->rgb_scale offset:0 atIndex:9];
         [e setBuffer:impl_->rgb_data offset:0 atIndex:10]; [e setBuffer:impl_->rgb_forward offset:0 atIndex:11]; [e setBuffer:impl_->negative_granularity offset:0 atIndex:12]; [e setBuffer:impl_->print_granularity offset:0 atIndex:13];
@@ -943,7 +969,35 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         if(!encode_2d(command,impl_->mtf,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_b offset:0 atIndex:0]; [e setBuffer:dense_a offset:0 atIndex:1]; [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3]; })) { error="could not encode FilmViz Metal vertical MTF"; return false; }
         if(!encode_2d(command,impl_->copy_dense,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_a offset:0 atIndex:0]; [e setBuffer:(__bridge id<MTLBuffer>)destination.buffer offset:0 atIndex:1]; [e setBytes:&p length:sizeof(p) atIndex:2]; })) { error="could not encode FilmViz Metal MTF output"; return false; }
     }
-    [command commit];
+    if (settings.output_profile > 1) {
+        // Convert only the rendered rectangle, preserving alpha and untouched pixels.
+        id<MTLBuffer> output=(__bridge id<MTLBuffer>)destination.buffer;
+        const NSUInteger row_bytes=static_cast<NSUInteger>(render_width)*4u*sizeof(float);
+        id<MTLBuffer> staging=[device newBufferWithLength:row_bytes*render_height options:MTLResourceStorageModeShared];
+        if(!staging) { error="could not allocate OCIO output buffer"; return false; }
+        id<MTLBlitCommandEncoder> download=[command blitCommandEncoder];
+        for(NSUInteger y=0;y<render_height;++y) {
+            const NSUInteger offset=(render_y1-destination.y1+y)*destination.row_bytes
+                +(render_x1-destination.x1)*4u*sizeof(float);
+            [download copyFromBuffer:output sourceOffset:offset toBuffer:staging destinationOffset:y*row_bytes size:row_bytes];
+        }
+        [download endEncoding]; [command commit]; [command waitUntilCompleted];
+        if(command.status==MTLCommandBufferStatusError) { error="could not download OCIO output"; return false; }
+        try {
+            impl_->output_transform->apply(static_cast<float*>(staging.contents),
+                render_width,render_height,4,row_bytes);
+        } catch(const std::exception& exception) { error=exception.what(); return false; }
+        id<MTLCommandBuffer> upload=[queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit=[upload blitCommandEncoder];
+        for(NSUInteger y=0;y<render_height;++y) {
+            const NSUInteger offset=(render_y1-destination.y1+y)*destination.row_bytes
+                +(render_x1-destination.x1)*4u*sizeof(float);
+            [blit copyFromBuffer:staging sourceOffset:y*row_bytes toBuffer:output destinationOffset:offset size:row_bytes];
+        }
+        [blit endEncoding]; [upload commit];
+    } else {
+        [command commit];
+    }
     return true;
 }
 

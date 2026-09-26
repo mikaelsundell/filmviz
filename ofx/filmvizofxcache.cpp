@@ -22,8 +22,8 @@ constexpr char kMagic[8] = {'F','V','O','F','X','C','H','E'};
 // makes the accepted response the zero-centred standard trim. Version 9 adds
 // bakes warm mid-density separation into the negative colour-response transform.
 // Version 10 fixes that warm response and separates chromatic depth from the
-// public colour-separation trim.
-constexpr std::uint32_t kVersion = 10u;
+// public colour-separation trim. Version 11 replaces manual inputs with OCIO.
+constexpr std::uint32_t kVersion = 11u;
 constexpr std::uint32_t kHasNegativeExposure = 1u << 0u;
 
 void

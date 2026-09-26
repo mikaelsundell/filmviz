@@ -50,7 +50,7 @@ and the OpenFX plug-in.
 
 The default production profile is:
 
-- input: ARRI Wide Gamut 3 / LogC3 EI800, or linear ACES2065-1
+- input: any colour space from the bundled OCIO Studio config (ARRI LogC3 EI800 by default)
 - negative: Kodak Verita 200D 5206/7206
 - alternate supported negative: Kodak Vision3 50D 5203/7203
 - negative densitometry: ISO Status-M
@@ -67,7 +67,7 @@ depending on obsolete profile JSON files.
 
 ## Build
 
-FilmViz requires CMake 3.23+, a C++17 compiler, Imath and OpenImageIO. The
+FilmViz requires CMake 3.23+, a C++17 compiler, Imath, OpenImageIO and OpenColorIO 2.5+. The
 optional Python application additionally uses pybind11 and PySide6.
 
 ```bash
@@ -369,6 +369,12 @@ material retain their own copyright and licensing terms:
   Wenzel Jakob and is distributed under its accompanying
   [BSD 3-Clause license](mitsuba/LICENSE.txt). See
   [mitsuba/README.md](mitsuba/README.md) for attribution and the paper reference.
+- [OpenColorIO](https://opencolorio.org/) is an Academy Software Foundation
+  project, Copyright OpenColorIO contributors, distributed under its
+  [BSD 3-Clause license](https://github.com/AcademySoftwareFoundation/OpenColorIO/blob/main/LICENSE).
+  The bundled [ACES Studio config](resources/configs/studio-config-v4.0.0_aces-v2.0_ocio-v2.5.ocio)
+  comes from OpenColorIO-Config-ACES and retains its
+  [BSD 3-Clause license](https://github.com/AcademySoftwareFoundation/OpenColorIO-Config-ACES/blob/main/LICENSE).
 - The OpenFX SDK is Copyright © 2025 OpenFX and contributors to the OpenFX
   project. It is an Academy Software Foundation project distributed under the
   [BSD 3-Clause License](external/openfx/LICENSE.md).
@@ -418,3 +424,20 @@ Software Foundation or the authors of `rgb2spec`.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the model boundaries,
 [CALIBRATION.md](CALIBRATION.md) for the measurements behind the current model,
 and [DEVELOPMENT.md](DEVELOPMENT.md) for the test workflow.
+
+### OCIO input colour spaces
+
+All interfaces share the bundled Studio v4.0.0 / ACES 2.0 / OCIO 2.5 config
+under `resources/configs`. `filmviz --profiles` lists its colour spaces; pass
+an exact name with quotes, for example `--input "Sony S-Log3 S-Gamut3.Cine"`.
+The legacy `awg3-logc3-ei800` and `ap0-linear` aliases remain accepted.
+OFX and Python populate their input dropdowns from the same catalog.
+Inputs convert to linear ACES2065-1 before film processing; output rendering
+and the optional Rec.709 preview retain their existing behaviour.
+
+Metal and OpenCL currently stage input through the OCIO CPU processor before
+running the spectral GPU kernels. This adds a buffer transfer and synchronization
+cost, but supports the full config without approximating its input transforms.
+The config follows the selected resource directory (`--resources` in the CLI).
+C++ callers may supply a resource directory to `InputTransform`; the default
+also searches beside the core library, the OFX bundle, and the source checkout.

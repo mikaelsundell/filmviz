@@ -5,6 +5,7 @@
 
 #include "filmformat.h"
 #include "inputtransform.h"
+#include "outputtransform.h"
 
 #include <array>
 #include <cstdint>
@@ -15,7 +16,7 @@ class FilmPipeline;
 
 class ImageProcessor {
 public:
-    enum class Output { AP0Linear, Rec709Gamma24 };
+    using Output = OutputTransform::Encoding;
 
     using Progress = std::function<void(const char* stage, int completed, int total)>;
 

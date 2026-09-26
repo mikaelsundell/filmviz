@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell.
 
+#include "outputtransform.h"
+#include "inputtransform.h"
+#include <exception>
+
 #include "filmvizdirectopenclprocessor.h"
 
 #include "filmdirectdata.h"
@@ -163,7 +167,7 @@ void populate_params(
 {
     p.spectral_count=data.spectral_count; p.rgb2spec_resolution=data.rgb2spec_resolution;
     p.rgb2spec_forward_count=data.rgb2spec_forward_count;
-    p.input_profile=settings.input_profile; p.output_profile=settings.output_profile;
+    p.input_profile=1; p.output_profile=settings.output_profile;
     p.source_x1=source.x1; p.source_y1=source.y1; p.source_x2=source.x2; p.source_y2=source.y2;
     p.destination_x1=destination.x1; p.destination_y1=destination.y1;
     p.destination_x2=destination.x2; p.destination_y2=destination.y2;
@@ -213,6 +217,10 @@ void populate_params(
 
 struct FilmVizDirectOpenCLProcessor::Impl
 {
+    std::unique_ptr<InputTransform> input_transform;
+    std::string input_key;
+    std::unique_ptr<OutputTransform> output_transform;
+    std::string output_key;
     std::shared_ptr<OpenCLResources> resources;
     std::string profile_key;
     std::mutex render_mutex;
@@ -228,6 +236,24 @@ bool FilmVizDirectOpenCLProcessor::configure(
     std::string& error)
 {
     error.clear();
+    try {
+        const std::string output_key = resources_directory + ':' + std::to_string(settings.output_profile);
+        if (!impl_->output_transform || impl_->output_key != output_key) {
+            impl_->output_transform = std::make_unique<OutputTransform>(
+                static_cast<OutputTransform::Encoding>(settings.output_profile), resources_directory);
+            impl_->output_key = output_key;
+        }
+        const std::string input_key = resources_directory + ':' + std::to_string(settings.input_profile);
+        if (!impl_->input_transform || impl_->input_key != input_key) {
+            impl_->input_transform = std::make_unique<InputTransform>(
+                static_cast<InputTransform::Encoding>(settings.input_profile), resources_directory);
+            impl_->input_key = input_key;
+        }
+    } catch (const std::exception& exception) {
+        error = std::string("OCIO colour transform: ") + exception.what();
+        return false;
+    }
+
     cl_command_queue queue=reinterpret_cast<cl_command_queue>(command_queue);
     if(!queue) { error="OpenCL command queue is unavailable"; return false; }
     cl_context context=nullptr; cl_device_id device=nullptr;
@@ -338,6 +364,19 @@ bool FilmVizDirectOpenCLProcessor::render(
         const std::size_t global[2]={width,height};
         if(status==CL_SUCCESS) status=clEnqueueNDRangeKernel(queue,kernel,2,nullptr,global,nullptr,0,nullptr,nullptr);
     };
+    // Download and convert once; all spectral kernels consume AP0 from here.
+    std::size_t input_bytes=0;
+    status=clGetMemObjectInfo(source_buffer,CL_MEM_SIZE,sizeof(input_bytes),&input_bytes,nullptr);
+    if(status!=CL_SUCCESS) { error=opencl_error("OCIO input size",status); return false; }
+    std::vector<float> input_pixels((input_bytes+sizeof(float)-1)/sizeof(float));
+    status=clEnqueueReadBuffer(queue,source_buffer,CL_TRUE,0,input_bytes,input_pixels.data(),0,nullptr,nullptr);
+    if(status!=CL_SUCCESS) { error=opencl_error("OCIO input download",status); return false; }
+    try {
+        impl_->input_transform->apply_rgba(input_pixels.data(),static_cast<int>(source_width),
+            static_cast<int>(source_height),source.row_bytes);
+    } catch(const std::exception& exception) { error=exception.what(); return false; }
+    source_buffer=make_constant(input_pixels.data(),input_bytes);
+    if(status!=CL_SUCCESS) { error=opencl_error("OCIO input upload",status); return false; }
     cl_mem prepared=source_buffer,highlight=nullptr,near_a=nullptr,near_b=nullptr,far_a=nullptr,far_b=nullptr;
     FilmVizDirectSpatialParams spatial;
     if(use_halation) {
@@ -424,6 +463,28 @@ bool FilmVizDirectOpenCLProcessor::render(
     for(cl_kernel value:kernels) if(value) clReleaseKernel(value);
     for(cl_mem value:temporary_buffers) if(value) clReleaseMemObject(value);
     if(status!=CL_SUCCESS) { error=opencl_error("OpenCL spatial render",status); return false; }
+    if(settings.output_profile>1) {
+        const std::size_t row_bytes=render_width*4u*sizeof(float);
+        std::vector<float> pixels(render_width*render_height*4u);
+        for(std::size_t y=0;y<render_height;++y) {
+            const std::size_t offset=(render_y1-destination.y1+y)*destination.row_bytes
+                +(render_x1-destination.x1)*4u*sizeof(float);
+            status=clEnqueueReadBuffer(queue,destination_buffer,CL_TRUE,offset,row_bytes,
+                pixels.data()+y*render_width*4u,0,nullptr,nullptr);
+            if(status!=CL_SUCCESS) { error=opencl_error("OCIO output download",status); return false; }
+        }
+        try {
+            impl_->output_transform->apply(pixels.data(),static_cast<int>(render_width),
+                static_cast<int>(render_height),4,row_bytes);
+        } catch(const std::exception& exception) { error=exception.what(); return false; }
+        for(std::size_t y=0;y<render_height;++y) {
+            const std::size_t offset=(render_y1-destination.y1+y)*destination.row_bytes
+                +(render_x1-destination.x1)*4u*sizeof(float);
+            status=clEnqueueWriteBuffer(queue,destination_buffer,CL_TRUE,offset,row_bytes,
+                pixels.data()+y*render_width*4u,0,nullptr,nullptr);
+            if(status!=CL_SUCCESS) { error=opencl_error("OCIO output upload",status); return false; }
+        }
+    }
     return true;
 }
 

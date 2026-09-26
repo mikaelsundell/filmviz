@@ -40,6 +40,7 @@ endif()
 find_package(Imath CONFIG REQUIRED)
 find_package(OpenImageIO CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+find_package(OpenColorIO 2.5 CONFIG REQUIRED)
 find_package(OpenCL QUIET)
 
 set(FILMVIZ_CORE_SOURCES
@@ -47,6 +48,7 @@ set(FILMVIZ_CORE_SOURCES
     cieobserver.cpp
     colorimetry.cpp
     colortransform.cpp
+    colorprofilecatalog.cpp
     displaygamutcompressor.cpp
     diagramwriter.cpp
     filmdensitycalibration.cpp
@@ -61,6 +63,8 @@ set(FILMVIZ_CORE_SOURCES
     halationmodel.cpp
     imageprocessor.cpp
     inputtransform.cpp
+    ocioconfig.cpp
+    outputtransform.cpp
     lut3d.cpp
     negativeprofile.cpp
     printdyemodel.cpp
@@ -92,9 +96,13 @@ target_link_libraries(filmviz_core
         Imath::Imath
         OpenImageIO::OpenImageIO
         Threads::Threads
+        OpenColorIO::OpenColorIO
+        ${CMAKE_DL_LIBS}
 )
 
 target_compile_features(filmviz_core PUBLIC cxx_std_17)
+target_compile_definitions(filmviz_core PRIVATE
+    FILMVIZ_SOURCE_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
 add_executable(filmviz
     main.cpp
