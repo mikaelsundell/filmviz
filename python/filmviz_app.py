@@ -117,6 +117,8 @@ def _ensure_macos_qt_runtime(prefixes, configured_python):
 PROJECT_ROOT, DEPENDENCY_PREFIXES, CONFIGURED_PYTHON = _add_local_paths()
 _ensure_macos_qt_runtime(DEPENDENCY_PREFIXES, CONFIGURED_PYTHON)
 
+from filmviz_memory import create_memory_log
+
 try:
     import filmviz_python as filmviz
 
@@ -3363,6 +3365,7 @@ class FloatingScopeWindow(QWidget):
 class FilmVizWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._memory_log = create_memory_log()
         self.setWindowTitle("FilmViz — Experimental Spectral Film Processor")
         self.resize(1500, 860)
         self.setMinimumSize(1180, 700)
@@ -3408,6 +3411,11 @@ class FilmVizWindow(QMainWindow):
         self._metal_preview_timer.setInterval(75)
         self._metal_preview_timer.timeout.connect(
             self._start_metal_preview)
+        if self._memory_log is not None:
+            self._memory_timer = QTimer(self)
+            self._memory_timer.setInterval(2000)
+            self._memory_timer.timeout.connect(self._sample_preview_memory)
+            self._memory_timer.start()
 
         central = QWidget()
         central_layout = QHBoxLayout(central)
@@ -5784,6 +5792,10 @@ class FilmVizWindow(QMainWindow):
         # intermediate mouse-move.
         self._metal_preview_generation += 1
         self._metal_preview_pending = True
+        if self._memory_log is not None:
+            self._memory_log.record(
+                "preview_scheduled", generation=self._metal_preview_generation,
+                busy=self._metal_preview_busy)
 
         if self._metal_preview_busy:
             return
@@ -5852,6 +5864,8 @@ class FilmVizWindow(QMainWindow):
         self._metal_preview_busy = True
         self._metal_preview_pending = False
         self.stage.setText("Rendering Metal preview…")
+        if self._memory_log is not None:
+            self._memory_log.record("render_started", generation=generation)
 
         def render_preview():
             try:
@@ -5864,10 +5878,22 @@ class FilmVizWindow(QMainWindow):
                     max_dimension=1280,
                     time=0.0)
             except Exception:
+                if self._memory_log is not None:
+                    self._memory_log.record("render_failed", generation=generation)
                 self._metal_preview_bridge.failed.emit(
                     generation,
                     traceback.format_exc())
             else:
+                if self._memory_log is not None:
+                    self._memory_log.record(
+                        "render_returned", generation=generation,
+                        display_bytes=len(result["rgb"]),
+                        scope_bytes=len(result["scope_rgb"]),
+                        metal_bytes_before=result["metal_bytes_before"],
+                        metal_bytes_configured=result["metal_bytes_configured"],
+                        metal_bytes_submitted=result["metal_bytes_submitted"],
+                        metal_bytes_fenced=result["metal_bytes_fenced"],
+                        metal_bytes_after_pool=result["metal_bytes_after_pool"])
                 self._metal_preview_bridge.finished.emit(
                     generation,
                     result)
@@ -5880,6 +5906,11 @@ class FilmVizWindow(QMainWindow):
     @Slot(int, object)
     def _metal_preview_finished(self, generation: int, result):
         self._metal_preview_busy = False
+        if self._memory_log is not None:
+            self._memory_log.record(
+                "result_received", generation=generation,
+                accepted=(self.realtime_metal.isChecked()
+                    and generation == self._metal_preview_generation))
 
         if (
             self.realtime_metal.isChecked()
@@ -5905,6 +5936,8 @@ class FilmVizWindow(QMainWindow):
             self.right_scope.set_rgb(width, height, scope_rgb)
             self._resample_probes()
             self.stage.setText("Realtime Metal preview")
+            if self._memory_log is not None:
+                self._memory_log.record("preview_applied", generation=generation)
 
         if self._metal_preview_pending and self.realtime_metal.isChecked():
             # Render the newest UI/profile state immediately. Intermediate
@@ -5912,9 +5945,23 @@ class FilmVizWindow(QMainWindow):
             # render so dragging remains responsive.
             self._metal_preview_timer.start(0)
 
+    @Slot()
+    def _sample_preview_memory(self):
+        image = self.image_preview._image
+        scope = self._scope_rgb
+        self._memory_log.record(
+            "periodic", generation=self._metal_preview_generation,
+            busy=self._metal_preview_busy, pending=self._metal_preview_pending,
+            image_bytes=(image.sizeInBytes() if not image.isNull() else 0),
+            scope_bytes=(len(scope) * scope.itemsize if scope is not None else 0),
+            metal_device_bytes=(self._metal_preview.metal_allocated_bytes()
+                if self._metal_preview is not None else 0))
+
     @Slot(int, str)
     def _metal_preview_failed(self, generation: int, message: str):
         self._metal_preview_busy = False
+        if self._memory_log is not None:
+            self._memory_log.record("error_received", generation=generation)
         if generation == self._metal_preview_generation:
             detail = message.strip().splitlines()
             self.stage.setText(

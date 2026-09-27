@@ -339,6 +339,9 @@ if(FILMVIZ_BUILD_PYTHON_APP)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/python/filmviz_app.py"
                 "$<TARGET_FILE_DIR:filmviz_python>/filmviz_app.py"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/filmviz_memory.py"
+                "$<TARGET_FILE_DIR:filmviz_python>/filmviz_memory.py"
             VERBATIM
         )
 
@@ -380,8 +383,15 @@ exec \"${Python3_EXECUTABLE}\" \"$filmviz_module_directory/filmviz_app.py\" \"$@
 
         add_custom_target(python_filmviz_app
             DEPENDS filmviz_python
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/filmviz_app.py"
+                "$<TARGET_FILE_DIR:filmviz_python>/filmviz_app.py"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/filmviz_memory.py"
+                "$<TARGET_FILE_DIR:filmviz_python>/filmviz_memory.py"
             COMMENT
                 "Build the FilmViz Python module and generated application launcher"
+            VERBATIM
         )
     else()
         message(STATUS
@@ -550,6 +560,8 @@ if(TARGET filmviz_python)
         DESTINATION bin
         RENAME filmviz-app
     )
+
+    install(FILES python/filmviz_memory.py DESTINATION bin)
 
 endif()
 

@@ -11,6 +11,12 @@
 #include <sstream>
 #include <thread>
 
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
+
 namespace FilmVizOfxLog
 {
 namespace
@@ -127,6 +133,47 @@ bool
 enabled()
 {
     return environment_enabled();
+}
+
+bool
+memory_enabled()
+{
+    const char* value = std::getenv("FILMVIZ_OFX_MEMORY_LOG");
+    return value && *value && std::string(value) != "0";
+}
+
+void
+memory(const char* event, const std::string& details)
+{
+    if (!memory_enabled()) {
+        return;
+    }
+
+    std::ostringstream stream;
+#if defined(__APPLE__)
+    task_vm_info_data_t info = {};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO,
+            reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
+        stream << "resident_bytes=" << info.resident_size
+               << " footprint_bytes=" << info.phys_footprint;
+    }
+#elif defined(__linux__)
+    std::ifstream statm("/proc/self/statm");
+    std::uint64_t virtual_pages = 0;
+    std::uint64_t resident_pages = 0;
+    if (statm >> virtual_pages >> resident_pages) {
+        stream << "resident_bytes="
+               << resident_pages * static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+    }
+#endif
+    if (!details.empty()) {
+        if (stream.tellp() > 0) {
+            stream << ' ';
+        }
+        stream << details;
+    }
+    write(event, stream.str());
 }
 
 std::string

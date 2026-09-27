@@ -137,20 +137,26 @@ load_input(
     const NSUInteger bytes =
         static_cast<NSUInteger>(rgba.size() * sizeof(float));
 
-    impl.source =
-        [impl.device
-            newBufferWithBytes:rgba.data()
-            length:bytes
-            options:MTLResourceStorageModeShared];
-    impl.destination =
-        [impl.device
-            newBufferWithLength:bytes
-            options:MTLResourceStorageModeShared];
+    // Input changes should update the buffers instead of allocating another
+    // full-resolution pair for each image or preview dimension.
+    if (!impl.source || impl.source.length < bytes) {
+        impl.source =
+            [impl.device
+                newBufferWithLength:bytes
+                options:MTLResourceStorageModeShared];
+    }
+    if (!impl.destination || impl.destination.length < bytes) {
+        impl.destination =
+            [impl.device
+                newBufferWithLength:bytes
+                options:MTLResourceStorageModeShared];
+    }
 
     if (!impl.source || !impl.destination) {
         error = "could not allocate Metal preview buffers";
         return false;
     }
+    std::memcpy(impl.source.contents, rgba.data(), bytes);
 
     impl.input_filename = filename;
     impl.input_write_time = write_time;
@@ -185,6 +191,14 @@ FilmVizMetalPreview::invalidate_profiles()
     impl_->renderer.invalidate_profiles();
 }
 
+std::size_t
+FilmVizMetalPreview::metal_allocated_bytes() const
+{
+    return impl_->device
+        ? static_cast<std::size_t>(impl_->device.currentAllocatedSize)
+        : 0;
+}
+
 bool
 FilmVizMetalPreview::render(
     const std::string& input_filename,
@@ -195,6 +209,9 @@ FilmVizMetalPreview::render(
     FilmVizMetalPreviewResult& result,
     std::string& error)
 {
+    // Python's short-lived worker threads do not necessarily have a Cocoa
+    // autorelease pool. Drain command-buffer and image I/O temporaries here.
+    @autoreleasepool {
     error.clear();
     result = {};
 
@@ -202,6 +219,8 @@ FilmVizMetalPreview::render(
         error = "Metal is unavailable";
         return false;
     }
+
+    result.metal_bytes_before = metal_allocated_bytes();
 
     if (!load_input(*impl_, input_filename, max_dimension, error)) {
         return false;
@@ -221,8 +240,11 @@ FilmVizMetalPreview::render(
             settings,
             resources_directory,
             (__bridge void*)impl_->queue,
-            error)
-        || !impl_->renderer.render(
+            error)) {
+        return false;
+    }
+    result.metal_bytes_configured = metal_allocated_bytes();
+    if (!impl_->renderer.render(
             settings,
             (__bridge void*)impl_->queue,
             source,
@@ -236,10 +258,12 @@ FilmVizMetalPreview::render(
 
         return false;
     }
+    result.metal_bytes_submitted = metal_allocated_bytes();
 
     id<MTLCommandBuffer> fence = [impl_->queue commandBuffer];
     [fence commit];
     [fence waitUntilCompleted];
+    result.metal_bytes_fenced = metal_allocated_bytes();
 
     if (fence.status == MTLCommandBufferStatusError) {
         error =
@@ -271,4 +295,5 @@ FilmVizMetalPreview::render(
     }
 
     return true;
+    } // @autoreleasepool
 }

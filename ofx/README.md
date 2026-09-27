@@ -31,6 +31,9 @@ Halation is evaluated in negative-exposure space before development. Measured
 MTF is applied after the direct film render using per-channel kernels generated
 from the profile curves. Metal and OpenCL share the same packed parameter layout
 and canonical kernel algorithm.
+The Metal path reuses each node's image-sized working buffers up to their
+largest observed frame size, waiting for the previous GPU submission before
+writing into them again.
 
 ## Standalone CPU reference caches
 
@@ -171,6 +174,15 @@ or override the path with:
 ```bash
 export FILMVIZ_OFX_LOG_PATH=/path/to/filmviz_ofx.log
 ```
+
+To trace memory while dragging controls, launch the host with
+`FILMVIZ_OFX_MEMORY_LOG=1`. The same log then records parameter changes, process
+resident size and physical footprint at render boundaries, Metal device
+allocation size, and bytes in the plug-in's temporary Metal buffers. The Metal
+device figure also includes allocations made by the host and other users of
+that device. The device count is sampled before configuration, after
+configuration, after command submission, and after releasing host images.
+Keep the normal log enabled (`FILMVIZ_OFX_LOG` must not be `0`).
 
 ## Controls
 

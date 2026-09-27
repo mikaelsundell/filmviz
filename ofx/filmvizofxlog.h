@@ -12,6 +12,8 @@ namespace FilmVizOfxLog
 bool enabled();
 std::string path();
 void write(const char* event, const std::string& details = std::string());
+bool memory_enabled();
+void memory(const char* event, const std::string& details = std::string());
 
 class Scope
 {

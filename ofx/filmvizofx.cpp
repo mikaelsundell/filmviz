@@ -698,6 +698,7 @@ create_instance(
             << "node=" << instance_pointer
             << " resources=" << instance_pointer->resources_directory;
         FilmVizOfxLog::write("node_create", stream.str());
+        FilmVizOfxLog::memory("memory_node_created", stream.str());
     }
 
     return kOfxStatOK;
@@ -731,6 +732,11 @@ destroy_instance(
     }
 
     delete static_cast<InstanceData*>(pointer);
+    {
+        std::ostringstream stream;
+        stream << "node=" << pointer;
+        FilmVizOfxLog::memory("memory_node_destroyed", stream.str());
+    }
 
     gPropertySuite->propSetPointer(
         properties,
@@ -883,7 +889,7 @@ describe(
         properties,
         kOfxImageEffectPluginRenderThreadSafety,
         0,
-        kOfxImageEffectRenderFullySafe);
+        kOfxImageEffectRenderInstanceSafe);
 
     gPropertySuite->propSetInt(
         properties,
@@ -1634,6 +1640,7 @@ render(
     FilmVizOfxLog::Scope render_scope(
         "render",
         render_details.str());
+    FilmVizOfxLog::memory("memory_render_begin", render_details.str());
 
     int metal_enabled = 0;
     void* metal_command_queue = nullptr;
@@ -1698,13 +1705,27 @@ render(
         metal_output.row_bytes = output_row_bytes;
         metal_output.buffer = output_data;
 
+        const auto log_metal_stage = [&](const char* event) {
+            if (!FilmVizOfxLog::memory_enabled()) {
+                return;
+            }
+            std::ostringstream details;
+            details << render_details.str()
+                    << " metal_device_bytes="
+                    << FilmVizDirectMetalProcessor::device_allocated_bytes(
+                        metal_command_queue);
+            FilmVizOfxLog::memory(event, details.str());
+        };
+        log_metal_stage("memory_metal_render_begin");
         std::string error;
-        const bool rendered =
+        const bool configured =
             instance->direct_metal_processor.configure(
                 settings,
                 instance->resources_directory,
                 metal_command_queue,
-                error)
+                error);
+        log_metal_stage("memory_metal_configured");
+        const bool rendered = configured
             && instance->direct_metal_processor.render(
                 settings,
                 metal_command_queue,
@@ -1716,7 +1737,9 @@ render(
                 render_window[3],
                 time,
                 error);
+        log_metal_stage("memory_metal_rendered");
         release_images();
+        log_metal_stage("memory_images_released");
 
         if (!rendered) {
             render_scope.finish(
@@ -1754,12 +1777,14 @@ render(
         opencl_output.buffer = output_data;
 
         std::string error;
-        const bool rendered =
+        const bool configured =
             instance->direct_opencl_processor.configure(
                 settings,
                 instance->resources_directory,
                 opencl_command_queue,
-                error)
+                error);
+        FilmVizOfxLog::memory("memory_opencl_configured", render_details.str());
+        const bool rendered = configured
             && instance->direct_opencl_processor.render(
                 settings,
                 opencl_command_queue,
@@ -1772,7 +1797,9 @@ render(
                 time,
                 error);
 
+        FilmVizOfxLog::memory("memory_opencl_rendered", render_details.str());
         release_images();
+        FilmVizOfxLog::memory("memory_images_released", render_details.str());
 
         if (!rendered) {
             render_scope.finish(
@@ -1859,8 +1886,14 @@ try {
 
     if (std::strcmp(action, kOfxActionInstanceChanged) == 0) {
         char* parameter = nullptr;
-        if (gPropertySuite->propGetString(in_args, kOfxPropName, 0, &parameter) == kOfxStatOK
-            && parameter && std::strcmp(parameter, "exportLut") == 0)
+        gPropertySuite->propGetString(in_args, kOfxPropName, 0, &parameter);
+        if (FilmVizOfxLog::memory_enabled()) {
+            std::ostringstream details;
+            details << "node=" << effect << " parameter="
+                    << (parameter ? parameter : "unknown");
+            FilmVizOfxLog::memory("memory_parameter_changed", details.str());
+        }
+        if (parameter && std::strcmp(parameter, "exportLut") == 0)
             return export_lut(effect, in_args);
         return color_controls_changed(effect, in_args);
     }

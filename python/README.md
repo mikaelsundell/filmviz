@@ -43,6 +43,19 @@ no shell environment setup is required.
 Running `python3 python/filmviz_app.py` directly remains supported when that
 Python environment can already import both PySide6 and `filmviz_python`.
 
+To trace memory while dragging sliders, launch the app with
+`FILMVIZ_PYTHON_MEMORY_LOG=1`. It prints the JSONL log path and samples current
+process RSS, traced Python allocations, render return payload sizes, and the
+retained preview image and scope sizes. Samples are taken at render stages and
+every two seconds, including while idle. Set the variable to a file path to
+choose the log location. Python allocation tracing adds overhead, so use this
+only for a diagnostic session.
+Each `render_returned` row also records Metal device allocation before the
+render, after configuration, after command submission, after its completion
+fence, and after the preview autorelease pool drains. Periodic rows report the
+current device allocation. Compare those values with RSS to locate growth in
+Metal resources versus other native memory.
+
 The image interface exposes negative and print flash, linked master printer
 timing, Color Separation, Color Depth, density-dependent negative/print grain,
 and measured negative/print MTF. Color Separation is a

@@ -5,6 +5,7 @@
 
 #include "filmvizofxprocessor.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -31,6 +32,9 @@ public:
     FilmVizDirectMetalProcessor& operator=(const FilmVizDirectMetalProcessor&) = delete;
 
     void invalidate_profiles();
+
+    // Includes allocations from all users of the host-provided Metal device.
+    static std::size_t device_allocated_bytes(void* command_queue);
 
     bool configure(
         const FilmVizOfxRenderSettings& settings,

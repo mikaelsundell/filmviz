@@ -6,6 +6,7 @@
 #include <exception>
 
 #include "filmvizdirectmetalprocessor.h"
+#include "filmvizofxlog.h"
 
 #include "filmvizdirectparams.h"
 
@@ -21,12 +22,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 
@@ -757,6 +761,28 @@ struct DirectResources
 std::mutex gDirectCacheMutex;
 std::unordered_map<std::string,std::weak_ptr<DirectResources>> gDirectCache;
 
+struct RenderCompletion
+{
+    std::mutex mutex;
+    std::condition_variable ready;
+    bool done=false;
+    bool failed=false;
+};
+
+void log_metal_memory(const char* event, id<MTLDevice> device,
+    std::size_t temporary_bytes = 0, std::size_t reusable_bytes = 0)
+{
+    if (!FilmVizOfxLog::memory_enabled()) return;
+    std::ostringstream details;
+    details << "metal_device_bytes=" << device.currentAllocatedSize
+            << " plugin_temporary_bytes=" << temporary_bytes
+            << " plugin_reusable_input_bytes=" << reusable_bytes;
+    // currentAllocatedSize includes other users of this host-owned device;
+    // plugin_temporary_bytes counts working-buffer capacity used by this pass,
+    // including allocations retained for reuse by later renders.
+    FilmVizOfxLog::memory(event, details.str());
+}
+
 } // namespace
 
 struct FilmVizDirectMetalProcessor::Impl
@@ -785,6 +811,15 @@ struct FilmVizDirectMetalProcessor::Impl
     id<MTLBuffer> rgb_forward=nil;
     id<MTLBuffer> negative_granularity=nil;
     id<MTLBuffer> print_granularity=nil;
+    id<MTLBuffer> converted=nil;
+    id<MTLBuffer> halation_prepared=nil,halation_highlight=nil;
+    id<MTLBuffer> halation_near_a=nil,halation_near_b=nil;
+    id<MTLBuffer> halation_far_a=nil,halation_far_b=nil;
+    id<MTLBuffer> negative_residual=nil,print_residual=nil;
+    id<MTLBuffer> dense_a=nil,dense_b=nil;
+    id<MTLBuffer> mtf_weights=nil,grain_weights=nil;
+    id<MTLBuffer> output_staging=nil;
+    std::shared_ptr<RenderCompletion> last_render_completion;
     FilmDirectData data;
     SpatialResponseModel spatial_response;
     bool spatial_response_valid=false;
@@ -795,6 +830,13 @@ struct FilmVizDirectMetalProcessor::Impl
 
 FilmVizDirectMetalProcessor::FilmVizDirectMetalProcessor():impl_(std::make_unique<Impl>()) {}
 FilmVizDirectMetalProcessor::~FilmVizDirectMetalProcessor()=default;
+
+std::size_t FilmVizDirectMetalProcessor::device_allocated_bytes(void* command_queue)
+{
+    if (!command_queue) return 0;
+    id<MTLCommandQueue> queue=(__bridge id<MTLCommandQueue>)command_queue;
+    return static_cast<std::size_t>(queue.device.currentAllocatedSize);
+}
 
 void FilmVizDirectMetalProcessor::invalidate_profiles()
 {
@@ -809,6 +851,8 @@ void FilmVizDirectMetalProcessor::invalidate_profiles()
 bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& settings,
     const std::string& resources_directory, void* command_queue, std::string& error)
 {
+    // Host worker threads may retain their autorelease pool across many renders.
+    @autoreleasepool {
     error.clear();
     if (!std::isfinite(settings.grain_size) || settings.grain_size <= 0.0f
         || !std::isfinite(settings.image_width_mm) || settings.image_width_mm <= 0.0f
@@ -842,6 +886,14 @@ bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& sett
     if(!device) { error="Resolve Metal command queue has no device"; return false; }
     if(impl_->device!=device||!impl_->pipeline) {
         impl_->device=device; impl_->profile_key.clear();
+        impl_->converted=nil; impl_->last_render_completion.reset();
+        impl_->halation_prepared=nil; impl_->halation_highlight=nil;
+        impl_->halation_near_a=nil; impl_->halation_near_b=nil;
+        impl_->halation_far_a=nil; impl_->halation_far_b=nil;
+        impl_->negative_residual=nil; impl_->print_residual=nil;
+        impl_->dense_a=nil; impl_->dense_b=nil;
+        impl_->mtf_weights=nil; impl_->grain_weights=nil;
+        impl_->output_staging=nil;
         NSError* library_error=nil;
         MTLCompileOptions* options=[[MTLCompileOptions alloc] init];
         impl_->library=[device newLibraryWithSource:[NSString stringWithUTF8String:kDirectMetalSource]
@@ -877,7 +929,10 @@ bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& sett
         impl_->spatial_profile_key=profile_key;
     }
     const std::string key=std::to_string(reinterpret_cast<std::uintptr_t>((__bridge void*)device))+'\n'+profile_key;
-    if(key==impl_->profile_key&&impl_->rgb_data) return true;
+    if(key==impl_->profile_key&&impl_->rgb_data) {
+        log_metal_memory("memory_metal_profile_reused", device);
+        return true;
+    }
 
     {
         const std::lock_guard<std::mutex> lock(gDirectCacheMutex);
@@ -891,7 +946,9 @@ bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& sett
                 impl_->print_density=shared->print_density; impl_->viewer=shared->viewer; impl_->curves=shared->curves;
                 impl_->rgb_scale=shared->rgb_scale; impl_->rgb_data=shared->rgb_data; impl_->rgb_forward=shared->rgb_forward;
                 impl_->negative_granularity=shared->negative_granularity; impl_->print_granularity=shared->print_granularity;
-                impl_->profile_key=key; return true;
+                impl_->profile_key=key;
+                log_metal_memory("memory_metal_profile_shared", device);
+                return true;
             }
         }
     }
@@ -932,13 +989,17 @@ bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& sett
     shared->data=impl_->data; impl_->shared_resources=shared;
     { const std::lock_guard<std::mutex> lock(gDirectCacheMutex); gDirectCache[key]=shared; }
     impl_->profile_key=key;
+    log_metal_memory("memory_metal_profile_uploaded", device);
     return true;
+    } // @autoreleasepool
 }
 
 bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& settings, void* command_queue,
     const FilmVizOfxMetalFrame& source, const FilmVizOfxMetalFrame& destination,
     int render_x1,int render_y1,int render_x2,int render_y2,double time,std::string& error)
 {
+    // Host worker threads may retain their autorelease pool across many renders.
+    @autoreleasepool {
     error.clear();
     if(!command_queue||!source.buffer||!destination.buffer||!impl_->pipeline||!impl_->rgb_data) {
         error="FilmViz direct Metal processor is not configured"; return false;
@@ -1030,7 +1091,24 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     id<MTLDevice> device=queue.device;
     // OCIO evaluates the selected config transform before the spectral GPU pass.
     id<MTLBuffer> input_buffer=(__bridge id<MTLBuffer>)source.buffer;
-    id<MTLBuffer> converted=[device newBufferWithLength:input_buffer.length options:MTLResourceStorageModeShared];
+    // The host may call the next render before the previous GPU submission
+    // completes. Wait before writing the shared input buffer again.
+    if(impl_->last_render_completion) {
+        const auto completion=impl_->last_render_completion;
+        std::unique_lock<std::mutex> lock(completion->mutex);
+        completion->ready.wait(lock,[&] { return completion->done; });
+        const bool failed=completion->failed;
+        lock.unlock();
+        impl_->last_render_completion.reset();
+        if(failed) {
+            error="previous FilmViz Metal render failed"; return false;
+        }
+    }
+    if(!impl_->converted||impl_->converted.length<input_buffer.length) {
+        impl_->converted=[device newBufferWithLength:input_buffer.length
+            options:MTLResourceStorageModeShared];
+    }
+    id<MTLBuffer> converted=impl_->converted;
     if(!converted) { error="could not allocate OCIO input buffer"; return false; }
     id<MTLCommandBuffer> download=[queue commandBuffer];
     id<MTLBlitCommandEncoder> blit=[download blitCommandEncoder];
@@ -1043,15 +1121,21 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     } catch(const std::exception& exception) { error=exception.what(); return false; }
     id<MTLCommandBuffer> command=[queue commandBuffer];
     const MTLResourceOptions temporary_options=MTLResourceStorageModePrivate;
+    const auto scratch=[&](id<MTLBuffer>& buffer,NSUInteger bytes,MTLResourceOptions options) -> id<MTLBuffer> {
+        if(!buffer||buffer.length<bytes) buffer=[device newBufferWithLength:bytes options:options];
+        return buffer;
+    };
     id<MTLBuffer> prepared=converted;
     id<MTLBuffer> highlight=nil,near_a=nil,near_b=nil,far_a=nil,far_b=nil;
     FilmVizDirectSpatialParams spatial;
     if(use_halation) {
         const NSUInteger bytes=static_cast<NSUInteger>(source_width)*source_height*sizeof(float)*4u;
-        prepared=[device newBufferWithLength:bytes options:temporary_options];
-        highlight=[device newBufferWithLength:bytes options:temporary_options];
-        near_a=[device newBufferWithLength:bytes options:temporary_options]; near_b=[device newBufferWithLength:bytes options:temporary_options];
-        far_a=[device newBufferWithLength:bytes options:temporary_options]; far_b=[device newBufferWithLength:bytes options:temporary_options];
+        prepared=scratch(impl_->halation_prepared,bytes,temporary_options);
+        highlight=scratch(impl_->halation_highlight,bytes,temporary_options);
+        near_a=scratch(impl_->halation_near_a,bytes,temporary_options);
+        near_b=scratch(impl_->halation_near_b,bytes,temporary_options);
+        far_a=scratch(impl_->halation_far_a,bytes,temporary_options);
+        far_b=scratch(impl_->halation_far_b,bytes,temporary_options);
         if(!prepared||!highlight||!near_a||!near_b||!far_a||!far_b) { error="could not allocate FilmViz Metal halation buffers"; return false; }
         spatial.width=source_width; spatial.height=source_height; spatial.strength=settings.halation_strength; spatial.threshold=settings.halation_threshold;
         if(!encode_2d(command,impl_->prepare_halation,source_width,source_height,[&](id<MTLComputeCommandEncoder> e){
@@ -1077,9 +1161,10 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         p.reserved_header[0]=1u;
     }
     id<MTLBuffer> dense_a=nil,dense_b=nil;
+    std::size_t weight_buffer_bytes=0;
     const NSUInteger residual_bytes=use_grain?static_cast<NSUInteger>(render_width)*render_height*sizeof(float)*4u:sizeof(float)*4u;
-    id<MTLBuffer> negative_residual=[device newBufferWithLength:residual_bytes options:temporary_options];
-    id<MTLBuffer> print_residual=[device newBufferWithLength:residual_bytes options:temporary_options];
+    id<MTLBuffer> negative_residual=scratch(impl_->negative_residual,residual_bytes,temporary_options);
+    id<MTLBuffer> print_residual=scratch(impl_->print_residual,residual_bytes,temporary_options);
     if(!negative_residual||!print_residual) { error="could not allocate FilmViz grain residual buffers"; return false; }
     FilmVizDirectParams direct_p=p;
     id<MTLBuffer> direct_destination=(__bridge id<MTLBuffer>)destination.buffer;
@@ -1087,7 +1172,8 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         const NSUInteger bytes=static_cast<NSUInteger>(render_width)*render_height*sizeof(float)*4u;
         const std::uint64_t dense_row_bytes=static_cast<std::uint64_t>(render_width)*sizeof(float)*4u;
         if(dense_row_bytes>uint32_max) { error="FilmViz Metal render row exceeds the GPU parameter layout"; return false; }
-        dense_a=[device newBufferWithLength:bytes options:temporary_options]; dense_b=[device newBufferWithLength:bytes options:temporary_options];
+        dense_a=scratch(impl_->dense_a,bytes,temporary_options);
+        dense_b=scratch(impl_->dense_b,bytes,temporary_options);
         if(!dense_a||!dense_b) { error="could not allocate FilmViz Metal MTF buffers"; return false; }
         direct_destination=dense_a; direct_p.destination_x1=render_x1; direct_p.destination_y1=render_y1;
         direct_p.destination_x2=render_x2; direct_p.destination_y2=render_y2;
@@ -1101,7 +1187,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         [e setBytes:&direct_p length:sizeof(direct_p) atIndex:14]; [e setBuffer:prepared offset:0 atIndex:15];
         [e setBuffer:negative_residual offset:0 atIndex:16]; [e setBuffer:print_residual offset:0 atIndex:17];
     })) { error="could not encode FilmViz direct Metal render"; return false; }
-    const auto filter=[&](id<MTLBuffer> input,float negative_amount,float print_amount,bool gamma24,bool signed_residual) {
+    const auto filter=[&](id<MTLBuffer> input,float negative_amount,float print_amount,bool gamma24,bool signed_residual,id<MTLBuffer>& weight_slot) {
         SpatialResponseModel::Settings settings_mtf;
         settings_mtf.image_width_mm=settings.image_width_mm;
         settings_mtf.negative_amount=negative_amount; settings_mtf.print_amount=print_amount;
@@ -1110,8 +1196,12 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         if(!impl_->spatial_response.kernels(static_cast<int>(render_width),settings_mtf,channel_weights)) return false;
         std::vector<float> weights;
         for(const auto& channel:channel_weights) weights.insert(weights.end(),channel.begin(),channel.end());
-        id<MTLBuffer> weight_buffer=make_buffer(device,weights);
+        if(weights.empty()) return false;
+        const NSUInteger weight_bytes=weights.size()*sizeof(float);
+        id<MTLBuffer> weight_buffer=scratch(weight_slot,weight_bytes,MTLResourceStorageModeShared);
         if(!weight_buffer) return false;
+        std::memcpy(weight_buffer.contents,weights.data(),weight_bytes);
+        weight_buffer_bytes += weight_buffer.length;
         spatial.width=render_width; spatial.height=render_height;
         spatial.radius=static_cast<std::uint32_t>(channel_weights[0].size()/2u);
         spatial.gamma24=gamma24?1u:0u; spatial.reserved[0]=signed_residual?1u:0u;
@@ -1126,10 +1216,10 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
             [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3];
         });
     };
-    if(use_mtf&&!filter(dense_a,settings.negative_mtf_amount,settings.print_mtf_amount,settings.output_profile==1,use_grain)) {
+    if(use_mtf&&!filter(dense_a,settings.negative_mtf_amount,settings.print_mtf_amount,settings.output_profile==1,use_grain,impl_->mtf_weights)) {
         error="could not encode FilmViz image MTF"; return false;
     }
-    if(use_grain&&settings.print_mtf_amount>0.0f&&!filter(negative_residual,0.0f,settings.print_mtf_amount,false,true)) {
+    if(use_grain&&settings.print_mtf_amount>0.0f&&!filter(negative_residual,0.0f,settings.print_mtf_amount,false,true,impl_->grain_weights)) {
         error="could not encode FilmViz negative grain MTF"; return false;
     }
     if(use_mtf||use_grain) {
@@ -1139,12 +1229,15 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
             [e setBuffer:negative_residual offset:0 atIndex:3]; [e setBuffer:print_residual offset:0 atIndex:4];
         })) { error="could not encode FilmViz grain composite"; return false; }
     }
+    id<MTLBuffer> output_staging=nil;
+    id<MTLCommandBuffer> final_command=nil;
     if (settings.output_profile > 1) {
         // Convert only the rendered rectangle, preserving alpha and untouched pixels.
         id<MTLBuffer> output=(__bridge id<MTLBuffer>)destination.buffer;
         const NSUInteger row_bytes=static_cast<NSUInteger>(render_width)*4u*sizeof(float);
-        id<MTLBuffer> staging=[device newBufferWithLength:row_bytes*render_height options:MTLResourceStorageModeShared];
+        id<MTLBuffer> staging=scratch(impl_->output_staging,row_bytes*render_height,MTLResourceStorageModeShared);
         if(!staging) { error="could not allocate OCIO output buffer"; return false; }
+        output_staging=staging;
         id<MTLBlitCommandEncoder> download=[command blitCommandEncoder];
         for(NSUInteger y=0;y<render_height;++y) {
             const NSUInteger offset=(render_y1-destination.y1+y)*destination.row_bytes
@@ -1164,11 +1257,32 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
                 +(render_x1-destination.x1)*4u*sizeof(float);
             [blit copyFromBuffer:staging sourceOffset:y*row_bytes toBuffer:output destinationOffset:offset size:row_bytes];
         }
-        [blit endEncoding]; [upload commit];
+        [blit endEncoding];
+        final_command=upload;
     } else {
-        [command commit];
+        final_command=command;
+    }
+    const auto completion=std::make_shared<RenderCompletion>();
+    [final_command addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+        const std::lock_guard<std::mutex> lock(completion->mutex);
+        completion->failed=finished.status==MTLCommandBufferStatusError;
+        completion->done=true;
+        completion->ready.notify_all();
+    }];
+    [final_command commit];
+    impl_->last_render_completion=completion;
+    if (FilmVizOfxLog::memory_enabled()) {
+        const std::size_t temporary_bytes =
+            (use_halation ? prepared.length + highlight.length
+                + near_a.length + near_b.length + far_a.length + far_b.length : 0)
+            + negative_residual.length + print_residual.length
+            + dense_a.length + dense_b.length
+            + weight_buffer_bytes + output_staging.length;
+        log_metal_memory("memory_metal_temporary", device,
+            temporary_bytes, converted.length);
     }
     return true;
+    } // @autoreleasepool
 }
 
 bool FilmVizDirectMetalProcessor::render_cpu_bridge(
@@ -1177,6 +1291,8 @@ bool FilmVizDirectMetalProcessor::render_cpu_bridge(
     int render_x1,int render_y1,int render_x2,int render_y2,double time,
     const FilmVizOfxProcessor::Abort& abort,std::string& error)
 {
+    // Host worker threads may retain their autorelease pool across many renders.
+    @autoreleasepool {
     error.clear();
     if(!command_queue||!source.buffer||!destination.buffer) {
         error="invalid FilmViz Metal CPU bridge"; return false;
@@ -1206,4 +1322,5 @@ bool FilmVizDirectMetalProcessor::render_cpu_bridge(
     [upload_blit copyFromBuffer:destination_staging sourceOffset:0 toBuffer:destination_buffer destinationOffset:0 size:destination_buffer.length];
     [upload_blit endEncoding]; [upload commit];
     return true;
+    } // @autoreleasepool
 }

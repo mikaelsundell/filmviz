@@ -5,6 +5,7 @@
 
 #include "filmvizofxprocessor.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -16,6 +17,10 @@ struct FilmVizMetalPreviewResult
     int height = 0;
     std::vector<std::uint8_t> display_rgb;
     std::vector<float> scope_rgb;
+    std::size_t metal_bytes_before = 0;
+    std::size_t metal_bytes_configured = 0;
+    std::size_t metal_bytes_submitted = 0;
+    std::size_t metal_bytes_fenced = 0;
 };
 
 class FilmVizMetalPreview
@@ -32,6 +37,8 @@ public:
     static bool available();
 
     void invalidate_profiles();
+
+    std::size_t metal_allocated_bytes() const;
 
     bool render(
         const std::string& input_filename,

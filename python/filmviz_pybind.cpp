@@ -1035,6 +1035,7 @@ PYBIND11_MODULE(filmviz_python, module)
         .def(py::init<>())
         .def_static("available", &FilmVizMetalPreview::available)
         .def("invalidate_profiles", &FilmVizMetalPreview::invalidate_profiles)
+        .def("metal_allocated_bytes", &FilmVizMetalPreview::metal_allocated_bytes)
         .def(
             "render",
             [](FilmVizMetalPreview& preview,
@@ -1067,6 +1068,11 @@ PYBIND11_MODULE(filmviz_python, module)
                 }
 
                 py::dict output;
+                output["metal_bytes_before"] = result.metal_bytes_before;
+                output["metal_bytes_configured"] = result.metal_bytes_configured;
+                output["metal_bytes_submitted"] = result.metal_bytes_submitted;
+                output["metal_bytes_fenced"] = result.metal_bytes_fenced;
+                output["metal_bytes_after_pool"] = preview.metal_allocated_bytes();
                 output["width"] = result.width;
                 output["height"] = result.height;
                 output["rgb"] = py::bytes(
