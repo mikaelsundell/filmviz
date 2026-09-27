@@ -12,6 +12,7 @@
 
 #include "ofxCore.h"
 #include "filmvizofxprocessor.h"
+#include "filmvizsavedialog.h"
 #include "filmvizofxlog.h"
 #include "filmcolorresponse.h"
 #include "filmformat.h"
@@ -91,7 +92,6 @@ constexpr const char* kParamEnableHalation = "enableHalation";
 constexpr const char* kParamHalationStrength = "halationStrength";
 constexpr const char* kParamHalationRadius = "halationRadius";
 constexpr const char* kParamHalationThreshold = "halationThreshold";
-constexpr const char* kParamWorkerThreads = "workerThreads";
 
 constexpr const char* kGroupSetup = "groupSetup";
 constexpr const char* kGroupNegative = "groupNegative";
@@ -173,7 +173,6 @@ struct InstanceData
     OfxParamHandle image_width_mm = nullptr;
     OfxParamHandle negative_mtf = nullptr;
     OfxParamHandle print_mtf = nullptr;
-    OfxParamHandle threads = nullptr;
 
     OfxParamHandle grainShadows = nullptr;
     OfxParamHandle grainMidtones = nullptr;
@@ -398,7 +397,6 @@ read_settings(
     int print = 0;
     int output = 1;
     int film_format = 5;
-    int threads = 0;
 
     int grain_enabled = 0;
     int grain_seed = 1;
@@ -452,7 +450,6 @@ read_settings(
         gParameterSuite->paramGetValueAtTime(instance.image_width_mm, time, &image_width_mm),
         gParameterSuite->paramGetValueAtTime(instance.negative_mtf, time, &negative_mtf),
         gParameterSuite->paramGetValueAtTime(instance.print_mtf, time, &print_mtf),
-        gParameterSuite->paramGetValueAtTime(instance.threads, time, &threads),
         gParameterSuite->paramGetValueAtTime(instance.grain_enabled, time, &grain_enabled),
         gParameterSuite->paramGetValueAtTime(instance.negative_grain, time, &negative_grain),
         gParameterSuite->paramGetValueAtTime(instance.print_grain, time, &print_grain),
@@ -493,7 +490,7 @@ read_settings(
     settings.print_profile =
         print_profiles[static_cast<std::size_t>(print)].identifier;
     settings.output_profile = output;
-    settings.threads = threads;
+    settings.threads = 0; // Automatic worker selection for the OFX adapter.
     settings.exposure_stops = static_cast<float>(exposure);
     settings.negative_flash_percent = static_cast<float>(negative_flash);
     settings.print_flash_percent = static_cast<float>(print_flash);
@@ -639,7 +636,6 @@ create_instance(
         && fetch_param(parameter_set, kParamImageWidthMm, instance->image_width_mm)
         && fetch_param(parameter_set, kParamNegativeMtf, instance->negative_mtf)
         && fetch_param(parameter_set, kParamPrintMtf, instance->print_mtf)
-        && fetch_param(parameter_set, kParamWorkerThreads, instance->threads)
         && fetch_param(parameter_set, "grainShadows", instance->grainShadows)
         && fetch_param(parameter_set, "grainMidtones", instance->grainMidtones)
         && fetch_param(parameter_set, "grainHighlights", instance->grainHighlights)
@@ -1227,14 +1223,6 @@ define_lut_export_parameters(OfxParamSetHandle parameters)
     gPropertySuite->propSetInt(properties, kOfxParamPropDefault, 0, 1);
     gPropertySuite->propSetInt(properties, kOfxParamPropAnimates, 0, 0);
     gPropertySuite->propSetInt(properties, kOfxParamPropEvaluateOnChange, 0, 0);
-    if (gParameterSuite->paramDefine(parameters, kOfxParamTypeString, "lutExportPath", &properties) != kOfxStatOK) return false;
-    set_parameter_parent(properties, "groupLutExport");
-    gPropertySuite->propSetString(properties, kOfxPropLabel, 0, "Output .cube file");
-    gPropertySuite->propSetString(properties, kOfxParamPropDefault, 0, "");
-    gPropertySuite->propSetString(properties, kOfxParamPropStringMode, 0, kOfxParamStringIsFilePath);
-    gPropertySuite->propSetInt(properties, kOfxParamPropStringFilePathExists, 0, 0);
-    gPropertySuite->propSetInt(properties, kOfxParamPropAnimates, 0, 0);
-    gPropertySuite->propSetInt(properties, kOfxParamPropEvaluateOnChange, 0, 0);
     if (gParameterSuite->paramDefine(parameters, kOfxParamTypePushButton, "exportLut", &properties) != kOfxStatOK) return false;
     set_parameter_parent(properties, "groupLutExport");
     gPropertySuite->propSetString(properties, kOfxPropLabel, 0, "Export LUT");
@@ -1258,19 +1246,18 @@ export_lut(OfxImageEffectHandle effect, OfxPropertySetHandle arguments)
     gPropertySuite->propGetDouble(arguments, kOfxPropTime, 0, &time);
     FilmVizOfxRenderSettings settings;
     OfxParamSetHandle parameters = nullptr;
-    OfxParamHandle path_handle = nullptr, size_handle = nullptr;
-    char* path = nullptr;
+    OfxParamHandle size_handle = nullptr;
     int size_index = 1;
     if (!read_settings(*instance, time, settings)
         || gEffectSuite->getParamSet(effect, &parameters) != kOfxStatOK
-        || !fetch_param(parameters, "lutExportPath", path_handle)
         || !fetch_param(parameters, "lutExportSize", size_handle)
-        || gParameterSuite->paramGetValue(path_handle, &path) != kOfxStatOK
         || gParameterSuite->paramGetValue(size_handle, &size_index) != kOfxStatOK) return kOfxStatFailed;
     const int sizes[] = {17, 33, 65};
     std::string error;
-    const bool success = filmviz_export_cube(settings, instance->resources_directory,
-        path ? path : "", sizes[std::clamp(size_index, 0, 2)], error);
+    const std::string path = filmviz_save_lut_dialog(error);
+    if (path.empty() && error.empty()) return kOfxStatOK;
+    const bool success = !path.empty() && filmviz_export_cube(settings, instance->resources_directory,
+        path, sizes[std::clamp(size_index, 0, 2)], error);
     const std::string message = success ? std::string("LUT exported: ") + path : error;
     if (gMessageSuiteV1) gMessageSuiteV1->message(effect,
         success ? kOfxMessageMessage : kOfxMessageError, "FilmVizLUT", "%s", message.c_str());
@@ -1354,13 +1341,12 @@ describe_in_context(
     std::vector<const char*> output_profiles;
     for (const auto& output : outputs) output_profiles.push_back(output.c_str());
 
-    if (!define_group_parameter(parameter_set, kGroupSetup, "Setup", true)
+    if (!define_group_parameter(parameter_set, kGroupSetup, "Pipeline", true)
         || !define_group_parameter(parameter_set, kGroupNegative, "Negative", true)
         || !define_group_parameter(parameter_set, kGroupPrint, "Print", true)
         || !define_group_parameter(parameter_set, kGroupSpatial, "Spatial Response", false)
         || !define_group_parameter(parameter_set, kGroupGrain, "Grain", false)
         || !define_group_parameter(parameter_set, kGroupHalation, "Halation", false)
-        || !define_group_parameter(parameter_set, kGroupAdvanced, "Advanced", false)
         || !define_choice_parameter(parameter_set, kParamInputProfile, "Input profile", input_profiles.data(), static_cast<int>(input_profiles.size()), 0, kGroupSetup)
         || !define_color_selectors(parameter_set, false)
         || !define_choice_parameter(parameter_set, kParamNegativeProfile, "Stock", negative_options.data(), static_cast<int>(negative_options.size()), 0, kGroupNegative)
@@ -1409,8 +1395,8 @@ describe_in_context(
         || !define_double_parameter(parameter_set, kParamHalationStrength, "Strength", 0.0, 0.0, 1.0, kGroupHalation)
         || !define_double_parameter(parameter_set, kParamHalationRadius, "Radius", 12.0, 0.0, 200.0, kGroupHalation)
         || !define_double_parameter(parameter_set, kParamHalationThreshold, "Threshold", 0.7, 0.0, 4.0, kGroupHalation)
+        || !define_group_parameter(parameter_set, kGroupAdvanced, "Advanced", false)
         || !define_double_parameter(parameter_set, kParamMiddleGray, "Middle Gray", 0.18, 0.01, 1.0, kGroupAdvanced)
-        || !define_integer_parameter(parameter_set, kParamWorkerThreads, "Worker Threads", 0, 0, 64, kGroupAdvanced)
         || !define_lut_export_parameters(parameter_set)) {
 
         return kOfxStatFailed;

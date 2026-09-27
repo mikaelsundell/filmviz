@@ -74,6 +74,13 @@ add_library(filmviz_ofx MODULE
     filmvizofx.cpp
 )
 
+if(NOT APPLE)
+    target_sources(filmviz_ofx PRIVATE filmvizsavedialog.cpp)
+    if(WIN32)
+        target_link_libraries(filmviz_ofx PRIVATE comdlg32)
+    endif()
+endif()
+
 math(EXPR FILMVIZ_OFX_VERSION_MAJOR
     "${PROJECT_VERSION_MAJOR} + 1")
 math(EXPR FILMVIZ_OFX_VERSION_MINOR
@@ -121,6 +128,7 @@ if(APPLE)
     target_sources(filmviz_ofx
         PRIVATE
             filmvizdirectmetalprocessor.mm
+            filmvizsavedialog.mm
             filmvizdirectmetalprocessor.h
     )
 
@@ -134,6 +142,7 @@ if(APPLE)
 
     target_link_libraries(filmviz_ofx
         PRIVATE
+            "-framework AppKit"
             "-framework Foundation"
             "-framework Metal"
     )

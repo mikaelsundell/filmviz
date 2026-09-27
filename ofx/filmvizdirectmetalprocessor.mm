@@ -606,7 +606,7 @@ kernel void filmviz_prepare_halation(
     float4 src=read_pixel(source,p.source_row_bytes,x,y,p.source_x1,p.source_y1);
     float3 ap0=src.xyz;
     float exposure_scale=exp2(p.exposure_stops);
-    ap0*=exposure_scale;
+    // Match the normal path: reconstruct unexposed AP0, then scale exposure once.
     float luminance=dot(float3(0.34396645f,0.72816610f,-0.07213255f),ap0);
     float scene_scale=isfinite(luminance)&&luminance>0.18f?luminance/0.18f:1.0f;
     float3 reconstruction=ap0/scene_scale;
@@ -624,7 +624,7 @@ kernel void filmviz_prepare_halation(
     float3 reference=p.reference_negative_exposure.xyz*(p.middle_gray/0.18f);
     exposure=(exposure+reference*(p.negative_flash_percent*0.01f))*exposure_scale;
     // Exposure carries intensity; luminance only selects the source mask.
-    float safe_luminance=max(0.0f,luminance), weight=1.0f;
+    float safe_luminance=max(0.0f,luminance*exposure_scale), weight=1.0f;
     if(spatial.threshold>1e-8f) {
         float onset=0.5f*spatial.threshold;
         if(safe_luminance<=onset) weight=0.0f;

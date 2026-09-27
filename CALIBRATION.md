@@ -492,3 +492,18 @@ data. It increases relative participation of lower-exposure regions and reduces
 the extra weighting formerly given to scene luminance above one. It does not
 guarantee a stronger halo everywhere. Visual comparison and strength retuning
 remain pending; no builds or tests were run.
+
+### OFX halation exposure parity (0.1.1)
+
+Source review found that the direct GPU halation preparation reconstructed
+AP0 after multiplying it by `2^exposure_stops`, then multiplied the resulting
+negative exposure by the same factor again. The normal direct path applies
+the exposure adjustment once. This caused a global brightness discontinuity
+when enabling even very weak halation at nonzero exposure.
+
+Preparation now reconstructs the original AP0, adds the existing flash term,
+and applies the exposure multiplier once, matching the normal path. The
+highlight mask still uses exposure-adjusted scene luminance. The canonical
+kernel supplies both Metal and OpenCL. No stock calibration or scattering
+coefficients changed. This correction was source-reviewed only; GPU runtime
+verification remains pending.

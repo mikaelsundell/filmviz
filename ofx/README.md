@@ -373,8 +373,9 @@ preset facilities where available. Python app presets remain separate.
 
 ## Export LUT
 
-In **LUT Export**, choose a new `.cube` output path and a grid size (17, 33 or
-65; default 33), then press **Export LUT**. Generation runs synchronously and
+In **LUT Export**, choose a grid size (17, 33 or 65; default 33), then press
+**Export LUT** to open the native save dialog on macOS or Windows. Choose a
+new `.cube` filename; cancelling the dialog does not generate a LUT. Generation runs synchronously and
 may temporarily block the host UI. Existing files are not overwritten.
 
 The LUT samples this node's current-frame color settings through the CPU
