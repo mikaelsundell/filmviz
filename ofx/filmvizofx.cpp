@@ -175,6 +175,21 @@ struct InstanceData
     OfxParamHandle print_mtf = nullptr;
     OfxParamHandle threads = nullptr;
 
+    OfxParamHandle grainShadows = nullptr;
+    OfxParamHandle grainMidtones = nullptr;
+    OfxParamHandle grainHighlights = nullptr;
+    OfxParamHandle response_response_amount = nullptr;
+    OfxParamHandle response_chroma_compression = nullptr;
+    OfxParamHandle response_chroma_knee = nullptr;
+    OfxParamHandle response_density_center = nullptr;
+    OfxParamHandle response_density_width = nullptr;
+    OfxParamHandle response_warm_protection = nullptr;
+    OfxParamHandle response_warm_hue_center = nullptr;
+    OfxParamHandle response_warm_hue_width = nullptr;
+    OfxParamHandle response_warm_hue_shift = nullptr;
+    OfxParamHandle grainTonalEnabled = nullptr;
+    OfxParamHandle responseEnabled = nullptr;
+    OfxParamHandle fullQualityEffects = nullptr;
     OfxParamHandle grain_enabled = nullptr;
     OfxParamHandle negative_grain = nullptr;
     OfxParamHandle print_grain = nullptr;
@@ -502,6 +517,47 @@ read_settings(
     settings.negative_mtf_amount = static_cast<float>(negative_mtf);
     settings.print_mtf_amount = static_cast<float>(print_mtf);
 
+    double value_grainShadows = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.grainShadows, time, &value_grainShadows) != kOfxStatOK) return false;
+    settings.grain_shadows = static_cast<float>(value_grainShadows);
+    double value_grainMidtones = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.grainMidtones, time, &value_grainMidtones) != kOfxStatOK) return false;
+    settings.grain_midtones = static_cast<float>(value_grainMidtones);
+    double value_grainHighlights = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.grainHighlights, time, &value_grainHighlights) != kOfxStatOK) return false;
+    settings.grain_highlights = static_cast<float>(value_grainHighlights);
+    double value_response_response_amount = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_response_amount, time, &value_response_response_amount) != kOfxStatOK) return false;
+    settings.color_response.response_amount = static_cast<float>(value_response_response_amount);
+    double value_response_chroma_compression = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_chroma_compression, time, &value_response_chroma_compression) != kOfxStatOK) return false;
+    settings.color_response.chroma_compression = static_cast<float>(value_response_chroma_compression);
+    double value_response_chroma_knee = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_chroma_knee, time, &value_response_chroma_knee) != kOfxStatOK) return false;
+    settings.color_response.chroma_knee = static_cast<float>(value_response_chroma_knee);
+    double value_response_density_center = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_density_center, time, &value_response_density_center) != kOfxStatOK) return false;
+    settings.color_response.density_center = static_cast<float>(value_response_density_center);
+    double value_response_density_width = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_density_width, time, &value_response_density_width) != kOfxStatOK) return false;
+    settings.color_response.density_width = static_cast<float>(value_response_density_width);
+    double value_response_warm_protection = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_warm_protection, time, &value_response_warm_protection) != kOfxStatOK) return false;
+    settings.color_response.warm_protection = static_cast<float>(value_response_warm_protection);
+    double value_response_warm_hue_center = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_warm_hue_center, time, &value_response_warm_hue_center) != kOfxStatOK) return false;
+    settings.color_response.warm_hue_center = static_cast<float>(value_response_warm_hue_center);
+    double value_response_warm_hue_width = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_warm_hue_width, time, &value_response_warm_hue_width) != kOfxStatOK) return false;
+    settings.color_response.warm_hue_width = static_cast<float>(value_response_warm_hue_width);
+    double value_response_warm_hue_shift = 0.0;
+    if (gParameterSuite->paramGetValueAtTime(instance.response_warm_hue_shift, time, &value_response_warm_hue_shift) != kOfxStatOK) return false;
+    settings.color_response.warm_hue_shift = static_cast<float>(value_response_warm_hue_shift);
+    int tonal = 1, response_enabled = 1;
+    if (gParameterSuite->paramGetValueAtTime(instance.grainTonalEnabled, time, &tonal) != kOfxStatOK
+        || gParameterSuite->paramGetValueAtTime(instance.responseEnabled, time, &response_enabled) != kOfxStatOK) return false;
+    settings.grain_tonal_enabled = tonal != 0;
+    if (!response_enabled) settings.color_response.response_amount = 0.0f;
     settings.grain_enabled = grain_enabled != 0;
     settings.negative_grain = static_cast<float>(negative_grain);
     settings.print_grain = static_cast<float>(print_grain);
@@ -584,6 +640,21 @@ create_instance(
         && fetch_param(parameter_set, kParamNegativeMtf, instance->negative_mtf)
         && fetch_param(parameter_set, kParamPrintMtf, instance->print_mtf)
         && fetch_param(parameter_set, kParamWorkerThreads, instance->threads)
+        && fetch_param(parameter_set, "grainShadows", instance->grainShadows)
+        && fetch_param(parameter_set, "grainMidtones", instance->grainMidtones)
+        && fetch_param(parameter_set, "grainHighlights", instance->grainHighlights)
+        && fetch_param(parameter_set, "response_response_amount", instance->response_response_amount)
+        && fetch_param(parameter_set, "response_chroma_compression", instance->response_chroma_compression)
+        && fetch_param(parameter_set, "response_chroma_knee", instance->response_chroma_knee)
+        && fetch_param(parameter_set, "response_density_center", instance->response_density_center)
+        && fetch_param(parameter_set, "response_density_width", instance->response_density_width)
+        && fetch_param(parameter_set, "response_warm_protection", instance->response_warm_protection)
+        && fetch_param(parameter_set, "response_warm_hue_center", instance->response_warm_hue_center)
+        && fetch_param(parameter_set, "response_warm_hue_width", instance->response_warm_hue_width)
+        && fetch_param(parameter_set, "response_warm_hue_shift", instance->response_warm_hue_shift)
+        && fetch_param(parameter_set, "grainTonalEnabled", instance->grainTonalEnabled)
+        && fetch_param(parameter_set, "responseEnabled", instance->responseEnabled)
+        && fetch_param(parameter_set, "fullQualityEffects", instance->fullQualityEffects)
         && fetch_param(parameter_set, kParamEnableGrain, instance->grain_enabled)
         && fetch_param(parameter_set, kParamNegativeGrain, instance->negative_grain)
         && fetch_param(parameter_set, kParamPrintGrain, instance->print_grain)
@@ -953,6 +1024,11 @@ define_boolean_parameter(
         0,
         default_value);
 
+    if (std::strcmp(name, "fullQualityEffects") == 0)
+        gPropertySuite->propSetString(properties, kOfxParamPropHint, 0,
+            "Enable grain and halation at their stored strengths for non-draft renders. "
+            "This can include the viewer: OFX cannot reliably distinguish final export. "
+            "Hosts without a draft flag always qualify. Leave off for manual control.");
     return set_parameter_parent(properties, parent);
 }
 
@@ -1137,6 +1213,70 @@ define_double_parameter(
     return set_parameter_parent(properties, parent);
 }
 
+bool
+define_lut_export_parameters(OfxParamSetHandle parameters)
+{
+    if (!define_group_parameter(parameters, "groupLutExport", "LUT Export", false)) return false;
+    const char* sizes[] = {"17", "33", "65"};
+    OfxPropertySetHandle properties = nullptr;
+    if (gParameterSuite->paramDefine(parameters, kOfxParamTypeChoice, "lutExportSize", &properties) != kOfxStatOK) return false;
+    set_parameter_parent(properties, "groupLutExport");
+    gPropertySuite->propSetString(properties, kOfxPropLabel, 0, "LUT Size");
+    for (int index = 0; index < 3; ++index)
+        gPropertySuite->propSetString(properties, kOfxParamPropChoiceOption, index, sizes[index]);
+    gPropertySuite->propSetInt(properties, kOfxParamPropDefault, 0, 1);
+    gPropertySuite->propSetInt(properties, kOfxParamPropAnimates, 0, 0);
+    gPropertySuite->propSetInt(properties, kOfxParamPropEvaluateOnChange, 0, 0);
+    if (gParameterSuite->paramDefine(parameters, kOfxParamTypeString, "lutExportPath", &properties) != kOfxStatOK) return false;
+    set_parameter_parent(properties, "groupLutExport");
+    gPropertySuite->propSetString(properties, kOfxPropLabel, 0, "Output .cube file");
+    gPropertySuite->propSetString(properties, kOfxParamPropDefault, 0, "");
+    gPropertySuite->propSetString(properties, kOfxParamPropStringMode, 0, kOfxParamStringIsFilePath);
+    gPropertySuite->propSetInt(properties, kOfxParamPropStringFilePathExists, 0, 0);
+    gPropertySuite->propSetInt(properties, kOfxParamPropAnimates, 0, 0);
+    gPropertySuite->propSetInt(properties, kOfxParamPropEvaluateOnChange, 0, 0);
+    if (gParameterSuite->paramDefine(parameters, kOfxParamTypePushButton, "exportLut", &properties) != kOfxStatOK) return false;
+    set_parameter_parent(properties, "groupLutExport");
+    gPropertySuite->propSetString(properties, kOfxPropLabel, 0, "Export LUT");
+    gPropertySuite->propSetInt(properties, kOfxParamPropEvaluateOnChange, 0, 0);
+    gPropertySuite->propSetString(properties, kOfxParamPropHint, 0,
+        "Export this node's color transform at the current frame, including input/output profiles. "
+        "Input domain 0..1. Excludes grain, halation and MTF. Existing files are never overwritten. "
+        "Generation is synchronous and may take some time.");
+    return true;
+}
+
+OfxStatus
+export_lut(OfxImageEffectHandle effect, OfxPropertySetHandle arguments)
+{
+    char* reason = nullptr;
+    if (gPropertySuite->propGetString(arguments, kOfxPropChangeReason, 0, &reason) != kOfxStatOK
+        || !reason || std::strcmp(reason, kOfxChangeUserEdited) != 0) return kOfxStatOK;
+    auto* instance = instance_data(effect);
+    if (!instance) return kOfxStatFailed;
+    double time = 0.0;
+    gPropertySuite->propGetDouble(arguments, kOfxPropTime, 0, &time);
+    FilmVizOfxRenderSettings settings;
+    OfxParamSetHandle parameters = nullptr;
+    OfxParamHandle path_handle = nullptr, size_handle = nullptr;
+    char* path = nullptr;
+    int size_index = 1;
+    if (!read_settings(*instance, time, settings)
+        || gEffectSuite->getParamSet(effect, &parameters) != kOfxStatOK
+        || !fetch_param(parameters, "lutExportPath", path_handle)
+        || !fetch_param(parameters, "lutExportSize", size_handle)
+        || gParameterSuite->paramGetValue(path_handle, &path) != kOfxStatOK
+        || gParameterSuite->paramGetValue(size_handle, &size_index) != kOfxStatOK) return kOfxStatFailed;
+    const int sizes[] = {17, 33, 65};
+    std::string error;
+    const bool success = filmviz_export_cube(settings, instance->resources_directory,
+        path ? path : "", sizes[std::clamp(size_index, 0, 2)], error);
+    const std::string message = success ? std::string("LUT exported: ") + path : error;
+    if (gMessageSuiteV1) gMessageSuiteV1->message(effect,
+        success ? kOfxMessageMessage : kOfxMessageError, "FilmVizLUT", "%s", message.c_str());
+    return kOfxStatOK;
+}
+
 OfxStatus
 describe_in_context(
     OfxImageEffectHandle effect)
@@ -1243,18 +1383,35 @@ describe_in_context(
         || !define_double_parameter(parameter_set, kParamImageWidthMm, "Custom Image Width (mm)", 24.89, 1.0, 100.0, kGroupSpatial)
         || !define_double_parameter(parameter_set, kParamNegativeMtf, "Negative MTF", 0.0, 0.0, 2.0, kGroupSpatial)
         || !define_double_parameter(parameter_set, kParamPrintMtf, "Print MTF", 0.0, 0.0, 2.0, kGroupSpatial)
-        || !define_boolean_parameter(parameter_set, kParamEnableGrain, "Enable", 0, kGroupGrain)
+        || !define_group_parameter(parameter_set, "groupColorResponse", "Color Response", false)
+        || !define_double_parameter(parameter_set, "grainShadows", "Shadow grain", 1, 0, 2, kGroupGrain)
+        || !define_double_parameter(parameter_set, "grainMidtones", "Midtone grain", 1, 0, 2, kGroupGrain)
+        || !define_double_parameter(parameter_set, "grainHighlights", "Highlight grain", 1, 0, 2, kGroupGrain)
+        || !define_double_parameter(parameter_set, "response_response_amount", "Response amount", 1, 0, 2, "groupColorResponse")
+        || !define_double_parameter(parameter_set, "response_chroma_compression", "Chroma compression", 0.22, 0, 2, "groupColorResponse")
+        || !define_double_parameter(parameter_set, "response_chroma_knee", "Chroma knee", 0.5, 0.05, 2, "groupColorResponse")
+        || !define_double_parameter(parameter_set, "response_density_center", "Density center", 1.25, 0, 3, "groupColorResponse")
+        || !define_double_parameter(parameter_set, "response_density_width", "Density width", 1, 0.25, 3, "groupColorResponse")
+        || !define_double_parameter(parameter_set, "response_warm_protection", "Warm protection", 0.5, 0, 1, "groupColorResponse")
+        || !define_double_parameter(parameter_set, "response_warm_hue_center", "Warm hue center (degrees)", 0, -180, 180, "groupColorResponse")
+        || !define_double_parameter(parameter_set, "response_warm_hue_width", "Warm hue width", 1, 0.25, 3, "groupColorResponse")
+        || !define_double_parameter(parameter_set, "response_warm_hue_shift", "Warm hue shift (degrees)", 0, -45, 45, "groupColorResponse")
+        || !define_boolean_parameter(parameter_set, "grainTonalEnabled", "Enable tonal grain shaping", 1, kGroupGrain)
+        || !define_boolean_parameter(parameter_set, "responseEnabled", "Enable Color Response", 1, "groupColorResponse")
+        || !define_boolean_parameter(parameter_set, "fullQualityEffects", "Enable both in full-quality renders", 0, kGroupSpatial)
+        || !define_boolean_parameter(parameter_set, kParamEnableGrain, "Enable Grain", 0, kGroupGrain)
         || !define_double_parameter(parameter_set, kParamNegativeGrain, "Negative", 0.0, 0.0, 2.0, kGroupGrain)
         || !define_double_parameter(parameter_set, kParamPrintGrain, "Print", 0.0, 0.0, 2.0, kGroupGrain)
         || !define_double_parameter(parameter_set, kParamGrainSize, "Scale multiplier", 1.0, 0.25, 10.0, kGroupGrain)
         || !define_double_parameter(parameter_set, kParamGrainChroma, "Chroma", 1.0, 0.0, 2.0, kGroupGrain)
         || !define_integer_parameter(parameter_set, kParamGrainSeed, "Seed", 1, 0, 1000000, kGroupGrain)
-        || !define_boolean_parameter(parameter_set, kParamEnableHalation, "Enable", 0, kGroupHalation)
+        || !define_boolean_parameter(parameter_set, kParamEnableHalation, "Enable Halation", 0, kGroupHalation)
         || !define_double_parameter(parameter_set, kParamHalationStrength, "Strength", 0.0, 0.0, 1.0, kGroupHalation)
         || !define_double_parameter(parameter_set, kParamHalationRadius, "Radius", 12.0, 0.0, 200.0, kGroupHalation)
         || !define_double_parameter(parameter_set, kParamHalationThreshold, "Threshold", 0.7, 0.0, 4.0, kGroupHalation)
         || !define_double_parameter(parameter_set, kParamMiddleGray, "Middle Gray", 0.18, 0.01, 1.0, kGroupAdvanced)
-        || !define_integer_parameter(parameter_set, kParamWorkerThreads, "Worker Threads", 0, 0, 64, kGroupAdvanced)) {
+        || !define_integer_parameter(parameter_set, kParamWorkerThreads, "Worker Threads", 0, 0, 64, kGroupAdvanced)
+        || !define_lut_export_parameters(parameter_set)) {
 
         return kOfxStatFailed;
     }
@@ -1462,6 +1619,16 @@ render(
 
         release_images();
         return kOfxStatFailed;
+    }
+
+    int full_quality_effects = 0;
+    int draft = 0;
+    gParameterSuite->paramGetValueAtTime(instance->fullQualityEffects, time, &full_quality_effects);
+    // OFX defines missing draft quality as full quality. This is not a Deliver detector.
+    gPropertySuite->propGetInt(in_args, kOfxImageEffectPropRenderQualityDraft, 0, &draft);
+    if (full_quality_effects && !draft) {
+        settings.grain_enabled = true;
+        settings.halation_enabled = true;
     }
 
     std::ostringstream render_details;
@@ -1705,6 +1872,10 @@ try {
     }
 
     if (std::strcmp(action, kOfxActionInstanceChanged) == 0) {
+        char* parameter = nullptr;
+        if (gPropertySuite->propGetString(in_args, kOfxPropName, 0, &parameter) == kOfxStatOK
+            && parameter && std::strcmp(parameter, "exportLut") == 0)
+            return export_lut(effect, in_args);
         return color_controls_changed(effect, in_args);
     }
 

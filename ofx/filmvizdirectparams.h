@@ -57,6 +57,10 @@ struct alignas(16) FilmVizDirectParams
     float print_grain = 0.0f;
     float grain_size = 1.0f;
     float grain_chroma = 1.0f;
+    std::uint32_t grain_tonal_enabled = 1;
+    float grain_shadows = 1.0f;
+    float grain_midtones = 1.0f;
+    float grain_highlights = 1.0f;
     float granularity_density_min = 0.0f;
     float granularity_density_max = 4.0f;
     float reserved_grain_float[2] = {}; // Reference aperture in pixels, then reserved.
@@ -89,7 +93,7 @@ struct alignas(16) FilmVizDirectParams
     std::uint32_t curve_print_12[4] = {};
 };
 
-static_assert(sizeof(FilmVizDirectParams) == 480,
+static_assert(sizeof(FilmVizDirectParams) == 496,
     "FilmVizDirectParams must match the GPU constant-buffer layout");
 
 struct alignas(16) FilmVizDirectSpatialParams

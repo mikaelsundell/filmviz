@@ -390,7 +390,8 @@ process_image(
     int threads,
     const py::object& progress,
     const py::object& cancel,
-    const py::dict& color_response)
+    const py::dict& color_response,
+    bool grain_tonal_enabled, float grain_shadows, float grain_midtones, float grain_highlights)
 {
     validate_stock_profiles(negative, print);
     const InputTransform::Encoding encoding = input_encoding(input, resources);
@@ -432,6 +433,10 @@ process_image(
     settings.print_grain_strength = print_grain;
     settings.grain_size_pixels = grain_size;
     settings.grain_chroma = grain_chroma;
+    settings.grain_tonal_enabled = grain_tonal_enabled;
+    settings.grain_shadows = grain_shadows;
+    settings.grain_midtones = grain_midtones;
+    settings.grain_highlights = grain_highlights;
     settings.grain_seed = grain_seed;
     settings.film_format = film_format;
     settings.image_width_mm = image_width_mm;
@@ -969,6 +974,13 @@ metal_preview_settings(
         dictionary_value<float>(values, "grain_size", 1.0f);
     settings.grain_chroma =
         dictionary_value<float>(values, "grain_chroma", 1.0f);
+    settings.grain_tonal_enabled = dictionary_value<bool>(values, "grain_tonal_enabled", true);
+    settings.grain_shadows = dictionary_value<float>(values, "grain_shadows", 1.0f);
+    settings.grain_midtones = dictionary_value<float>(values, "grain_midtones", 1.0f);
+    settings.grain_highlights = dictionary_value<float>(values, "grain_highlights", 1.0f);
+    for (float gain : {settings.grain_shadows, settings.grain_midtones, settings.grain_highlights})
+        if (!std::isfinite(gain) || gain < 0.0f || gain > 2.0f)
+            throw std::runtime_error("grain tonal multipliers must be finite and in 0..2");
     settings.grain_seed =
         dictionary_value<std::uint32_t>(values, "grain_seed", 1u);
 
@@ -1257,7 +1269,11 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("threads") = 0,
         py::arg("progress") = py::none(),
         py::arg("cancel") = py::none(),
-        py::arg("color_response") = py::dict());
+        py::arg("color_response") = py::dict(),
+        py::arg("grain_tonal_enabled") = true,
+        py::arg("grain_shadows") = 1.0f,
+        py::arg("grain_midtones") = 1.0f,
+        py::arg("grain_highlights") = 1.0f);
     module.def(
         "probe_image_pixel",
         &probe_image_pixel,

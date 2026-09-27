@@ -60,6 +60,14 @@ int main()
     }
     }
     const std::array<float,3> rgb={{0.2f,0.4f,0.6f}}, residual={{0.01f,-0.02f,0.03f}};
+    passed &= test::near(ImageProcessor::grain_visibility(rgb,false,0.0f,0.0f,0.0f),
+        1.0, 0.0, "tonal bypass ignores all artistic multipliers");
+    passed &= test::near(ImageProcessor::grain_visibility(rgb,true,0.0f,0.0f,0.0f),
+        0.0, 0.0, "zero tonal gains suppress grain");
+    const auto bypass = ImageProcessor::composite_grain(rgb,residual,1.0f,false);
+    for (int c=0;c<3;++c)
+        passed &= test::near(bypass[c],rgb[c]+residual[c],1e-6,
+            "tonal bypass restores the unattenuated residual");
     passed &= test::near(ImageProcessor::grain_visibility({{0.05f,0.05f,0.05f}}),
         0.80, 1e-6, "visibility trim retains shadow grain at reduced strength");
     passed &= test::near(ImageProcessor::grain_visibility({{0.8f,0.8f,0.8f}}),

@@ -102,3 +102,36 @@ use cached local density-response derivatives. Preview and export therefore
 share the model but can differ for strong grain or near clipped colors. Grain
 response LUT preparation is more expensive. The stage MTF no longer blurs both
 grain components as one finished image. No additional strength boost is applied.
+# Tonal grain rendering controls
+
+The **Preset** row saves named looks in local application settings (QSettings,
+organization/application `FilmViz`). Save creates a preset or confirms replacing
+an existing name; Load restores it; Delete confirms removal. Names are sorted
+alphabetically and presets persist across app restarts.
+
+Presets include input/output color profiles, film stocks, color response,
+exposure and printer controls, film format, grain, MTF, halation and effect
+bypasses. They retain slider values even for bypassed effects. They exclude
+file/resource paths, runtime edits to measured profile curves, performance
+settings and preview state. Loading validates available profiles before
+applying the look; with live preview off, convert again to see the result.
+
+**Enable grain** and **Enable halation** independently bypass their effects
+for A/B comparison in conversion and live preview. Bypass sends zero effect
+strength without altering the displayed values, so re-enabling restores the
+chosen settings. Both switches default to enabled; image reset restores them.
+With live preview off, convert again to see the selected state.
+
+The image controls expose **Enable tonal grain shaping**, **Shadow grain**,
+**Midtone grain**, and **Highlight grain**. These are empirical rendering
+controls, not modifications to measured stock data. Multipliers range from
+0 to 2; all three at 1 preserve the current look. Unchecking tonal shaping
+bypasses the entire tonal attenuation, leaving strength, chroma, size and
+format controls active. Reset restores enabled shaping and multipliers of 1.
+
+Smooth overlapping tonal weights use the noise-free maximum working-linear
+RGB channel. These are fixed working-space ranges, not scene exposure stops.
+Both image conversion and live Metal preview receive the controls. Python
+`process_image` accepts `grain_tonal_enabled`, `grain_shadows`,
+`grain_midtones`, and `grain_highlights` as optional trailing keywords.
+Image metadata and application logs retain the settings. LUTs are unaffected.

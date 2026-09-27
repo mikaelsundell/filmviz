@@ -326,7 +326,7 @@ HalationModel::smooth_highlight_weight(float luminance, float threshold)
     const float safe_luminance = std::max(0.0f, luminance);
 
     if (threshold <= 1e-8f) {
-        return safe_luminance;
+        return 1.0f;
     }
 
     // Start the transition below the nominal threshold. This means adjacent
@@ -342,7 +342,9 @@ HalationModel::smooth_highlight_weight(float luminance, float threshold)
 
     const float smooth = t * t * (3.0f - 2.0f * t);
 
-    return safe_luminance * smooth;
+    // Exposure already carries source intensity. This is only a selection
+    // mask; multiplying by luminance again would square a neutral ramp.
+    return smooth;
 }
 
 std::vector<float>

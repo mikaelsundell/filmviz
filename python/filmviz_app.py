@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import array
 import csv
+import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -128,7 +130,7 @@ try:
     except ImportError:
         np = None
 
-    from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, QPointF, QRect, QRectF, QSize, QThread, QTimer, QUrl, Qt, Signal, Slot
+    from PySide6.QtCore import QSettings, QEvent, QMimeData, QObject, QPoint, QPointF, QRect, QRectF, QSize, QThread, QTimer, QUrl, Qt, Signal, Slot
     from PySide6.QtGui import (
         QColor,
         QColorSpace,
@@ -157,6 +159,7 @@ try:
         QGroupBox,
         QHBoxLayout,
         QLabel,
+        QInputDialog,
         QLineEdit,
         QMainWindow,
         QMenu,
@@ -3599,6 +3602,21 @@ class FilmVizWindow(QMainWindow):
             str(PROJECT_ROOT / "resources"),
             minimum_width=0)
         common_form.addRow("Resource directory", self.resources)
+        self._preset_settings = QSettings("FilmViz", "FilmViz")
+        self.preset_selector = QComboBox()
+        preset_row = QWidget()
+        preset_layout = QHBoxLayout(preset_row)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.addWidget(self.preset_selector, 1)
+        for label, callback in (("Save…", self._save_preset),
+                                ("Load", self._load_preset),
+                                ("Delete", self._delete_preset)):
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            preset_layout.addWidget(button)
+        preset_row.setToolTip("App-local look presets. Image paths and measured profile edits are not stored.")
+        common_form.addRow("Preset", preset_row)
+        self._refresh_presets()
 
         self.input_profile = ColorProfileSelector(profiles["input_details"], self)
         self.input_profile.setCurrentText("ARRI LogC3 (EI800)")
@@ -3873,6 +3891,22 @@ class FilmVizWindow(QMainWindow):
         self.grain_size = _double(1.0, 0.25, 10.0, 0.25)
         self.grain_size.setToolTip("Grain size multiplier referenced to 2048-pixel-wide Super 35. Both texture bands scale with film format; pixel-area integration handles reduced previews. Strength uses the experimental 48 µm aperture normalization.")
         self.grain_chroma = _double(1.0, 0.0, 1.0, 0.1)
+        self.grain_enabled = QCheckBox("Enable grain")
+        self.grain_enabled.setChecked(True)
+        self.grain_enabled.setToolTip(
+            "Bypass negative and print grain for A/B comparison without changing their settings.")
+        self.halation_enabled = QCheckBox("Enable halation")
+        self.halation_enabled.setChecked(True)
+        self.halation_enabled.setToolTip(
+            "Bypass halation for A/B comparison without changing its settings.")
+        self.grain_tonal_enabled = QCheckBox("Enable tonal grain shaping")
+        self.grain_tonal_enabled.setChecked(True)
+        self.grain_tonal_enabled.setToolTip(
+            "Empirical rendering control. Uncheck to bypass tonal attenuation; "
+            "measured profiles and other grain controls remain active.")
+        self.grain_shadows = _double(1.0, 0.0, 2.0, 0.05)
+        self.grain_midtones = _double(1.0, 0.0, 2.0, 0.05)
+        self.grain_highlights = _double(1.0, 0.0, 2.0, 0.05)
         self.grain_seed = DragSpinBox()
         self.grain_seed.setRange(0, 2_147_483_647)
         self.grain_seed.setValue(1)
@@ -3914,14 +3948,24 @@ class FilmVizWindow(QMainWindow):
             self.halation_threshold)
         image_form.addRow("Film format", self.film_format)
         image_form.addRow("Active image width (mm)", self.image_width_mm)
+        image_form.addRow("Grain", self.grain_enabled)
         image_form.addRow("Negative grain", self.negative_grain_control)
         image_form.addRow("Print grain", self.print_grain_control)
         image_form.addRow("Grain scale (×)", self.grain_size_control)
         image_form.addRow("Grain chroma", self.grain_chroma_control)
+        image_form.addRow("Grain rendering", self.grain_tonal_enabled)
+        for label, spin in (("Shadow grain (×)", self.grain_shadows),
+                            ("Midtone grain (×)", self.grain_midtones),
+                            ("Highlight grain (×)", self.grain_highlights)):
+            row = SliderSpinRow(spin)
+            row.setToolTip("Multiplier over the current tonal grain look. 1 preserves it; 0 suppresses this range.")
+            self.grain_tonal_enabled.toggled.connect(row.setEnabled)
+            image_form.addRow(label, row)
         image_form.addRow("Grain seed", self.grain_seed)
         image_form.addRow("Negative MTF", self.negative_mtf_control)
         image_form.addRow("Print MTF", self.print_mtf_control)
-        image_form.addRow("Halation", self.halation_strength_control)
+        image_form.addRow("Halation", self.halation_enabled)
+        image_form.addRow("Halation strength", self.halation_strength_control)
         image_form.addRow("Halation radius (px)", self.halation_radius_control)
         image_form.addRow("Halation threshold", self.halation_threshold_control)
         self.convert_button = QPushButton("Convert image")
@@ -4191,6 +4235,9 @@ class FilmVizWindow(QMainWindow):
             self.print_grain,
             self.grain_size,
             self.grain_chroma,
+            self.grain_shadows,
+            self.grain_midtones,
+            self.grain_highlights,
             self.grain_seed,
             self.image_width_mm,
             self.negative_mtf,
@@ -4201,6 +4248,10 @@ class FilmVizWindow(QMainWindow):
         ):
             control.valueChanged.connect(
                 self._schedule_metal_preview)
+
+        self.grain_enabled.toggled.connect(self._schedule_metal_preview)
+        self.halation_enabled.toggled.connect(self._schedule_metal_preview)
+        self.grain_tonal_enabled.toggled.connect(self._schedule_metal_preview)
 
         image_actions = QWidget()
         image_actions_layout = QHBoxLayout(image_actions)
@@ -4421,10 +4472,16 @@ class FilmVizWindow(QMainWindow):
 
     @Slot()
     def _reset_image_settings(self):
+        self.grain_enabled.setChecked(True)
+        self.halation_enabled.setChecked(True)
         self.negative_grain.setValue(0.0)
         self.print_grain.setValue(0.0)
         self.grain_size.setValue(1.0)
         self.grain_chroma.setValue(1.0)
+        self.grain_tonal_enabled.setChecked(True)
+        self.grain_shadows.setValue(1.0)
+        self.grain_midtones.setValue(1.0)
+        self.grain_highlights.setValue(1.0)
         self.grain_seed.setValue(1)
 
         format_index = self.film_format.findData("super-35")
@@ -4868,7 +4925,12 @@ class FilmVizWindow(QMainWindow):
             f"Negative grain: {self.negative_grain.value():g}",
             f"Print grain: {self.print_grain.value():g}",
             f"Grain scale (×): {self.grain_size.value():g}",
+            f"Grain enabled: {self.grain_enabled.isChecked()}",
+            f"Halation enabled: {self.halation_enabled.isChecked()}",
             f"Grain chroma: {self.grain_chroma.value():g}",
+            f"Tonal grain shaping: {self.grain_tonal_enabled.isChecked()}",
+            f"Grain shadows/midtones/highlights: {self.grain_shadows.value():g} / "
+            f"{self.grain_midtones.value():g} / {self.grain_highlights.value():g}",
             f"Grain seed: {self.grain_seed.value()}",
             f"Film format: {self.film_format.currentText()}",
             f"Active image width (mm): {self.image_width_mm.value():g}",
@@ -5735,16 +5797,20 @@ class FilmVizWindow(QMainWindow):
     def _metal_settings(self):
         settings = self._common()
         settings.update(
-            negative_grain=self.negative_grain.value(),
-            print_grain=self.print_grain.value(),
+            negative_grain=self.negative_grain.value() if self.grain_enabled.isChecked() else 0.0,
+            print_grain=self.print_grain.value() if self.grain_enabled.isChecked() else 0.0,
             grain_size=self.grain_size.value(),
             grain_chroma=self.grain_chroma.value(),
+            grain_tonal_enabled=self.grain_tonal_enabled.isChecked(),
+            grain_shadows=self.grain_shadows.value(),
+            grain_midtones=self.grain_midtones.value(),
+            grain_highlights=self.grain_highlights.value(),
             grain_seed=self.grain_seed.value(),
             film_format=self.film_format.currentData(),
             image_width_mm=self.image_width_mm.value(),
             negative_mtf=self.negative_mtf.value() * 0.01,
             print_mtf=self.print_mtf.value() * 0.01,
-            halation_strength=self.halation_strength.value(),
+            halation_strength=self.halation_strength.value() if self.halation_enabled.isChecked() else 0.0,
             halation_radius=self.halation_radius.value(),
             halation_threshold=self.halation_threshold.value(),
         )
@@ -5859,6 +5925,134 @@ class FilmVizWindow(QMainWindow):
             # render so dragging remains responsive.
             self._metal_preview_timer.start(0)
 
+    # Explicit allowlists keep paths, transient UI state and profile-curve
+    # edits out of look presets. Store actual strengths even when bypassed.
+    _preset_numbers = (
+        "exposure", "negative_flash", "print_flash", "push_pull",
+        "color_density", "color_depth", "negative_bleach_bypass", "print_bleach_bypass",
+        "printer_light_red", "printer_light_green", "printer_light_blue", "printer_light_master",
+        "middle_gray", "printer_temperature", "negative_grain", "print_grain",
+        "grain_size", "grain_chroma", "grain_seed", "grain_shadows", "grain_midtones",
+        "grain_highlights", "image_width_mm", "negative_mtf", "print_mtf",
+        "halation_strength", "halation_radius", "halation_threshold")
+    _preset_switches = ("grain_enabled", "halation_enabled", "grain_tonal_enabled", "response_bypass")
+    _preset_combos = ("negative_profile", "print_profile", "film_format")
+
+    def _read_presets(self):
+        raw = self._preset_settings.value("look_presets_v1", "{}")
+        presets = json.loads(raw)
+        if not isinstance(presets, dict):
+            raise ValueError("Invalid preset storage")
+        return presets
+
+    def _refresh_presets(self, selected=None):
+        try:
+            presets = self._read_presets()
+        except (ValueError, TypeError) as error:
+            QMessageBox.warning(self, "Presets", str(error))
+            return
+        self.preset_selector.clear()
+        for name in sorted(presets, key=str.casefold):
+            self.preset_selector.addItem(name)
+        if selected is not None:
+            self.preset_selector.setCurrentText(selected)
+
+    def _write_presets(self, presets, selected=None):
+        self._preset_settings.setValue("look_presets_v1", json.dumps(presets, allow_nan=False))
+        self._preset_settings.sync()
+        if self._preset_settings.status() != QSettings.Status.NoError:
+            raise OSError("Could not save application presets")
+        self._refresh_presets(selected)
+
+    @Slot()
+    def _save_preset(self):
+        name, accepted = QInputDialog.getText(
+            self, "Save preset", "Preset name:", text=self.preset_selector.currentText())
+        name = name.strip()
+        if not accepted or not name:
+            return
+        try:
+            presets = self._read_presets()
+            if name in presets and QMessageBox.question(
+                    self, "Replace preset", f'Replace "{name}"?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
+            values = {key: getattr(self, key).value() for key in self._preset_numbers}
+            values.update({key: getattr(self, key).isChecked() for key in self._preset_switches})
+            values.update({key: getattr(self, key).currentData() for key in self._preset_combos})
+            values.update(input_profile=self.input_profile.currentText(),
+                          output_profile=self.output_profile.currentText(),
+                          color_response={key: control.value() for key, control in self.response_controls.items()})
+            presets[name] = {"version": 1, "values": values}
+            self._write_presets(presets, name)
+        except (ValueError, TypeError, OSError) as error:
+            QMessageBox.warning(self, "Save preset", str(error))
+
+    @Slot()
+    def _load_preset(self):
+        name = self.preset_selector.currentText()
+        if not name:
+            return
+        try:
+            preset = self._read_presets()[name]
+            if preset.get("version") != 1:
+                raise ValueError("Unsupported preset version")
+            values = preset["values"]
+            # Validate everything before changing controls.
+            controls = [(getattr(self, key), values[key]) for key in self._preset_numbers]
+            controls += [(control, values["color_response"][key])
+                         for key, control in self.response_controls.items()]
+            for control, value in controls:
+                if (type(value) not in (int, float) or not math.isfinite(value)
+                        or not control.minimum() <= value <= control.maximum()
+                        or (isinstance(control, QSpinBox) and int(value) != value)):
+                    raise ValueError("Preset has an invalid numeric setting")
+            for key in self._preset_switches:
+                if type(values[key]) is not bool:
+                    raise ValueError("Preset has an invalid switch setting")
+            for key in self._preset_combos:
+                if getattr(self, key).findData(values[key]) < 0:
+                    raise ValueError(f"Unavailable preset option: {key}")
+            for key in ("input_profile", "output_profile"):
+                if not any(e["profile"] == values[key] for e in getattr(self, key)._entries):
+                    raise ValueError(f"Unavailable color profile: {values[key]}")
+        except (KeyError, AttributeError, ValueError, TypeError) as error:
+            QMessageBox.warning(self, "Load preset", str(error))
+            return
+        realtime = self.realtime_metal.isChecked()
+        self.realtime_metal.setChecked(False)
+        try:
+            # Profile/format callbacks set defaults; restore numeric values last.
+            for key in self._preset_combos:
+                control = getattr(self, key)
+                control.setCurrentIndex(control.findData(values[key]))
+            for key in ("input_profile", "output_profile"):
+                getattr(self, key).setCurrentText(values[key])
+            for control, value in controls:
+                control.setValue(int(value) if isinstance(control, QSpinBox) else value)
+            for key in self._preset_switches:
+                getattr(self, key).setChecked(values[key])
+        finally:
+            self.realtime_metal.setChecked(realtime)
+        self._schedule_metal_preview()
+
+    @Slot()
+    def _delete_preset(self):
+        name = self.preset_selector.currentText()
+        if not name:
+            return
+        if QMessageBox.question(self, "Delete preset", f'Delete "{name}"?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            presets = self._read_presets()
+            presets.pop(name, None)
+            self._write_presets(presets)
+        except (ValueError, TypeError, OSError) as error:
+            QMessageBox.warning(self, "Delete preset", str(error))
+
     def _common(self):
         return dict(
             resources=str(self._effective_resources_path()),
@@ -5906,16 +6100,20 @@ class FilmVizWindow(QMainWindow):
         arguments.update(
             input_filename=self.input_image.value(),
             output_filename=self.output_image.value(),
-            negative_grain=self.negative_grain.value(),
-            print_grain=self.print_grain.value(),
+            negative_grain=self.negative_grain.value() if self.grain_enabled.isChecked() else 0.0,
+            print_grain=self.print_grain.value() if self.grain_enabled.isChecked() else 0.0,
             grain_size=self.grain_size.value(),
             grain_chroma=self.grain_chroma.value(),
+            grain_tonal_enabled=self.grain_tonal_enabled.isChecked(),
+            grain_shadows=self.grain_shadows.value(),
+            grain_midtones=self.grain_midtones.value(),
+            grain_highlights=self.grain_highlights.value(),
             grain_seed=self.grain_seed.value(),
             film_format=self.film_format.currentData(),
             image_width_mm=self.image_width_mm.value(),
             negative_mtf=self.negative_mtf.value() * 0.01,
             print_mtf=self.print_mtf.value() * 0.01,
-            halation_strength=self.halation_strength.value(),
+            halation_strength=self.halation_strength.value() if self.halation_enabled.isChecked() else 0.0,
             halation_radius=self.halation_radius.value(),
             halation_threshold=self.halation_threshold.value(),
         )

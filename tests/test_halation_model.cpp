@@ -92,6 +92,31 @@ main()
     settings.radius_pixels = 2.0f;
     settings.threshold = 0.6f;
 
+    // With the mask disabled, scattering scales linearly with exposure,
+    // rather than receiving a second brightness multiplier from AP0.
+    auto full = source_exposure;
+    auto half = source_exposure;
+    auto half_ap0 = ap0;
+    for (auto& value : half) {
+        value.red *= 0.5f;
+        value.green *= 0.5f;
+        value.blue *= 0.5f;
+    }
+    for (auto& value : half_ap0) value *= 0.5f;
+    auto unmasked = settings;
+    unmasked.threshold = 0.0f;
+    passed &= test::check(HalationModel::apply(full, ap0, width, height, unmasked)
+        && HalationModel::apply(half, half_ap0, width, height, unmasked),
+        "unmasked exposure scaling diagnostic completes");
+    for (int i=0; i<width*height; ++i) {
+        passed &= test::near(half[i].red, 0.5f*full[i].red, 1e-6,
+            "unmasked halation scales linearly with red exposure");
+        passed &= test::near(half[i].green, 0.5f*full[i].green, 1e-6,
+            "unmasked halation scales linearly with green exposure");
+        passed &= test::near(half[i].blue, 0.5f*full[i].blue, 1e-6,
+            "unmasked halation scales linearly with blue exposure");
+    }
+
     passed &= test::check(
         HalationModel::apply(
             processed,

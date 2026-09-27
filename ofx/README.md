@@ -349,3 +349,38 @@ Resolve after installation.
 - Metal halation uses Metal Performance Shaders Gaussian blur while the CPU
   reference uses FilmViz's CPU spatial approximation, so pixel-level blur can
   differ slightly even though the film-stage model and scatter parameters match.
+
+## Look controls and A/B workflow
+
+Color Response exposes its enable switch, amount, chroma compression/knee,
+density center/width, and warm protection/hue controls. Grain exposes tonal
+shaping and shadow, midtone and highlight gains. These use the same settings
+as the Python application and preserve the measured stock profiles.
+
+**Enable Grain** and **Enable Halation** provide manual A/B control without
+changing the stored strengths. Under Spatial Response, **Enable both in
+full-quality renders** optionally overrides both switches for non-draft renders.
+It defaults off. Set nonzero effect strengths before using the override.
+
+OFX's draft-quality flag is not a final-export detector: full-quality viewer
+updates can also enable both effects, and hosts omitting the flag count as full
+quality. Use manual checkboxes when the host does not distinguish draft viewer
+work from output rendering. Verify the host behavior before relying on the
+optional override for delivery.
+
+Parameters are saved with the host project and can be captured using the host's
+preset facilities where available. Python app presets remain separate.
+
+## Export LUT
+
+In **LUT Export**, choose a new `.cube` output path and a grid size (17, 33 or
+65; default 33), then press **Export LUT**. Generation runs synchronously and
+may temporarily block the host UI. Existing files are not overwritten.
+
+The LUT samples this node's current-frame color settings through the CPU
+spectral pipeline, including selected input/output transforms and Color
+Response. It does not include other nodes or the host's color management.
+Grain, halation and negative/print MTF are spatial effects and are excluded.
+The input domain is 0..1 per channel; linear HDR inputs outside that range
+cannot be represented by this export. A sampled LUT approximates the direct
+GPU renderer; it is not a replacement for its spatial processing.

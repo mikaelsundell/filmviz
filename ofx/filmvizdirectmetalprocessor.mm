@@ -57,6 +57,7 @@ struct DirectParams
     float middle_gray; float printer_temperature; float wavelength_min_nm; float wavelength_step_nm;
     uint granularity_count; uint frame_seed; uint grain_enabled; uint reserved_grain;
     float negative_grain; float print_grain; float grain_size; float grain_chroma;
+    uint grain_tonal_enabled; float grain_shadows; float grain_midtones; float grain_highlights;
     float granularity_density_min; float granularity_density_max; float2 reserved_grain_float;
     float response_response_amount;
     float response_chroma_compression;
@@ -622,11 +623,12 @@ kernel void filmviz_prepare_halation(
     }
     float3 reference=p.reference_negative_exposure.xyz*(p.middle_gray/0.18f);
     exposure=(exposure+reference*(p.negative_flash_percent*0.01f))*exposure_scale;
-    float safe_luminance=max(0.0f,luminance), weight=safe_luminance;
+    // Exposure carries intensity; luminance only selects the source mask.
+    float safe_luminance=max(0.0f,luminance), weight=1.0f;
     if(spatial.threshold>1e-8f) {
         float onset=0.5f*spatial.threshold;
         if(safe_luminance<=onset) weight=0.0f;
-        else { float t=clamp((safe_luminance-onset)/max(spatial.threshold-onset,1e-8f),0.0f,1.0f); weight=safe_luminance*t*t*(3.0f-2.0f*t); }
+        else { float t=clamp((safe_luminance-onset)/max(spatial.threshold-onset,1e-8f),0.0f,1.0f); weight=t*t*(3.0f-2.0f*t); }
     }
     uint index=gid.y*spatial.width+gid.x;
     exposure_output[index]=float4(exposure,src.w);
@@ -698,7 +700,12 @@ kernel void filmviz_copy_dense(
         // Match ImageProcessor's empirical, noise-free highlight trim.
         float peak=max(0.0f,max(base.x,max(base.y,base.z)));
         float t=clamp((peak-0.12f)/(0.65f-0.12f),0.0f,1.0f);
-        float visibility=0.80f-0.45f*t*t*(3.0f-2.0f*t);
+        float highlight=t*t*(3.0f-2.0f*t);
+        float u=clamp(peak/0.12f,0.0f,1.0f);
+        float shadow=1.0f-u*u*(3.0f-2.0f*u);
+        float visibility=p.grain_tonal_enabled!=0u
+            ?(0.80f-0.45f*highlight)*(shadow*p.grain_shadows
+                +(1.0f-shadow-highlight)*p.grain_midtones+highlight*p.grain_highlights):1.0f;
         float3 grained=base*(1.0f+visibility*relative);
         pixel.xyz=p.output_profile==1?pow(max(grained,0.0f),float3(1.0f/2.4f)):grained;
         pixel.xyz=clamp(pixel.xyz,0.0f,1.0f);
@@ -994,6 +1001,10 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     p.grain_enabled=settings.grain_enabled?1u:0u; p.negative_grain=settings.negative_grain;
     p.print_grain=settings.print_grain; p.grain_size=GranularityModel::grain_size_pixels(settings.grain_size, static_cast<int>(source_width), settings.image_width_mm); p.grain_chroma=settings.grain_chroma;
     const auto grain_texture=GranularityModel::texture(p.grain_size, static_cast<float>(source_width)/settings.image_width_mm);
+    p.grain_tonal_enabled=settings.grain_tonal_enabled?1u:0u;
+    p.grain_shadows=settings.grain_shadows;
+    p.grain_midtones=settings.grain_midtones;
+    p.grain_highlights=settings.grain_highlights;
     p.reserved_grain_float[0]=grain_texture.aperture_pixels;
     p.reserved_grain_float[1]=0.0f;
     p.granularity_density_min=impl_->data.granularity_density_min; p.granularity_density_max=impl_->data.granularity_density_max;

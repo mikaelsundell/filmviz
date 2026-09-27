@@ -32,6 +32,11 @@ public:
         float print_grain_strength = 0.0f;
         float grain_size_pixels = 1.0f; // Size multiplier: 1px at 2048px-wide Super 35.
         float grain_chroma = 1.0f;
+        bool grain_tonal_enabled = true;
+        float grain_shadows = 1.0f;
+        float grain_midtones = 1.0f;
+        float grain_highlights = 1.0f;
+
         std::uint32_t grain_seed = 1u;
 
         std::string film_format = FilmFormatCatalog::default_format().identifier;
@@ -56,9 +61,11 @@ public:
         const std::array<float, 3>& linear, const GranularityModel::Texture& texture,
         std::uint32_t seed, int x, int y, float negative_strength, float print_strength);
     static std::array<float, 3> composite_grain(const std::array<float, 3>& linear,
-        const std::array<float, 3>& residual, float chroma);
+        const std::array<float, 3>& residual, float chroma, bool tonal_enabled = true,
+        float shadows = 1.0f, float midtones = 1.0f, float highlights = 1.0f);
     // Empirical output look trim; does not modify measured density RMS.
-    static float grain_visibility(const std::array<float, 3>& linear);
+    static float grain_visibility(const std::array<float, 3>& linear, bool enabled = true,
+        float shadows = 1.0f, float midtones = 1.0f, float highlights = 1.0f);
 
     bool process(const std::string& input_filename, const std::string& output_filename, const FilmPipeline& pipeline,
                  const InputTransform& input_transform, const Settings& settings, const Progress& progress = Progress(),

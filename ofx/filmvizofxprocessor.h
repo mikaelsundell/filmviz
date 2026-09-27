@@ -74,6 +74,11 @@ struct FilmVizOfxRenderSettings
     float print_grain = 0.0f;
     float grain_size = 1.0f; // Size multiplier: 1px at 2048px-wide Super 35.
     float grain_chroma = 1.0f;
+    bool grain_tonal_enabled = true;
+    float grain_shadows = 1.0f;
+    float grain_midtones = 1.0f;
+    float grain_highlights = 1.0f;
+
     std::uint32_t grain_seed = 1u;
 
     bool halation_enabled = false;
@@ -167,3 +172,7 @@ private:
     FilmVizOfxRenderSettings settings_;
     std::uint64_t revision_ = 0;
 };
+
+// Export the deterministic color transform only (no spatial/image effects).
+bool filmviz_export_cube(const FilmVizOfxRenderSettings& settings,
+    const std::string& resources, const std::string& filename, int size, std::string& error);

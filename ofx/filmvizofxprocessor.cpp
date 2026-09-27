@@ -29,6 +29,7 @@
 #include <limits>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -378,6 +379,10 @@ FilmVizOfxRenderSettings::operator==(
         && print_grain == other.print_grain
         && grain_size == other.grain_size
         && grain_chroma == other.grain_chroma
+        && grain_tonal_enabled == other.grain_tonal_enabled
+        && grain_shadows == other.grain_shadows
+        && grain_midtones == other.grain_midtones
+        && grain_highlights == other.grain_highlights
         && grain_seed == other.grain_seed
         && halation_enabled == other.halation_enabled
         && halation_strength == other.halation_strength
@@ -1639,7 +1644,9 @@ FilmVizOfxProcessor::render(
                     linear[c] = to_linear(pixel[c], settings.output_profile);
                     residual[c] = negative_residual[index+c] + print_residual[index+c];
                 }
-                const auto grained = ImageProcessor::composite_grain(linear, residual, settings.grain_chroma);
+                const auto grained = ImageProcessor::composite_grain(linear, residual, settings.grain_chroma,
+                    settings.grain_tonal_enabled, settings.grain_shadows,
+                    settings.grain_midtones, settings.grain_highlights);
                 for (int c = 0; c < 3; ++c) pixel[c] = clamp01(from_linear(grained[c], settings.output_profile));
             }
         }
@@ -1656,4 +1663,73 @@ FilmVizOfxProcessor::render(
     }
 
     return true;
+}
+
+bool filmviz_export_cube(const FilmVizOfxRenderSettings& settings,
+    const std::string& resources, const std::string& filename, int size, std::string& error)
+{
+    try {
+        const std::filesystem::path destination(filename);
+        if (filename.empty() || destination.extension() != ".cube")
+            throw std::runtime_error("Choose an output filename ending in .cube.");
+        if (std::filesystem::exists(destination))
+            throw std::runtime_error("The LUT already exists. Choose a new filename.");
+        if (size != 17 && size != 33 && size != 65)
+            throw std::runtime_error("LUT size must be 17, 33 or 65.");
+        FilmPipeline::Settings p;
+        p.resources_directory = resources;
+        p.negative_profile = settings.negative_profile;
+        p.print_profile = settings.print_profile;
+        p.exposure_stops = settings.exposure_stops;
+        p.negative_flash_percent = settings.negative_flash_percent;
+        p.print_flash_percent = settings.print_flash_percent;
+        p.push_pull_stops = settings.push_pull_stops;
+        p.color_density = settings.color_density;
+        p.color_depth = settings.color_depth;
+        p.color_response = settings.color_response;
+        p.middle_gray = settings.middle_gray;
+        p.printer_temperature_kelvin = settings.printer_temperature;
+        p.negative_bleach_bypass = settings.negative_bleach_bypass;
+        p.print_bleach_bypass = settings.print_bleach_bypass;
+        p.printer_light_red = settings.printer_light_red;
+        p.printer_light_green = settings.printer_light_green;
+        p.printer_light_blue = settings.printer_light_blue;
+        p.printer_light_master = settings.printer_light_master;
+        FilmPipeline pipeline;
+        if (!pipeline.initialize(p)) throw std::runtime_error(pipeline.error());
+        InputTransform input(static_cast<InputTransform::Encoding>(settings.input_profile), resources);
+        OutputTransform output(static_cast<OutputTransform::Encoding>(settings.output_profile), resources);
+        Lut3D lut;
+        if (!lut.generate(size, [&](const Lut3D::RGB& encoded, Lut3D::RGB& converted) {
+                const auto result = pipeline.process(input.to_ap0(encoded));
+                if (!result.valid) return false;
+                converted = output.from_ap0(result.ap0);
+                return std::all_of(converted.begin(), converted.end(), [](float v) { return std::isfinite(v); });
+            })) throw std::runtime_error("LUT generation failed.");
+        // Reserve a staging directory; never truncate an existing LUT.
+        const auto staging = std::filesystem::path(filename + ".filmviz-export");
+        if (!std::filesystem::create_directory(staging))
+            throw std::runtime_error("Export staging path already exists. Choose a new filename.");
+        const auto temporary = staging / "output.cube";
+        try {
+            if (!lut.write_cube(temporary.string(), "FilmViz color transform",
+                {"Input and output use the selected FilmViz/OCIO profiles.",
+                 "Sampled input domain: 0..1 per channel; values outside this domain are not represented.",
+                 "Grain, halation and negative/print MTF are excluded."}))
+                throw std::runtime_error("Could not write LUT.");
+            // Hard-link publication fails if the destination appeared meanwhile.
+            std::filesystem::create_hard_link(temporary, destination);
+            std::filesystem::remove(temporary);
+            std::filesystem::remove(staging);
+        } catch (...) {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            std::filesystem::remove(staging, ignored);
+            throw;
+        }
+        return true;
+    } catch (const std::exception& exception) {
+        error = exception.what();
+        return false;
+    }
 }

@@ -464,3 +464,31 @@ normalization still applies to generated density noise; final displayed grain
 is now deliberately attenuated by this look trim. Python/CLI CPU and Metal /
 generated OpenCL composites share the rule. The ramp CSV includes
 `grain_visibility`. Source checks were added, but no builds or tests were run.
+
+The Python application now exposes that empirical trim with an explicit
+bypass and shadow/midtone/highlight multipliers (0..2, default 1). Default
+settings preserve the accepted trim. Shadow weight fades smoothly from one
+to zero over maximum linear RGB 0..0.12; highlight weight rises over
+0.12..0.65; midtone weight completes their sum to one. Bypass returns unity
+visibility regardless of the multipliers. These output-space weights are
+not measurements of density or stock-specific exposure regions. Measured
+resources, spectral calibration, and grain-free processing are unchanged.
+CPU conversion and GPU preview share the controls. New regression assertions
+cover bypass and zero gains; source only, not built or run.
+
+## Halation source weighting comparison
+
+User review at strength 1, radius 74px and threshold zero found excessive
+dominance of the brightest chart patch. Source inspection identified an extra
+scene-luminance factor multiplying negative exposure, making neutral source
+intensity approximately quadratic. The comparison now uses negative exposure
+times a dimensionless smooth threshold mask only. Threshold zero gives a unit
+mask; positive thresholds retain smoothstep from half-threshold to threshold.
+CPU and Metal (also used to generate OpenCL) share this change.
+
+Scatter coefficients, near/far blur, source suppression and controls remain
+unchanged. This is an empirical halation adjustment, not new measured stock
+data. It increases relative participation of lower-exposure regions and reduces
+the extra weighting formerly given to scene luminance above one. It does not
+guarantee a stronger halo everywhere. Visual comparison and strength retuning
+remain pending; no builds or tests were run.

@@ -198,6 +198,10 @@ void populate_params(
     p.grain_enabled=settings.grain_enabled?1u:0u; p.negative_grain=settings.negative_grain;
     p.print_grain=settings.print_grain; p.grain_size=GranularityModel::grain_size_pixels(settings.grain_size, source.x2 - source.x1, settings.image_width_mm); p.grain_chroma=settings.grain_chroma;
     const auto grain_texture=GranularityModel::texture(p.grain_size, static_cast<float>(source.x2-source.x1)/settings.image_width_mm);
+    p.grain_tonal_enabled=settings.grain_tonal_enabled?1u:0u;
+    p.grain_shadows=settings.grain_shadows;
+    p.grain_midtones=settings.grain_midtones;
+    p.grain_highlights=settings.grain_highlights;
     p.reserved_grain_float[0]=grain_texture.aperture_pixels;
     p.reserved_grain_float[1]=0.0f;
     p.granularity_density_min=data.granularity_density_min; p.granularity_density_max=data.granularity_density_max;

@@ -160,27 +160,33 @@ ImageProcessor::grain_residuals(const std::array<float, 24>& response,
 
 std::array<float, 3>
 ImageProcessor::composite_grain(const std::array<float, 3>& linear,
-                                const std::array<float, 3>& residual, float chroma)
+                                const std::array<float, 3>& residual, float chroma, bool tonal_enabled,
+                                float shadows, float midtones, float highlights)
 {
     std::array<float, 3> relative;
     for (int c = 0; c < 3; ++c) relative[c] = residual[c] / std::max(1e-6f, linear[c]);
     relative = mix_grain_chroma(relative, chroma);
-    const float visibility = grain_visibility(linear);
+    const float visibility = grain_visibility(linear, tonal_enabled, shadows, midtones, highlights);
     std::array<float, 3> result;
     for (int c = 0; c < 3; ++c) result[c] = linear[c] * (1.0f + visibility * relative[c]);
     return result;
 }
 
 float
-ImageProcessor::grain_visibility(const std::array<float, 3>& linear)
+ImageProcessor::grain_visibility(const std::array<float, 3>& linear, bool enabled,
+                                float shadows, float midtones, float highlights)
 {
+    if (!enabled) return 1.0f;
     // Use the noise-free working-RGB maximum, not the noisy sample, so the
     // trim cannot rectify the noise or select faces/edges. This is deliberately
     // a working-space look convention, not physical film density or luminance.
     const float peak = std::max({0.0f, linear[0], linear[1], linear[2]});
     const float t = std::clamp((peak - 0.12f) / (0.65f - 0.12f), 0.0f, 1.0f);
     const float highlight = t * t * (3.0f - 2.0f * t);
-    return 0.80f - 0.45f * highlight;
+    const float u = std::clamp(peak / 0.12f, 0.0f, 1.0f);
+    const float shadow = 1.0f - u*u*(3.0f - 2.0f*u);
+    return (0.80f - 0.45f * highlight)
+        * (shadow*shadows + (1.0f-shadow-highlight)*midtones + highlight*highlights);
 }
 
 bool
@@ -190,6 +196,12 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
 {
     error_.clear();
 
+    for (float gain : {settings.grain_shadows, settings.grain_midtones, settings.grain_highlights}) {
+        if (!std::isfinite(gain) || gain < 0.0f || gain > 2.0f) {
+            error_ = "grain tonal multipliers must be finite and in 0..2";
+            return false;
+        }
+    }
     HalationModel::Settings halation_validation_settings;
     halation_validation_settings.strength = settings.halation_strength;
     halation_validation_settings.radius_pixels = settings.halation_radius_pixels;
@@ -733,7 +745,8 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
                 linear[c] = to_linear(output_pixels[pixel*3u+c], settings.output);
                 residual[c] = negative_residual[pixel*3u+c] + print_residual[pixel*3u+c];
             }
-            const auto grained = composite_grain(linear, residual, settings.grain_chroma);
+            const auto grained = composite_grain(linear, residual, settings.grain_chroma,
+                settings.grain_tonal_enabled, settings.grain_shadows, settings.grain_midtones, settings.grain_highlights);
             for (int c = 0; c < 3; ++c)
                 output_pixels[pixel*3u+c] = std::clamp(from_linear(grained[c], settings.output), 0.0f, 1.0f);
         }
@@ -776,6 +789,10 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
     output_spec.attribute("filmviz:grain_scale", settings.grain_size_pixels);
     output_spec.attribute("filmviz:grain_seed", static_cast<int>(settings.grain_seed));
     output_spec.attribute("filmviz:grain_chroma", settings.grain_chroma);
+    output_spec.attribute("filmviz:grain_tonal_enabled", static_cast<int>(settings.grain_tonal_enabled));
+    output_spec.attribute("filmviz:grain_shadows", settings.grain_shadows);
+    output_spec.attribute("filmviz:grain_midtones", settings.grain_midtones);
+    output_spec.attribute("filmviz:grain_highlights", settings.grain_highlights);
     output_spec.attribute("filmviz:film_format", settings.film_format);
     output_spec.attribute("filmviz:image_width_mm", settings.image_width_mm);
     output_spec.attribute("filmviz:negative_mtf_amount", settings.negative_mtf_amount);
