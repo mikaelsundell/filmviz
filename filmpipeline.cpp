@@ -64,6 +64,7 @@ FilmPipeline::initialize(const Settings& settings)
         || settings_.color_density > FilmColorResponse::maximum_trim || !std::isfinite(settings_.color_depth)
         || settings_.color_depth < FilmColorResponse::minimum_color_depth
         || settings_.color_depth > FilmColorResponse::maximum_color_depth
+        || !FilmColorResponse::valid_tuning(settings_.color_response)
         || !valid_printer_light(settings_.printer_light_red + settings_.printer_light_master)
         || !valid_printer_light(settings_.printer_light_green + settings_.printer_light_master)
         || !valid_printer_light(settings_.printer_light_blue + settings_.printer_light_master)) {
@@ -356,12 +357,27 @@ FilmPipeline::process_negative_exposure(const FilmExposure& negative_exposure) c
 
     result.negative_granularity_sigma = granularity_model_->negative_sigma(result.negative_status_m_density);
 
+    return process_density_noise(result, FilmDensity(), FilmDensity());
+}
+
+FilmPipeline::Result
+FilmPipeline::process_density_noise(const Result& baseline, const FilmDensity& negative_noise,
+                                    const FilmDensity& print_noise) const
+{
+    Result result = baseline;
+    result.valid = false;
+    if (!valid_) return result;
+    result.negative_status_m_density.red += negative_noise.red;
+    result.negative_status_m_density.green += negative_noise.green;
+    result.negative_status_m_density.blue += negative_noise.blue;
+
     if (!negative_density_calibration_->calibrate(result.negative_status_m_density,
                                                   result.calibrated_negative_density)) {
         return result;
     }
 
     FilmColorResponse::Settings color_settings;
+    color_settings.tuning = settings_.color_response;
     color_settings.amount = FilmColorResponse::amount_from_trim(settings_.color_density);
     color_settings.color_depth = settings_.color_depth;
     result.color_response_negative_density = color_response_->apply(result.calibrated_negative_density, color_settings);
@@ -449,6 +465,10 @@ FilmPipeline::process_negative_exposure(const FilmExposure& negative_exposure) c
     result.print_density = print_processor_->develop(print_processor_->log_exposure(print_exposure));
 
     result.print_granularity_sigma = granularity_model_->print_sigma(result.print_density);
+
+    result.print_density.red += print_noise.red;
+    result.print_density.green += print_noise.green;
+    result.print_density.blue += print_noise.blue;
 
     SampledCurve print_density = density_from_print_records(result.print_density);
 
@@ -839,4 +859,45 @@ std::string
 FilmPipeline::resource_path(const std::string& filename) const
 {
     return (std::filesystem::path(settings_.resources_directory) / filename).string();
+}
+
+bool
+FilmPipeline::grain_response(const Result& baseline, bool rec709_gamma24, GrainResponse& response) const
+{
+    response = {};
+    if (!baseline.valid) return false;
+    response[0] = baseline.negative_granularity_sigma.red;
+    response[1] = baseline.negative_granularity_sigma.green;
+    response[2] = baseline.negative_granularity_sigma.blue;
+    response[3] = baseline.print_granularity_sigma.red;
+    response[4] = baseline.print_granularity_sigma.green;
+    response[5] = baseline.print_granularity_sigma.blue;
+    constexpr float step = 0.002f;
+    const auto log_output = [rec709_gamma24](const Result& result, int channel) {
+        const float linear = rec709_gamma24
+            ? std::pow(std::max(0.0f, result.rec709_gamma24[channel]), 2.4f) : result.ap0[channel];
+        return std::log(std::max(1e-6f, linear));
+    };
+    for (int stage = 0; stage < 2; ++stage) {
+        if (stage == 1 && settings_.print_profile == "none") continue;
+        for (int record = 0; record < 3; ++record) {
+            FilmDensity plus, minus;
+            float* p[3] = { &plus.red, &plus.green, &plus.blue };
+            float* m[3] = { &minus.red, &minus.green, &minus.blue };
+            *p[record] = step;
+            *m[record] = -step;
+            const Result high = process_density_noise(baseline, stage == 0 ? plus : FilmDensity(),
+                                                      stage == 1 ? plus : FilmDensity());
+            const Result low = process_density_noise(baseline, stage == 0 ? minus : FilmDensity(),
+                                                     stage == 1 ? minus : FilmDensity());
+            if (!high.valid || !low.valid) return false;
+            for (int output = 0; output < 3; ++output) {
+                const float derivative = (log_output(high, output) - log_output(low, output)) / (2.0f * step);
+                const float value = derivative * response[stage*3 + record];
+                if (!std::isfinite(value)) return false;
+                response[6 + stage*9 + output*3 + record] = value;
+            }
+        }
+    }
+    return true;
 }

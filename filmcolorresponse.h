@@ -22,12 +22,26 @@ public:
     static constexpr float standard_color_depth = 1.0f;
     static constexpr float maximum_color_depth = 2.0f;
 
+    // Experimental look parameters. Defaults preserve the accepted response.
+    struct Tuning {
+        float response_amount = 1.0f;
+        float chroma_compression = 0.22f;
+        float chroma_knee = 0.5f;
+        float density_center = 1.25f;
+        float density_width = 1.0f;
+        float warm_protection = 0.5f;
+        float warm_hue_center = 0.0f;
+        float warm_hue_width = 1.0f;
+        float warm_hue_shift = 0.0f;
+        bool operator==(const Tuning& other) const;
+    };
+    static bool valid_tuning(const Tuning& tuning);
+
     struct Settings {
         float amount = 0.0f;
-        float chroma_compression = 0.22f;
         float density_depth = 0.08f;
         float color_depth = standard_color_depth;
-        float chroma_knee = 0.50f;
+        Tuning tuning;
     };
 
     FilmColorResponse(const FilmDensity& minimum_coordinate, const FilmDensity& neutral_reference_coordinate);

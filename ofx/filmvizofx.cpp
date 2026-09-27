@@ -1246,7 +1246,7 @@ describe_in_context(
         || !define_boolean_parameter(parameter_set, kParamEnableGrain, "Enable", 0, kGroupGrain)
         || !define_double_parameter(parameter_set, kParamNegativeGrain, "Negative", 0.0, 0.0, 2.0, kGroupGrain)
         || !define_double_parameter(parameter_set, kParamPrintGrain, "Print", 0.0, 0.0, 2.0, kGroupGrain)
-        || !define_double_parameter(parameter_set, kParamGrainSize, "Scale", 1.0, 1.0, 5.0, kGroupGrain)
+        || !define_double_parameter(parameter_set, kParamGrainSize, "Scale multiplier", 1.0, 0.25, 10.0, kGroupGrain)
         || !define_double_parameter(parameter_set, kParamGrainChroma, "Chroma", 1.0, 0.0, 2.0, kGroupGrain)
         || !define_integer_parameter(parameter_set, kParamGrainSeed, "Seed", 1, 0, 1000000, kGroupGrain)
         || !define_boolean_parameter(parameter_set, kParamEnableHalation, "Enable", 0, kGroupHalation)

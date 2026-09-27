@@ -4,6 +4,7 @@
 #pragma once
 
 #include "filmformat.h"
+#include "granularitymodel.h"
 #include "inputtransform.h"
 #include "outputtransform.h"
 
@@ -29,7 +30,7 @@ public:
 
         float negative_grain_strength = 0.0f;
         float print_grain_strength = 0.0f;
-        float grain_size_pixels = 1.0f;
+        float grain_size_pixels = 1.0f; // Size multiplier: 1px at 2048px-wide Super 35.
         float grain_chroma = 1.0f;
         std::uint32_t grain_seed = 1u;
 
@@ -48,8 +49,16 @@ public:
 
     // Keeps Rec.709-weighted grain luminance fixed while scaling only the
     // differences between channel noise. Zero is neutral grain; one preserves
-    // the measured independent-channel result.
+    // the correlated per-channel result.
     static std::array<float, 3> mix_grain_chroma(const std::array<float, 3>& density_noise, float chroma);
+
+    static std::array<float, 6> grain_residuals(const std::array<float, 24>& response,
+        const std::array<float, 3>& linear, const GranularityModel::Texture& texture,
+        std::uint32_t seed, int x, int y, float negative_strength, float print_strength);
+    static std::array<float, 3> composite_grain(const std::array<float, 3>& linear,
+        const std::array<float, 3>& residual, float chroma);
+    // Empirical output look trim; does not modify measured density RMS.
+    static float grain_visibility(const std::array<float, 3>& linear);
 
     bool process(const std::string& input_filename, const std::string& output_filename, const FilmPipeline& pipeline,
                  const InputTransform& input_transform, const Settings& settings, const Progress& progress = Progress(),

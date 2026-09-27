@@ -159,16 +159,27 @@ Convert the bundled ARRI AWG3/LogC3 reference image to a 16-bit Rec.709/Gamma
     --print-mtf 1
 ```
 
-Image grain is opt-in. Strength `1` uses the digitized diffuse-RMS density
-amplitude; `0` disables that stage. Negative and print grain use independent,
-deterministic spatial fields. `--grain-size` controls correlation in output
-pixels and is a rendering parameter because the Kodak curves do not define a
-complete spatial noise spectrum.
+Image grain is opt-in: `0` disables each stage. Strength `1` uses the digitized
+RMS curves with an experimental 48um reference-aperture normalization; it is
+not a validated match to a particular scan. `--grain-size` is a size multiplier
+referenced to 2048-pixel-wide Super 35 (24.89 mm). Both texture bands scale with
+format and resolution and are integrated over pixel area. Smaller formats
+produce larger grain at equal output resolution. The print stage currently
+shares this format mapping; separate print enlargement is not modeled.
 
-`--grain-chroma` controls only the channel differences in the grain while
-preserving its Rec.709-weighted luminance component. `0` makes the texture
-neutral, `1` preserves the measured independent-channel result, and values
-between them reduce colour speckling without weakening luminance grain.
+Negative density perturbations pass through Status-M calibration and the print
+response; print perturbations pass through spectral viewing. CPU image exports
+use cached local response derivatives, while GPU direct renderers evaluate
+individual noisy stages. The image receives the combined MTF, negative grain
+receives only the downstream print MTF, and print grain is composited afterward.
+Measured profile curves are unchanged. Grain LUT preparation and GPU rendering
+cost more than the previous output-noise approximation.
+
+`--grain-chroma` operates after grain filtering. `0` preserves working-RGB
+color ratios, `1` retains the propagated channel differences. Its weighted
+relative-noise component is preserved before clipping and output conversion.
+The revised model changes the appearance of existing nonzero grain settings;
+start comparisons at strength/scale 1 before applying extra boosts.
 
 `--exposure` is a camera exposure adjustment in stops. `--push-pull` changes
 negative contrast around calibrated middle gray. Push/pull is explicitly an

@@ -24,6 +24,8 @@ public:
         int kernel_radius = 24;
         int sampling_width_pixels = 0;
         bool gamma24_encoded = false;
+        // Signed linear grain residuals must survive filtering until compositing.
+        bool clamp_output = true;
     };
 
     bool load(const std::string& negative_mtf_filename, const std::string& print_mtf_filename);

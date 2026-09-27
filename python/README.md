@@ -70,3 +70,35 @@ loaded into the same process.
 
 For an automated startup check that constructs the complete window without
 entering the event loop, set `FILMVIZ_APP_SMOKE_TEST=1`.
+
+### Color Response tuning
+
+The Color Response tab exposes response amount, chroma compression, chroma knee,
+color depth, density center/width, warm protection, warm hue center/width and
+warm hue shift. Bypass preserves the slider settings; Reset Color Response
+restores the previous standard look. Density controls operate in normalized
+negative dye coordinates. Hue angles are dye-plane rotations, not display HSL.
+
+The diagnostic plot compares a fixed dye-chroma slice with calibrated bypass
+(gray), the standard response (blue), and the tuned response (amber). It is not
+a gamut diagram or a measurement of the rendered image. Use the image and scopes
+to judge the final look, including color depth, which the chroma-only plot omits.
+
+Python `process_image`, `generate_lut`, and `probe_image_pixel` accept an optional
+`color_response` dictionary with the nine tuning keys (Color Depth remains the
+existing `color_depth` argument). Realtime Metal preview consumes the same
+settings. Saved LUT comments include the tuning dictionary.
+
+Film format and active image width appear above the image grain controls. Grain
+scale is a multiplier referenced to 2048-pixel-wide Super 35; both preview and
+export derive its pixel footprint from their image width and the active film
+width. Smaller formats enlarge grain at equal output resolution. Negative and
+print strength remain separate controls; their defaults have not been boosted.
+
+The revised grain renderer uses pixel-area integration and a reference-aperture
+normalization. At the same numeric settings it can have more presence than the
+previous texture. Metal preview evaluates each noisy film stage; CPU exports
+use cached local density-response derivatives. Preview and export therefore
+share the model but can differ for strong grain or near clipped colors. Grain
+response LUT preparation is more expensive. The stage MTF no longer blurs both
+grain components as one finished image. No additional strength boost is applied.

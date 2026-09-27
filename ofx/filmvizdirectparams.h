@@ -59,7 +59,18 @@ struct alignas(16) FilmVizDirectParams
     float grain_chroma = 1.0f;
     float granularity_density_min = 0.0f;
     float granularity_density_max = 4.0f;
-    float reserved_grain_float[2] = {};
+    float reserved_grain_float[2] = {}; // Reference aperture in pixels, then reserved.
+
+    float response_response_amount = 1.0f;
+    float response_chroma_compression = 0.22f;
+    float response_chroma_knee = 0.5f;
+    float response_density_center = 1.25f;
+    float response_density_width = 1.0f;
+    float response_warm_protection = 0.5f;
+    float response_warm_hue_center = 0.0f;
+    float response_warm_hue_width = 1.0f;
+    float response_warm_hue_shift = 0.0f;
+    float reserved_response[3] = {};
 
     float reference_negative_exposure[4] = {};
     float reference_negative_density[4] = {};
@@ -78,7 +89,7 @@ struct alignas(16) FilmVizDirectParams
     std::uint32_t curve_print_12[4] = {};
 };
 
-static_assert(sizeof(FilmVizDirectParams) == 432,
+static_assert(sizeof(FilmVizDirectParams) == 480,
     "FilmVizDirectParams must match the GPU constant-buffer layout");
 
 struct alignas(16) FilmVizDirectSpatialParams
@@ -88,7 +99,7 @@ struct alignas(16) FilmVizDirectSpatialParams
     std::uint32_t radius = 0;
     std::uint32_t horizontal = 0;
     std::uint32_t gamma24 = 0;
-    std::uint32_t reserved[3] = {};
+    std::uint32_t reserved[3] = {}; // [0]: preserve signed/unclipped linear residuals.
     float strength = 0.0f;
     float threshold = 0.0f;
     float reserved_float[2] = {};

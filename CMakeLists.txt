@@ -160,6 +160,7 @@ if(BUILD_TESTING)
         tests/test_display_gamut_compressor.cpp
         tests/test_exposure_boundary.cpp
         tests/test_granularity.cpp
+        tests/test_grain_response.cpp
         tests/test_halation_model.cpp
         tests/test_input_transform.cpp
         tests/test_kodak_50d_sensitivity.cpp
@@ -211,6 +212,7 @@ if(BUILD_TESTING)
     set_tests_properties(
         test_density_calibration
         test_exposure_boundary
+        test_grain_response
         test_negative_profile
         test_pipeline
         PROPERTIES LABELS "integration;spectral"
@@ -287,6 +289,7 @@ if(FILMVIZ_BUILD_EXAMPLES)
     set(FILMVIZ_EXAMPLE_SOURCES
         examples/example_convert_arri_image.cpp
         examples/example_density_calibration.cpp
+        examples/example_grain_density_diagnostic.cpp
         examples/example_profile_diagrams.cpp
         examples/example_process_pixel.cpp
     )

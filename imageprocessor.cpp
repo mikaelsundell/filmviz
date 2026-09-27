@@ -29,7 +29,7 @@ using namespace OIIO;
 
 namespace {
 
-using GrainSample = std::array<float, 6>;
+using GrainSample = FilmPipeline::GrainResponse;
 
 GrainSample
 sample_field(const std::vector<GrainSample>& values, int size, const Lut3D::RGB& input)
@@ -57,7 +57,7 @@ sample_field(const std::vector<GrainSample>& values, int size, const Lut3D::RGB&
                 const int b = lower[2] + db;
                 const std::size_t index = static_cast<std::size_t>((b * size + g) * size + r);
 
-                for (int channel = 0; channel < 6; ++channel) {
+                for (int channel = 0; channel < 24; ++channel) {
                     result[channel] += weight * values[index][channel];
                 }
             }
@@ -65,41 +65,6 @@ sample_field(const std::vector<GrainSample>& values, int size, const Lut3D::RGB&
     }
 
     return result;
-}
-
-float
-spatial_normal(std::uint32_t seed, int x, int y, int stage, int channel, float size_pixels)
-{
-    const float scale = std::max(1.0f, size_pixels);
-
-    const float px = static_cast<float>(x) / scale;
-
-    const float py = static_cast<float>(y) / scale;
-
-    const int x0 = static_cast<int>(std::floor(px));
-
-    const int y0 = static_cast<int>(std::floor(py));
-
-    const float tx = px - static_cast<float>(x0);
-    const float ty = py - static_cast<float>(y0);
-    const float sx = tx * tx * (3.0f - 2.0f * tx);
-    const float sy = ty * ty * (3.0f - 2.0f * ty);
-    const float weights[4] = { (1.0f - sx) * (1.0f - sy), sx * (1.0f - sy), (1.0f - sx) * sy, sx * sy };
-
-    const float samples[4] = { GranularityModel::normal_sample(seed, x0, y0, stage, channel),
-                               GranularityModel::normal_sample(seed, x0 + 1, y0, stage, channel),
-                               GranularityModel::normal_sample(seed, x0, y0 + 1, stage, channel),
-                               GranularityModel::normal_sample(seed, x0 + 1, y0 + 1, stage, channel) };
-
-    float value = 0.0f;
-    float variance = 0.0f;
-
-    for (int i = 0; i < 4; ++i) {
-        value += weights[i] * samples[i];
-        variance += weights[i] * weights[i];
-    }
-
-    return variance > 1e-10f ? value / std::sqrt(variance) : value;
 }
 
 float
@@ -112,6 +77,31 @@ float
 from_linear(float value, ImageProcessor::Output output)
 {
     return output == ImageProcessor::Output::Rec709Gamma24 ? std::pow(std::max(0.0f, value), 1.0f / 2.4f) : value;
+}
+
+// E[exp(clamp(X, -2, 2))], X ~ N(0, variance). Normalize the
+// bounded multiplier itself, so the extrapolation guard cannot add a DC bias.
+double bounded_gain_mean(double variance)
+{
+    if (variance <= 0.0) return 1.0;
+    if (variance < 0.04) return std::exp(0.5 * variance); // tails beyond ten sigma
+    const double sigma = std::sqrt(variance);
+    const auto cdf = [](double z) { return 0.5 * std::erfc(-z / std::sqrt(2.0)); };
+    const double tails = (std::exp(-2.0) + std::exp(2.0)) * cdf(-2.0 / sigma);
+    if (variance <= 16.0)
+        return tails + std::exp(0.5 * variance)
+            * (cdf((2.0 - variance) / sigma) - cdf((-2.0 - variance) / sigma));
+    // Broad distributions: integrate the smooth bounded interior directly to
+    // avoid overflow/cancellation in exp(variance/2) times two tiny CDFs.
+    double integral = 0.0;
+    constexpr int intervals = 32;
+    constexpr double step = 4.0 / intervals;
+    for (int i = 0; i <= intervals; ++i) {
+        const double x = -2.0 + i * step;
+        const int weight = (i == 0 || i == intervals) ? 1 : (i % 2 ? 4 : 2);
+        integral += weight * std::exp(x - x*x / (2.0 * variance));
+    }
+    return tails + integral * step / (3.0 * sigma * std::sqrt(6.283185307179586));
 }
 
 
@@ -133,6 +123,66 @@ ImageProcessor::mix_grain_chroma(const std::array<float, 3>& density_noise, floa
     return result;
 }
 
+std::array<float, 6>
+ImageProcessor::grain_residuals(const std::array<float, 24>& response,
+    const std::array<float, 3>& linear, const GranularityModel::Texture& texture,
+    std::uint32_t seed, int x, int y, float negative_strength, float print_strength)
+{
+    std::array<float, 6> residual = {};
+    const float strengths[2] = { negative_strength, print_strength };
+    for (int stage = 0; stage < 2; ++stage) {
+        if (strengths[stage] <= 0.0f) continue;
+        const double texture_variance = GranularityModel::spatial_variance(x, y, texture, stage);
+        std::array<float, 3> noise;
+        for (int record = 0; record < 3; ++record)
+            noise[record] = strengths[stage] * GranularityModel::spatial_sample(seed, x, y, stage, record, texture);
+        for (int output = 0; output < 3; ++output) {
+            float log_gain = 0.0f;
+            double coefficient_sum = 0.0, coefficient_square_sum = 0.0;
+            for (int record = 0; record < 3; ++record) {
+                const float coefficient = response[6 + stage*9 + output*3 + record];
+                log_gain += coefficient * noise[record];
+                coefficient_sum += coefficient;
+                coefficient_square_sum += static_cast<double>(coefficient) * coefficient;
+            }
+            // Records share 81% of their variance. Cross terms matter when
+            // downstream response coefficients differ in magnitude or sign.
+            const double variance = texture_variance * strengths[stage] * strengths[stage]
+                * (0.81 * coefficient_sum * coefficient_sum + 0.19 * coefficient_square_sum);
+            // Bound local-Jacobian extrapolation at clipped/gamut-boundary LUT cells.
+            residual[stage*3 + output] = std::max(0.0f, linear[output])
+                * static_cast<float>(std::expm1(static_cast<double>(std::clamp(log_gain, -2.0f, 2.0f))
+                                               - std::log(bounded_gain_mean(variance))));
+        }
+    }
+    return residual;
+}
+
+std::array<float, 3>
+ImageProcessor::composite_grain(const std::array<float, 3>& linear,
+                                const std::array<float, 3>& residual, float chroma)
+{
+    std::array<float, 3> relative;
+    for (int c = 0; c < 3; ++c) relative[c] = residual[c] / std::max(1e-6f, linear[c]);
+    relative = mix_grain_chroma(relative, chroma);
+    const float visibility = grain_visibility(linear);
+    std::array<float, 3> result;
+    for (int c = 0; c < 3; ++c) result[c] = linear[c] * (1.0f + visibility * relative[c]);
+    return result;
+}
+
+float
+ImageProcessor::grain_visibility(const std::array<float, 3>& linear)
+{
+    // Use the noise-free working-RGB maximum, not the noisy sample, so the
+    // trim cannot rectify the noise or select faces/edges. This is deliberately
+    // a working-space look convention, not physical film density or luminance.
+    const float peak = std::max({0.0f, linear[0], linear[1], linear[2]});
+    const float t = std::clamp((peak - 0.12f) / (0.65f - 0.12f), 0.0f, 1.0f);
+    const float highlight = t * t * (3.0f - 2.0f * t);
+    return 0.80f - 0.45f * highlight;
+}
+
 bool
 ImageProcessor::process(const std::string& input_filename, const std::string& output_filename,
                         const FilmPipeline& pipeline, const InputTransform& input_transform, const Settings& settings,
@@ -145,8 +195,10 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
     halation_validation_settings.radius_pixels = settings.halation_radius_pixels;
     halation_validation_settings.threshold = settings.halation_threshold;
 
-    if (!pipeline.valid() || settings.lut_size < 2 || settings.negative_grain_strength < 0.0f
-        || settings.print_grain_strength < 0.0f || settings.grain_size_pixels < 1.0f || settings.grain_chroma < 0.0f
+    if (!pipeline.valid() || settings.lut_size < 2 || !std::isfinite(settings.negative_grain_strength)
+        || !std::isfinite(settings.print_grain_strength) || !std::isfinite(settings.grain_chroma)
+        || settings.negative_grain_strength < 0.0f
+        || settings.print_grain_strength < 0.0f || !std::isfinite(settings.grain_size_pixels) || settings.grain_size_pixels <= 0.0f || settings.grain_chroma < 0.0f
         || !FilmFormatCatalog::find(settings.film_format) || !std::isfinite(settings.image_width_mm)
         || settings.image_width_mm <= 0.0f || !std::isfinite(settings.negative_mtf_amount)
         || settings.negative_mtf_amount < 0.0f || settings.negative_mtf_amount > 2.0f
@@ -156,6 +208,7 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
         return false;
     }
 
+    const bool use_grain = settings.negative_grain_strength > 0.0f || settings.print_grain_strength > 0.0f;
     const int size = settings.lut_size;
     const bool halation_enabled = settings.halation_strength > 0.0f && settings.halation_radius_pixels > 0.0f;
 
@@ -205,9 +258,8 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
                 const int b = static_cast<int>(std::lround(lookup_input[2] * (size - 1)));
                 const std::size_t index = static_cast<std::size_t>((b * size + g) * size + r);
 
-                grain_field[index] = { { result.negative_granularity_sigma.red, result.negative_granularity_sigma.green,
-                                         result.negative_granularity_sigma.blue, result.print_granularity_sigma.red,
-                                         result.print_granularity_sigma.green, result.print_granularity_sigma.blue } };
+                if (use_grain && !pipeline.grain_response(result, settings.output == Output::Rec709Gamma24,
+                                                         grain_field[index])) return false;
 
                 return true;
             },
@@ -275,6 +327,8 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
     }
 
     const ImageSpec& input_spec = input_image.spec();
+    const float grain_size = GranularityModel::grain_size_pixels(
+        settings.grain_size_pixels, input_spec.width, settings.image_width_mm);
 
     if (input_spec.nchannels < 3) {
         error_ = "input image must contain at least three channels";
@@ -285,6 +339,10 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
                                     * static_cast<std::size_t>(input_spec.height);
     std::vector<float> input_pixels(pixel_count * static_cast<std::size_t>(input_spec.nchannels));
     std::vector<float> output_pixels(pixel_count * 3u, 0.0f);
+    std::vector<float> negative_residual(use_grain ? pixel_count * 3u : 0u, 0.0f);
+    std::vector<float> print_residual(use_grain ? pixel_count * 3u : 0u, 0.0f);
+    const auto grain_texture = GranularityModel::texture(grain_size,
+        static_cast<float>(input_spec.width) / settings.image_width_mm);
 
     if (!input_image.get_pixels(input_image.roi(), TypeDesc::FLOAT, input_pixels.data())) {
         error_ = "could not read input pixels: " + input_image.geterror();
@@ -451,9 +509,8 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
                 const int b = static_cast<int>(std::lround(lookup_input[2] * (size - 1)));
                 const std::size_t index = static_cast<std::size_t>((b * size + g) * size + r);
 
-                grain_field[index] = { { result.negative_granularity_sigma.red, result.negative_granularity_sigma.green,
-                                         result.negative_granularity_sigma.blue, result.print_granularity_sigma.red,
-                                         result.print_granularity_sigma.green, result.print_granularity_sigma.blue } };
+                if (use_grain && !pipeline.grain_response(result, settings.output == Output::Rec709Gamma24,
+                                                         grain_field[index])) return false;
 
                 return true;
             },
@@ -558,31 +615,20 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
 
                     const Lut3D::RGB converted = lut.sample_tetrahedral(lookup_input);
 
-                    GrainSample sigma = sample_field(grain_field, size, lookup_input);
-
-                    std::array<float, 3> density_noise;
-
+                    std::array<float, 3> linear;
                     for (int channel = 0; channel < 3; ++channel) {
-                        const float negative_noise = settings.negative_grain_strength * sigma[channel]
-                                                     * spatial_normal(settings.grain_seed, x, y, 0, channel,
-                                                                      settings.grain_size_pixels);
-
-                        const float print_noise = settings.print_grain_strength * sigma[channel + 3]
-                                                  * spatial_normal(settings.grain_seed, x, y, 1, channel,
-                                                                   settings.grain_size_pixels);
-
-                        density_noise[channel] = negative_noise - print_noise;
+                        linear[channel] = to_linear(converted[channel], settings.output);
+                        output_pixels[pixel*3u + channel] = use_grain ? converted[channel]
+                            : std::clamp(converted[channel], 0.0f, 1.0f);
                     }
-
-                    density_noise = mix_grain_chroma(density_noise, settings.grain_chroma);
-
-                    for (int channel = 0; channel < 3; ++channel) {
-                        float linear = to_linear(converted[channel], settings.output);
-
-                        linear *= std::pow(10.0f, density_noise[channel]);
-
-                        output_pixels[pixel * 3u + channel] = std::clamp(from_linear(linear, settings.output), 0.0f,
-                                                                         1.0f);
+                    if (use_grain) {
+                        const auto response = sample_field(grain_field, size, lookup_input);
+                        const auto residual = grain_residuals(response, linear, grain_texture,
+                            settings.grain_seed, x, y, settings.negative_grain_strength, settings.print_grain_strength);
+                        for (int channel = 0; channel < 3; ++channel) {
+                            negative_residual[pixel*3u + channel] = residual[channel];
+                            print_residual[pixel*3u + channel] = residual[channel+3];
+                        }
                     }
                 }
 
@@ -648,6 +694,7 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
         spatial_settings.negative_amount = settings.negative_mtf_amount;
         spatial_settings.print_amount = print_mtf_amount;
         spatial_settings.gamma24_encoded = settings.output == Output::Rec709Gamma24;
+        spatial_settings.clamp_output = !use_grain;
 
         if (progress) {
             progress("Measured MTF", 0, 1);
@@ -658,8 +705,37 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
             return false;
         }
 
+        if (use_grain && print_mtf_amount > 0.0f) {
+            // Negative grain is introduced after the negative's image MTF;
+            // only the downstream print response filters its signed residual.
+            spatial_settings.negative_amount = 0.0f;
+            spatial_settings.gamma24_encoded = false;
+            spatial_settings.clamp_output = false;
+            if (!spatial_response.apply(negative_residual, input_spec.width, input_spec.height,
+                                        spatial_settings, cancel)) {
+                error_ = cancelled() ? "image processing cancelled" : "negative grain filtering failed";
+                return false;
+            }
+        }
         if (progress) {
             progress("Measured MTF", 1, 1);
+        }
+    }
+
+    if (use_grain) {
+        for (std::size_t pixel = 0; pixel < pixel_count; ++pixel) {
+            if (pixel % static_cast<std::size_t>(input_spec.width) == 0 && cancelled()) {
+                error_ = "image processing cancelled";
+                return false;
+            }
+            std::array<float, 3> linear, residual;
+            for (int c = 0; c < 3; ++c) {
+                linear[c] = to_linear(output_pixels[pixel*3u+c], settings.output);
+                residual[c] = negative_residual[pixel*3u+c] + print_residual[pixel*3u+c];
+            }
+            const auto grained = composite_grain(linear, residual, settings.grain_chroma);
+            for (int c = 0; c < 3; ++c)
+                output_pixels[pixel*3u+c] = std::clamp(from_linear(grained[c], settings.output), 0.0f, 1.0f);
         }
     }
 
@@ -696,6 +772,8 @@ ImageProcessor::process(const std::string& input_filename, const std::string& ou
                           : OutputTransform::profiles(pipeline.settings().resources_directory).at(static_cast<std::size_t>(settings.output)));
     output_spec.attribute("filmviz:negative_grain_strength", settings.negative_grain_strength);
     output_spec.attribute("filmviz:print_grain_strength", settings.print_grain_strength);
+    output_spec.attribute("filmviz:grain_model", "aperture-integrated-density-response-v2");
+    output_spec.attribute("filmviz:grain_scale", settings.grain_size_pixels);
     output_spec.attribute("filmviz:grain_seed", static_cast<int>(settings.grain_seed));
     output_spec.attribute("filmviz:grain_chroma", settings.grain_chroma);
     output_spec.attribute("filmviz:film_format", settings.film_format);

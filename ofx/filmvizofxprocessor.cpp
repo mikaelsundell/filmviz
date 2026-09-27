@@ -36,7 +36,7 @@
 namespace
 {
 
-using GrainSample = std::array<float, 6>;
+using GrainSample = FilmPipeline::GrainResponse;
 
 bool
 finite_setting(
@@ -154,7 +154,7 @@ sample_field(
                     static_cast<std::size_t>(
                         (b * size + g) * size + r);
 
-                for (int channel = 0; channel < 6; ++channel) {
+                for (int channel = 0; channel < 24; ++channel) {
                     result[channel] +=
                         weight
                         * values[index][channel];
@@ -166,66 +166,7 @@ sample_field(
     return result;
 }
 
-float
-spatial_normal(
-    std::uint32_t seed,
-    int x,
-    int y,
-    int stage,
-    int channel,
-    float size_pixels)
-{
-    const float scale =
-        std::max(1.0f, size_pixels);
 
-    const float px =
-        static_cast<float>(x)
-        / scale;
-
-    const float py =
-        static_cast<float>(y)
-        / scale;
-
-    const int x0 =
-        static_cast<int>(
-            std::floor(px));
-
-    const int y0 =
-        static_cast<int>(
-            std::floor(py));
-
-    const float tx = px - static_cast<float>(x0);
-    const float ty = py - static_cast<float>(y0);
-    const float sx = tx * tx * (3.0f - 2.0f * tx);
-    const float sy = ty * ty * (3.0f - 2.0f * ty);
-
-    const float weights[4] = {
-        (1.0f - sx) * (1.0f - sy),
-        sx * (1.0f - sy),
-        (1.0f - sx) * sy,
-        sx * sy
-    };
-
-    const float samples[4] = {
-        GranularityModel::normal_sample(seed, x0, y0, stage, channel),
-        GranularityModel::normal_sample(seed, x0 + 1, y0, stage, channel),
-        GranularityModel::normal_sample(seed, x0, y0 + 1, stage, channel),
-        GranularityModel::normal_sample(seed, x0 + 1, y0 + 1, stage, channel)
-    };
-
-    float value = 0.0f;
-    float variance = 0.0f;
-
-    for (int i = 0; i < 4; ++i) {
-        value += weights[i] * samples[i];
-        variance += weights[i] * weights[i];
-    }
-
-    return
-        variance > 1e-10f
-            ? value / std::sqrt(variance)
-            : value;
-}
 
 float
 to_linear(
@@ -273,6 +214,7 @@ transform_key(
     key.push_pull_stops = settings.push_pull_stops;
     key.color_density = settings.color_density;
     key.color_depth = settings.color_depth;
+    key.color_response = settings.color_response;
     key.negative_flash_percent = settings.negative_flash_percent;
     key.print_flash_percent = settings.print_flash_percent;
     key.middle_gray = settings.middle_gray;
@@ -418,6 +360,7 @@ FilmVizOfxRenderSettings::operator==(
         && push_pull_stops == other.push_pull_stops
         && color_density == other.color_density
         && color_depth == other.color_depth
+        && color_response == other.color_response
         && middle_gray == other.middle_gray
         && printer_temperature == other.printer_temperature
         && negative_bleach_bypass == other.negative_bleach_bypass
@@ -479,6 +422,7 @@ FilmVizOfxProcessor::configure(
         || !finite_setting(settings.color_depth)
         || settings.color_depth < FilmColorResponse::minimum_color_depth
         || settings.color_depth > FilmColorResponse::maximum_color_depth
+        || !FilmColorResponse::valid_tuning(settings.color_response)
         || !finite_setting(settings.negative_flash_percent)
         || settings.negative_flash_percent < 0.0f
         || settings.negative_flash_percent > 25.0f
@@ -508,7 +452,10 @@ FilmVizOfxProcessor::configure(
         || settings.print_mtf_amount > 2.0f
         || settings.negative_grain < 0.0f
         || settings.print_grain < 0.0f
-        || settings.grain_size < 1.0f
+        || !finite_setting(settings.grain_size)
+        || !finite_setting(settings.negative_grain) || !finite_setting(settings.print_grain)
+        || !finite_setting(settings.grain_chroma)
+        || settings.grain_size <= 0.0f
         || settings.grain_chroma < 0.0f
         || settings.halation_strength < 0.0f
         || settings.halation_strength > 1.0f
@@ -773,6 +720,7 @@ FilmVizOfxProcessor::configure(
             pipeline_settings.push_pull_stops = settings.push_pull_stops;
             pipeline_settings.color_density = settings.color_density;
             pipeline_settings.color_depth = settings.color_depth;
+            pipeline_settings.color_response = settings.color_response;
             pipeline_settings.middle_gray = settings.middle_gray;
             pipeline_settings.printer_temperature_kelvin = settings.printer_temperature;
             pipeline_settings.negative_bleach_bypass = settings.negative_bleach_bypass;
@@ -941,14 +889,8 @@ FilmVizOfxProcessor::configure(
                             static_cast<std::size_t>(
                                 (b * size + g) * size + r);
 
-                        next->grain_field[index] = {{
-                            result.negative_granularity_sigma.red,
-                            result.negative_granularity_sigma.green,
-                            result.negative_granularity_sigma.blue,
-                            result.print_granularity_sigma.red,
-                            result.print_granularity_sigma.green,
-                            result.print_granularity_sigma.blue
-                        }};
+                        if (!next->pipeline->grain_response(result, settings.output_profile == 1,
+                                                            next->grain_field[index])) return false;
 
                         return true;
                     });
@@ -1339,7 +1281,16 @@ FilmVizOfxProcessor::render(
     std::vector<float> halation_ap0;
 
     const int source_width = source.x2 - source.x1;
+    const float grain_size = GranularityModel::grain_size_pixels(
+        settings.grain_size, source_width, settings.image_width_mm);
     const int source_height = source.y2 - source.y1;
+    const auto grain_texture = GranularityModel::texture(grain_size,
+        static_cast<float>(source_width) / settings.image_width_mm);
+    const int grain_width = render_x2 - render_x1;
+    const int grain_height = render_y2 - render_y1;
+    const std::size_t grain_values = static_cast<std::size_t>(grain_width) * grain_height * 3u;
+    std::vector<float> negative_residual(use_grain ? grain_values : 0u, 0.0f);
+    std::vector<float> print_residual(use_grain ? grain_values : 0u, 0.0f);
 
     if (use_halation) {
         if (source_width <= 0
@@ -1555,77 +1506,21 @@ FilmVizOfxProcessor::render(
                             cache->color_lut->sample_tetrahedral(
                                 lookup_input);
 
-                        GrainSample sigma =
-                            sample_field(
-                                cache->grain_field,
-                                size,
-                                lookup_input);
-
-                        std::array<float, 3> density_noise = {{
-                            0.0f,
-                            0.0f,
-                            0.0f
-                        }};
-
-                        if (use_grain) {
-                            for (int channel = 0;
-                                 channel < 3;
-                                 ++channel) {
-
-                                const float negative_noise =
-                                    settings.negative_grain
-                                    * sigma[channel]
-                                    * spatial_normal(
-                                        frame_seed,
-                                        x,
-                                        y,
-                                        0,
-                                        channel,
-                                        settings.grain_size);
-
-                                const float print_noise =
-                                    settings.print_grain
-                                    * sigma[channel + 3]
-                                    * spatial_normal(
-                                        frame_seed,
-                                        x,
-                                        y,
-                                        1,
-                                        channel,
-                                        settings.grain_size);
-
-                                density_noise[channel] =
-                                    negative_noise
-                                    - print_noise;
-                            }
-
-                            density_noise =
-                                ImageProcessor::mix_grain_chroma(
-                                    density_noise,
-                                    settings.grain_chroma);
+                        std::array<float, 3> linear;
+                        for (int c = 0; c < 3; ++c) {
+                            linear[c] = to_linear(converted[c], settings.output_profile);
+                            dst[c] = use_grain ? converted[c] : clamp01(converted[c]);
                         }
-
-                        for (int channel = 0;
-                             channel < 3;
-                             ++channel) {
-
-                            float linear =
-                                to_linear(
-                                    converted[channel],
-                                    settings.output_profile);
-
-                            if (use_grain) {
-                                linear *=
-                                    std::pow(
-                                        10.0f,
-                                        density_noise[channel]);
+                        if (use_grain) {
+                            const auto response = sample_field(cache->grain_field, size, lookup_input);
+                            const auto residual = ImageProcessor::grain_residuals(response, linear, grain_texture,
+                                frame_seed, x, y, settings.negative_grain, settings.print_grain);
+                            const std::size_t index = (static_cast<std::size_t>(y-render_y1)*grain_width
+                                                       + (x-render_x1))*3u;
+                            for (int c = 0; c < 3; ++c) {
+                                negative_residual[index+c] = residual[c];
+                                print_residual[index+c] = residual[c+3];
                             }
-
-                            dst[channel] =
-                                clamp01(
-                                    from_linear(
-                                        linear,
-                                        settings.output_profile));
                         }
 
                         dst[3] = src[3];
@@ -1648,9 +1543,8 @@ FilmVizOfxProcessor::render(
         return false;
     }
 
-    const bool use_mtf =
-        settings.negative_mtf_amount > 0.0f
-        || settings.print_mtf_amount > 0.0f;
+    const float print_mtf_amount = settings.print_profile == "none" ? 0.0f : settings.print_mtf_amount;
+    const bool use_mtf = settings.negative_mtf_amount > 0.0f || print_mtf_amount > 0.0f;
 
     if (use_mtf) {
         if (!cache->spatial_response
@@ -1691,9 +1585,10 @@ FilmVizOfxProcessor::render(
         SpatialResponseModel::Settings spatial_settings;
         spatial_settings.image_width_mm = settings.image_width_mm;
         spatial_settings.negative_amount = settings.negative_mtf_amount;
-        spatial_settings.print_amount = settings.print_mtf_amount;
+        spatial_settings.print_amount = print_mtf_amount;
         spatial_settings.sampling_width_pixels = source_width;
         spatial_settings.gamma24_encoded = settings.output_profile == 1;
+        spatial_settings.clamp_output = !use_grain;
 
         if (!cache->spatial_response->apply(
                 rgb,
@@ -1707,6 +1602,16 @@ FilmVizOfxProcessor::render(
             return false;
         }
 
+        if (use_grain && print_mtf_amount > 0.0f) {
+            spatial_settings.negative_amount = 0.0f;
+            spatial_settings.gamma24_encoded = false;
+            spatial_settings.clamp_output = false;
+            if (!cache->spatial_response->apply(negative_residual, width, height, spatial_settings, aborted)) {
+                error = aborted() ? "render aborted" : "negative grain filtering failed";
+                return false;
+            }
+        }
+
         for (int y = render_y1; y < render_y2; ++y) {
             for (int x = render_x1; x < render_x2; ++x) {
                 float* pixel = destination_pixel(destination, x, y);
@@ -1718,6 +1623,24 @@ FilmVizOfxProcessor::render(
                 pixel[0] = rgb[index + 0u];
                 pixel[1] = rgb[index + 1u];
                 pixel[2] = rgb[index + 2u];
+            }
+        }
+    }
+
+    if (use_grain) {
+        for (int y = render_y1; y < render_y2; ++y) {
+            if (aborted()) { error = "render aborted"; return false; }
+            for (int x = render_x1; x < render_x2; ++x) {
+                float* pixel = destination_pixel(destination, x, y);
+                if (!pixel) { error = "grain composite image access failed"; return false; }
+                const std::size_t index = (static_cast<std::size_t>(y-render_y1)*grain_width + (x-render_x1))*3u;
+                std::array<float, 3> linear, residual;
+                for (int c = 0; c < 3; ++c) {
+                    linear[c] = to_linear(pixel[c], settings.output_profile);
+                    residual[c] = negative_residual[index+c] + print_residual[index+c];
+                }
+                const auto grained = ImageProcessor::composite_grain(linear, residual, settings.grain_chroma);
+                for (int c = 0; c < 3; ++c) pixel[c] = clamp01(from_linear(grained[c], settings.output_profile));
             }
         }
     }

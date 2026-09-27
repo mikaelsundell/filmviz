@@ -23,7 +23,9 @@ constexpr char kMagic[8] = {'F','V','O','F','X','C','H','E'};
 // bakes warm mid-density separation into the negative colour-response transform.
 // Version 10 fixes that warm response and separates chromatic depth from the
 // public colour-separation trim. Version 11 replaces manual inputs with OCIO.
-constexpr std::uint32_t kVersion = 11u;
+// Version 12 includes experimental color-response tuning in transform identity.
+// Version 13 stores two downstream density-response Jacobians with the sigmas.
+constexpr std::uint32_t kVersion = 13u;
 constexpr std::uint32_t kHasNegativeExposure = 1u << 0u;
 
 void
@@ -99,6 +101,7 @@ FilmVizOfxTransformKey::operator==(
         && push_pull_stops == other.push_pull_stops
         && color_density == other.color_density
         && color_depth == other.color_depth
+        && color_response == other.color_response
         && negative_flash_percent == other.negative_flash_percent
         && print_flash_percent == other.print_flash_percent
         && middle_gray == other.middle_gray
@@ -125,6 +128,16 @@ filmviz_ofx_transform_hash(
     hash_value(hash, key.push_pull_stops);
     hash_value(hash, key.color_density);
     hash_value(hash, key.color_depth);
+    hash_value(hash, key.color_response.response_amount);
+    hash_value(hash, key.color_response.chroma_compression);
+    hash_value(hash, key.color_response.chroma_knee);
+    hash_value(hash, key.color_response.density_center);
+    hash_value(hash, key.color_response.density_width);
+    hash_value(hash, key.color_response.warm_protection);
+    hash_value(hash, key.color_response.warm_hue_center);
+    hash_value(hash, key.color_response.warm_hue_width);
+    hash_value(hash, key.color_response.warm_hue_shift);
+
     hash_value(hash, key.negative_flash_percent);
     hash_value(hash, key.print_flash_percent);
     hash_value(hash, key.middle_gray);

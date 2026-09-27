@@ -277,6 +277,39 @@ def _scope_rgb_at(width: int, height: int, rgb, u: float, v: float):
     )
 
 
+class ColorResponsePlot(QWidget):
+    """Diagnostic slice of the C++ dye model, independent of the image preview."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(210)
+        self._response = {}
+
+    def set_response(self, response):
+        self._response = response
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), self.palette().window())
+        center = QPointF(self.width() * 0.5, self.height() * 0.48)
+        scale = min(self.width(), self.height() - 45) * 0.85
+        for key, color in (("bypass", QColor("#777777")), ("standard", QColor("#6da8cd")), ("tuned", QColor("#efa756"))):
+            points = self._response.get(key, [])
+            path = QPainterPath()
+            for i, point in enumerate(points):
+                q = QPointF(center.x() + point[0] * scale, center.y() - point[1] * scale)
+                if i == 0:
+                    path.moveTo(q)
+                else:
+                    path.lineTo(q)
+            painter.setPen(color)
+            painter.drawPath(path)
+        painter.setPen(self.palette().text().color())
+        painter.drawText(5, self.height() - 28, "Dye chroma: gray bypass / blue standard / amber tuned")
+        painter.drawText(5, self.height() - 10, "Slice: neutral density 1.0, chroma RMS 0.2")
+
+
 class ColorProfileSelector(QObject):
     """Two linked controls retaining the canonical profile as their value."""
     currentIndexChanged = Signal(int)
@@ -3693,8 +3726,6 @@ class FilmVizWindow(QMainWindow):
             ("Negative flash (%)", self.negative_flash_control),
             ("Print flash (%)", self.print_flash_control),
             ("Push/pull stops", self.push_pull_control),
-            ("Color separation", self.color_density_control),
-            ("Color depth", self.color_depth_control),
             ("Negative bypass", self.negative_bleach_bypass_control),
             ("Print bypass", self.print_bleach_bypass_control),
             ("Printer R light", self.printer_light_red_control),
@@ -3752,6 +3783,44 @@ class FilmVizWindow(QMainWindow):
         pipeline_scroll.setWidget(pipeline_scroll_host)
         pipeline_page_layout.addWidget(pipeline_scroll)
         pipeline_tabs.addTab(pipeline_page, "Pipeline")
+
+        response_page = QWidget()
+        response_layout = QFormLayout(response_page)
+        response_note = QLabel("Empirical negative dye shaping. Reset restores the current look.")
+        response_note.setWordWrap(True)
+        response_layout.addRow(response_note)
+        self.response_bypass = QCheckBox("Bypass Color Response")
+        response_layout.addRow(self.response_bypass)
+        self.response_controls = {}
+        self.response_rows = {}
+        self.response_defaults = {}
+        for name, label, default, minimum, maximum, step, tooltip in (
+            ('response_amount', 'Response amount', 1.0, 0.0, 1.0, 0.05, 'Blend from calibrated bypass (0) to the complete shaped response (1).'),
+            ('chroma_compression', 'Chroma compression', 0.22, 0.0, 1.0, 0.01, 'Compression of normalized negative dye-channel differences.'),
+            ('chroma_knee', 'Chroma knee', 0.5, 0.05, 2.0, 0.05, 'Chroma scale of compression and density depth; smaller values act earlier.'),
+            ('density_center', 'Density center', 1.25, 0.0, 3.0, 0.05, 'Center of the shaping envelope in normalized negative dye density, not image luminance.'),
+            ('density_width', 'Density width', 1.0, 0.25, 3.0, 0.05, 'Scale of the density envelope and its smooth low/high-density fades.'),
+            ('warm_protection', 'Warm protection', 0.5, 0.0, 1.0, 0.05, 'Maximum reduction in chroma compression within the selected warm region.'),
+            ('warm_hue_center', 'Warm hue center (°)', 0.0, -180.0, 180.0, 1.0, 'Dye-plane angle relative to yellow: positive toward red, negative toward green.'),
+            ('warm_hue_width', 'Warm hue width', 1.0, 0.25, 3.0, 0.05, 'Width of the selected hue region; one preserves the current selection.'),
+            ('warm_hue_shift', 'Warm hue shift (°)', 0.0, -45.0, 45.0, 1.0, 'Additional localized rotation: positive toward red, negative toward green. Fades outside the selected region.'),
+        ):
+            control = _double(default, minimum, maximum, step, 2)
+            control.setToolTip(tooltip)
+            self.response_controls[name] = control
+            self.response_defaults[name] = default
+            self.response_rows[name] = SliderSpinRow(control)
+            response_layout.addRow(label, self.response_rows[name])
+        response_layout.insertRow(5, "Color depth", self.color_depth_control)
+        self.response_reset = QPushButton("Reset Color Response")
+        response_layout.addRow(self.response_reset)
+        self.response_plot = ColorResponsePlot()
+        response_layout.addRow(self.response_plot)
+        response_scroll = QScrollArea()
+        response_scroll.setWidgetResizable(True)
+        response_scroll.setWidget(response_page)
+        pipeline_tabs.addTab(response_scroll, "Color Response")
+
         controls_splitter.addWidget(pipeline_tabs)
 
         self.tabs = QTabWidget()
@@ -3801,7 +3870,8 @@ class FilmVizWindow(QMainWindow):
         image_form.addRow("Output image", self.output_image)
         self.negative_grain = _double(0.0, 0.0, 2.0)
         self.print_grain = _double(0.0, 0.0, 2.0)
-        self.grain_size = _double(1.0, 0.0, 10.0, 0.25)
+        self.grain_size = _double(1.0, 0.25, 10.0, 0.25)
+        self.grain_size.setToolTip("Grain size multiplier referenced to 2048-pixel-wide Super 35. Both texture bands scale with film format; pixel-area integration handles reduced previews. Strength uses the experimental 48 µm aperture normalization.")
         self.grain_chroma = _double(1.0, 0.0, 1.0, 0.1)
         self.grain_seed = DragSpinBox()
         self.grain_seed.setRange(0, 2_147_483_647)
@@ -3842,13 +3912,13 @@ class FilmVizWindow(QMainWindow):
             self.halation_radius)
         self.halation_threshold_control = SliderSpinRow(
             self.halation_threshold)
-        image_form.addRow("Negative grain", self.negative_grain_control)
-        image_form.addRow("Print grain", self.print_grain_control)
-        image_form.addRow("Grain scale (px)", self.grain_size_control)
-        image_form.addRow("Grain chroma", self.grain_chroma_control)
-        image_form.addRow("Grain seed", self.grain_seed)
         image_form.addRow("Film format", self.film_format)
         image_form.addRow("Active image width (mm)", self.image_width_mm)
+        image_form.addRow("Negative grain", self.negative_grain_control)
+        image_form.addRow("Print grain", self.print_grain_control)
+        image_form.addRow("Grain scale (×)", self.grain_size_control)
+        image_form.addRow("Grain chroma", self.grain_chroma_control)
+        image_form.addRow("Grain seed", self.grain_seed)
         image_form.addRow("Negative MTF", self.negative_mtf_control)
         image_form.addRow("Print MTF", self.print_mtf_control)
         image_form.addRow("Halation", self.halation_strength_control)
@@ -4085,6 +4155,13 @@ class FilmVizWindow(QMainWindow):
         self.input_image.edit.editingFinished.connect(
             self._schedule_metal_preview)
 
+        self.response_reset.clicked.connect(self._reset_color_response)
+        self.response_bypass.toggled.connect(self._color_response_changed)
+        for control in self.response_controls.values():
+            control.valueChanged.connect(self._color_response_changed)
+        self.color_depth.valueChanged.connect(self._update_color_response_plot)
+        self._update_color_response_plot()
+
         for combo in (
             self.input_profile,
             self.negative_profile,
@@ -4279,8 +4356,39 @@ class FilmVizWindow(QMainWindow):
 
 
 
+    def _response_settings(self):
+        settings = {name: control.value() for name, control in self.response_controls.items()}
+        if self.response_bypass.isChecked():
+            settings["response_amount"] = 0.0
+        return settings
+
+    def _update_color_response_plot(self, *_):
+        self.response_plot.set_response(filmviz.color_response_preview(
+            self._response_settings(), self.color_depth.value(), self.color_density.value()))
+
+    def _color_response_changed(self, *_):
+        enabled = not self.response_bypass.isChecked()
+        for row in self.response_rows.values():
+            row.setEnabled(enabled)
+        self.color_depth_control.setEnabled(enabled)
+        self._update_color_response_plot()
+        self._schedule_metal_preview()
+
+    def _reset_color_response(self):
+        self.response_bypass.blockSignals(True)
+        self.response_bypass.setChecked(False)
+        self.response_bypass.blockSignals(False)
+        for name, control in self.response_controls.items():
+            control.blockSignals(True)
+            control.setValue(self.response_defaults[name])
+            control.blockSignals(False)
+        self.color_density.setValue(0.0)
+        self.color_depth.setValue(1.0)
+        self._color_response_changed()
+
     @Slot()
     def _reset_pipeline(self):
+        self._reset_color_response()
         self.input_profile.setCurrentText("ARRI LogC3 (EI800)")
         if self.negative_profile.count() > 0:
             self.negative_profile.setCurrentIndex(0)
@@ -4515,6 +4623,7 @@ class FilmVizWindow(QMainWindow):
             push_pull=arguments["push_pull"],
             color_density=arguments["color_density"],
             color_depth=arguments["color_depth"],
+            color_response=arguments["color_response"],
             negative_bleach_bypass=arguments["negative_bleach_bypass"],
             print_bleach_bypass=arguments["print_bleach_bypass"],
             printer_light_red=arguments["printer_light_red"],
@@ -4758,7 +4867,7 @@ class FilmVizWindow(QMainWindow):
             "[Image]",
             f"Negative grain: {self.negative_grain.value():g}",
             f"Print grain: {self.print_grain.value():g}",
-            f"Grain scale (px): {self.grain_size.value():g}",
+            f"Grain scale (×): {self.grain_size.value():g}",
             f"Grain chroma: {self.grain_chroma.value():g}",
             f"Grain seed: {self.grain_seed.value()}",
             f"Film format: {self.film_format.currentText()}",
@@ -5767,6 +5876,7 @@ class FilmVizWindow(QMainWindow):
             push_pull=self.push_pull.value(),
             color_density=self.color_density.value(),
             color_depth=self.color_depth.value(),
+            color_response=self._response_settings(),
             negative_bleach_bypass=self.negative_bleach_bypass.value(),
             print_bleach_bypass=self.print_bleach_bypass.value(),
             printer_light_red=self.printer_light_red.value(),

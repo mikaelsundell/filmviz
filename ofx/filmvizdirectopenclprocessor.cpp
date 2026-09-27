@@ -9,6 +9,7 @@
 
 #include "filmdirectdata.h"
 #include "filmpipeline.h"
+#include "granularitymodel.h"
 #include "filmvizdirectkernelsource.h"
 #include "filmvizdirectparams.h"
 #include "negativeprofile.h"
@@ -77,7 +78,7 @@ std::string opencl_source()
     replace_all(source,"solve3(normal,rhs,update)","solve3(normal,rhs,&update)");
     replace_all(source,"solve3(M,rhs,step)","solve3(M,rhs,&step)");
     replace_all(source,"abs(","fabs(");
-    for(int i=0;i<16;++i) {
+    for(int i=0;i<18;++i) {
         replace_all(source," [[buffer("+std::to_string(i)+")]]","");
     }
     replace_all(source,", uint2 gid [[thread_position_in_grid]]","");
@@ -177,6 +178,16 @@ void populate_params(
     p.exposure_stops=settings.exposure_stops; p.negative_flash_percent=settings.negative_flash_percent;
     p.print_flash_percent=settings.print_flash_percent; p.push_pull_stops=settings.push_pull_stops;
     p.color_density=settings.color_density; p.color_depth=settings.color_depth;
+    p.response_response_amount=settings.color_response.response_amount;
+    p.response_chroma_compression=settings.color_response.chroma_compression;
+    p.response_chroma_knee=settings.color_response.chroma_knee;
+    p.response_density_center=settings.color_response.density_center;
+    p.response_density_width=settings.color_response.density_width;
+    p.response_warm_protection=settings.color_response.warm_protection;
+    p.response_warm_hue_center=settings.color_response.warm_hue_center;
+    p.response_warm_hue_width=settings.color_response.warm_hue_width;
+    p.response_warm_hue_shift=settings.color_response.warm_hue_shift;
+
     p.negative_bleach_bypass=settings.negative_bleach_bypass; p.print_bleach_bypass=settings.print_bleach_bypass;
     p.printer_light_red=settings.printer_light_red; p.printer_light_green=settings.printer_light_green;
     p.printer_light_blue=settings.printer_light_blue; p.printer_light_master=settings.printer_light_master;
@@ -185,7 +196,10 @@ void populate_params(
     p.granularity_count=static_cast<std::uint32_t>(data.negative_granularity_samples.size()/4u);
     p.frame_seed=settings.grain_seed^static_cast<std::uint32_t>(std::llround(time*1000.0));
     p.grain_enabled=settings.grain_enabled?1u:0u; p.negative_grain=settings.negative_grain;
-    p.print_grain=settings.print_grain; p.grain_size=settings.grain_size; p.grain_chroma=settings.grain_chroma;
+    p.print_grain=settings.print_grain; p.grain_size=GranularityModel::grain_size_pixels(settings.grain_size, source.x2 - source.x1, settings.image_width_mm); p.grain_chroma=settings.grain_chroma;
+    const auto grain_texture=GranularityModel::texture(p.grain_size, static_cast<float>(source.x2-source.x1)/settings.image_width_mm);
+    p.reserved_grain_float[0]=grain_texture.aperture_pixels;
+    p.reserved_grain_float[1]=0.0f;
     p.granularity_density_min=data.granularity_density_min; p.granularity_density_max=data.granularity_density_max;
     auto copy3=[](float* destination_values,const std::array<float,3>& source_values) {
         for(int i=0;i<3;++i) destination_values[i]=source_values[i];
@@ -236,6 +250,14 @@ bool FilmVizDirectOpenCLProcessor::configure(
     std::string& error)
 {
     error.clear();
+    if (!std::isfinite(settings.grain_size) || settings.grain_size <= 0.0f
+        || !std::isfinite(settings.image_width_mm) || settings.image_width_mm <= 0.0f
+        || !std::isfinite(settings.negative_grain) || settings.negative_grain < 0.0f
+        || !std::isfinite(settings.print_grain) || settings.print_grain < 0.0f
+        || !std::isfinite(settings.grain_chroma) || settings.grain_chroma < 0.0f) {
+        error="Invalid grain settings"; return false;
+    }
+    if (!FilmColorResponse::valid_tuning(settings.color_response)) { error="Invalid color response tuning"; return false; }
     try {
         const std::string output_key = resources_directory + ':' + std::to_string(settings.output_profile);
         if (!impl_->output_transform || impl_->output_key != output_key) {
@@ -343,6 +365,7 @@ bool FilmVizDirectOpenCLProcessor::render(
     cl_mem destination_buffer=reinterpret_cast<cl_mem>(destination.buffer);
     const bool use_halation=settings.halation_enabled&&settings.halation_strength>0.0f&&settings.halation_radius>0.0f;
     const bool use_mtf=settings.negative_mtf_amount>0.0f||settings.print_mtf_amount>0.0f;
+    const bool use_grain=settings.grain_enabled&&(settings.negative_grain>0.0f||settings.print_grain>0.0f);
     if(use_mtf&&!impl_->resources->spatial_response_valid) { error="FilmViz measured MTF response is unavailable"; return false; }
     const std::size_t source_width=source.x2-source.x1,source_height=source.y2-source.y1;
     const std::size_t render_width=render_x2-render_x1,render_height=render_y2-render_y1;
@@ -422,8 +445,10 @@ bool FilmVizDirectOpenCLProcessor::render(
         enqueue(combine,source_width,source_height); params.reserved_header[0]=1u;
     }
     cl_mem dense_a=nullptr,dense_b=nullptr,direct_destination=destination_buffer;
+    const std::size_t residual_bytes=use_grain?render_width*render_height*sizeof(float)*4u:sizeof(float)*4u;
+    cl_mem negative_residual=make_temporary(residual_bytes),print_residual=make_temporary(residual_bytes);
     FilmVizDirectParams direct_params=params;
-    if(use_mtf) {
+    if(use_mtf||use_grain) {
         const std::size_t bytes=render_width*render_height*sizeof(float)*4u;
         dense_a=make_temporary(bytes); dense_b=make_temporary(bytes); direct_destination=dense_a;
         direct_params.destination_x1=render_x1; direct_params.destination_y1=render_y1;
@@ -438,27 +463,46 @@ bool FilmVizDirectOpenCLProcessor::render(
         status=clSetKernelArg(direct,static_cast<cl_uint>(i+2),sizeof(cl_mem),&impl_->resources->buffers[i]);
     if(status==CL_SUCCESS) status=clSetKernelArg(direct,14,sizeof(direct_params_buffer),&direct_params_buffer);
     if(status==CL_SUCCESS) status=clSetKernelArg(direct,15,sizeof(prepared),&prepared);
+    if(status==CL_SUCCESS) status=clSetKernelArg(direct,16,sizeof(negative_residual),&negative_residual);
+    if(status==CL_SUCCESS) status=clSetKernelArg(direct,17,sizeof(print_residual),&print_residual);
     enqueue(direct,render_width,render_height);
-    if(use_mtf&&status==CL_SUCCESS) {
-        SpatialResponseModel::Settings s; s.image_width_mm=settings.image_width_mm; s.negative_amount=settings.negative_mtf_amount;
-        s.print_amount=settings.print_mtf_amount; s.sampling_width_pixels=static_cast<int>(source_width); s.gamma24_encoded=settings.output_profile==1;
+    const auto filter=[&](cl_mem input,float negative_amount,float print_amount,bool gamma24,bool signed_residual) {
+        if(status!=CL_SUCCESS) return;
+        SpatialResponseModel::Settings settings_mtf;
+        settings_mtf.image_width_mm=settings.image_width_mm;
+        settings_mtf.negative_amount=negative_amount; settings_mtf.print_amount=print_amount;
+        settings_mtf.sampling_width_pixels=static_cast<int>(source_width);
         std::array<std::vector<float>,3> channel_weights;
-        if(!impl_->resources->spatial_response.kernels(static_cast<int>(render_width),s,channel_weights)) status=CL_INVALID_VALUE;
-        std::vector<float> weights; for(const auto& channel:channel_weights) weights.insert(weights.end(),channel.begin(),channel.end());
-        cl_mem weight_buffer=status==CL_SUCCESS?make_constant(weights.data(),weights.size()*sizeof(float)):nullptr;
+        if(!impl_->resources->spatial_response.kernels(static_cast<int>(render_width),settings_mtf,channel_weights)) {
+            status=CL_INVALID_VALUE; return;
+        }
+        std::vector<float> weights;
+        for(const auto& channel:channel_weights) weights.insert(weights.end(),channel.begin(),channel.end());
+        cl_mem weight_buffer=make_constant(weights.data(),weights.size()*sizeof(float));
         spatial.width=static_cast<std::uint32_t>(render_width); spatial.height=static_cast<std::uint32_t>(render_height);
-        spatial.radius=channel_weights.empty()?0u:static_cast<std::uint32_t>(channel_weights[0].size()/2u); spatial.gamma24=s.gamma24_encoded?1u:0u;
+        spatial.radius=static_cast<std::uint32_t>(channel_weights[0].size()/2u);
+        spatial.gamma24=gamma24?1u:0u; spatial.reserved[0]=signed_residual?1u:0u;
         cl_kernel mtf=make_kernel("filmviz_mtf");
-        auto run_mtf=[&](cl_mem input,cl_mem output,std::uint32_t horizontal) {
+        auto run_mtf=[&](cl_mem src,cl_mem dst,std::uint32_t horizontal) {
             spatial.horizontal=horizontal; cl_mem sb=make_constant(&spatial,sizeof(spatial));
-            if(status==CL_SUCCESS) status=clSetKernelArg(mtf,0,sizeof(input),&input); if(status==CL_SUCCESS) status=clSetKernelArg(mtf,1,sizeof(output),&output);
-            if(status==CL_SUCCESS) status=clSetKernelArg(mtf,2,sizeof(weight_buffer),&weight_buffer); if(status==CL_SUCCESS) status=clSetKernelArg(mtf,3,sizeof(sb),&sb);
+            if(status==CL_SUCCESS) status=clSetKernelArg(mtf,0,sizeof(src),&src);
+            if(status==CL_SUCCESS) status=clSetKernelArg(mtf,1,sizeof(dst),&dst);
+            if(status==CL_SUCCESS) status=clSetKernelArg(mtf,2,sizeof(weight_buffer),&weight_buffer);
+            if(status==CL_SUCCESS) status=clSetKernelArg(mtf,3,sizeof(sb),&sb);
             enqueue(mtf,render_width,render_height);
         };
-        run_mtf(dense_a,dense_b,1); run_mtf(dense_b,dense_a,0);
+        run_mtf(input,dense_b,1); run_mtf(dense_b,input,0);
+    };
+    if(use_mtf) filter(dense_a,settings.negative_mtf_amount,settings.print_mtf_amount,settings.output_profile==1,use_grain);
+    if(use_grain&&settings.print_mtf_amount>0.0f) filter(negative_residual,0.0f,settings.print_mtf_amount,false,true);
+    if(use_mtf||use_grain) {
         cl_mem output_params=make_constant(&params,sizeof(params)); cl_kernel copy=make_kernel("filmviz_copy_dense");
-        if(status==CL_SUCCESS) status=clSetKernelArg(copy,0,sizeof(dense_a),&dense_a); if(status==CL_SUCCESS) status=clSetKernelArg(copy,1,sizeof(destination_buffer),&destination_buffer);
-        if(status==CL_SUCCESS) status=clSetKernelArg(copy,2,sizeof(output_params),&output_params); enqueue(copy,render_width,render_height);
+        if(status==CL_SUCCESS) status=clSetKernelArg(copy,0,sizeof(dense_a),&dense_a);
+        if(status==CL_SUCCESS) status=clSetKernelArg(copy,1,sizeof(destination_buffer),&destination_buffer);
+        if(status==CL_SUCCESS) status=clSetKernelArg(copy,2,sizeof(output_params),&output_params);
+        if(status==CL_SUCCESS) status=clSetKernelArg(copy,3,sizeof(negative_residual),&negative_residual);
+        if(status==CL_SUCCESS) status=clSetKernelArg(copy,4,sizeof(print_residual),&print_residual);
+        enqueue(copy,render_width,render_height);
     }
     for(cl_kernel value:kernels) if(value) clReleaseKernel(value);
     for(cl_mem value:temporary_buffers) if(value) clReleaseMemObject(value);

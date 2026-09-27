@@ -195,21 +195,47 @@ print-density noise have opposite signs in the final transmittance response:
 more negative density makes a lighter print, while more print density makes a
 darker viewed result.
 
-Grain is a first-order image-domain propagation of the measured per-stage RMS
-density, not a new spectral solve for every grain sample. `grain_size_pixels`
-controls spatial correlation and is a rendering parameter rather than a stock
-calibration value. Grain is intentionally absent from deterministic `.cube`
-output.
+Grain is excluded from deterministic `.cube` output. Image rendering uses a
+continuous two-band density field integrated over each pixel footprint. Both
+bands follow film-format and resolution scaling, without a one-pixel size
+floor. Its amplitude is normalized to the square of equal area to a 48um
+measurement aperture. This aperture approximation, the chosen spatial spectrum
+and RGB covariance are explicit rendering assumptions, not new stock data.
 
-The optional grain-chroma rendering control decomposes the combined density
-noise into a Rec.709-weighted neutral component and channel-difference
-components. Scaling the differences leaves weighted luminance noise unchanged:
-zero produces neutral grain and one preserves the measured per-channel result.
+Negative and print use separate empirical two-band shapes. Negative retains
+broader clustering (0.85/1.80 size factors, 75/25 aperture variance); print is
+finer (0.50/1.10, 90/10). Both remain normalized at the reference aperture and
+follow format/resolution scaling. These are stage defaults, not measured
+stock-specific spatial spectra. CPU mean normalization follows each shape.
 
-After colour and density-dependent grain rendering, the optional system MTF
-filters the composite result, approximating the spatial response of the
-negative/print path delivered by a scan. It is intentionally absent from
-deterministic `.cube` output.
+Final grain compositing applies a provisional empirical visibility trim:
+0.80 residual amplitude in dark values, smoothly fading to 0.35 in highlights
+using the noise-free maximum working-linear-RGB channel (0.12..0.65).
+This is an output look adjustment, separate from measured granularity and
+aperture normalization. It is working-space dependent and does not identify
+faces or modify the grain-free spectral result.
+
+`FilmPipeline::process_density_noise` adds negative noise in Status-M before
+calibration, and print noise in print-record density before spectral viewing.
+CPU LUT renderers cache finite-difference downstream log-output Jacobians,
+weighted by measured sigma, rather than applying raw density directly to
+output RGB. CPU grain multipliers are normalized by their Gaussian ensemble
+mean, using the pixel-phase variance of the integrated texture and the shared
+record covariance. This includes the bounded log-gain tails. It preserves the
+expected linear-light baseline before compositing/clipping, not the exact mean
+of each finite patch or its gamma-encoded mean. GPU direct renderers evaluate the baseline and each active noisy
+stage separately. Both methods neglect nonlinear interaction between the two
+independent perturbations; CPU additionally linearizes each stage's response.
+
+Image MTF filters the baseline. Negative-grain residuals receive only the
+print MTF; print-grain residuals are composited afterward. Signed residuals
+remain unclipped through filtering. This is a stage-aware small-signal rendering
+approximation, not microscopic spatial development or a measured scanner model.
+
+Grain chroma operates on the final relative RGB residual after filtering.
+Zero preserves working-RGB color ratios before clipping/output conversion;
+one retains the propagated channel response. Intermediate values preserve the
+Rec.709-weighted relative-noise component, not an exact post-transfer luminance.
 
 Image conversion distributes independent output rows over the same global
 worker setting. Image I/O remains serialized, and seeded grain remains

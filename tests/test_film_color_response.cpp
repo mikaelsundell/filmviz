@@ -178,5 +178,39 @@ main()
             < normalized_chroma(extreme_warm, minimum),
         "extreme warm colour rejoins outer compression");
 
+    // The new master amount includes hue guidance, unlike the legacy trim.
+    auto tuning = enabled;
+    tuning.tuning.response_amount = 0.0f;
+    const auto disabled = response.apply(bent_warm, tuning);
+    passed &= test::near(disabled.red, bent_warm.red, 0.0, "master bypass preserves red exactly");
+    passed &= test::near(disabled.green, bent_warm.green, 0.0, "master bypass preserves green exactly");
+    passed &= test::near(disabled.blue, bent_warm.blue, 0.0, "master bypass preserves blue exactly");
+    tuning.tuning.response_amount = 0.5f;
+    const auto half = response.apply(bent_warm, tuning);
+    passed &= test::near(half.red, (bent_warm.red + guided_bent_warm.red) * 0.5f, 1e-6,
+        "master amount interpolates complete response");
+
+    tuning = enabled;
+    tuning.color_depth = 0.0f;
+    tuning.tuning.chroma_compression = 0.0f;
+    const auto unrotated = response.apply(bent_warm, tuning);
+    tuning.tuning.warm_hue_shift = 30.0f;
+    const auto rotated = response.apply(bent_warm, tuning);
+    passed &= test::check(rotated.red > unrotated.red && rotated.green < unrotated.green,
+        "positive warm rotation moves toward the red dye direction");
+    passed &= test::near(normalized_chroma(rotated, minimum), normalized_chroma(unrotated, minimum), 1e-6,
+        "hue rotation preserves chroma magnitude");
+    passed &= test::near(rotated.red + rotated.green + rotated.blue,
+        unrotated.red + unrotated.green + unrotated.blue, 1e-6, "hue rotation preserves common density");
+    tuning.tuning.warm_hue_center = 45.0f;
+    tuning.tuning.density_center = 0.8f;
+    tuning.tuning.density_width = 1.5f;
+    const auto tuned_neutral = response.apply(reference, tuning);
+    passed &= test::near(tuned_neutral.red, reference.red, 1e-6, "tuning preserves neutral red");
+    passed &= test::near(tuned_neutral.green, reference.green, 1e-6, "tuning preserves neutral green");
+    passed &= test::near(tuned_neutral.blue, reference.blue, 1e-6, "tuning preserves neutral blue");
+    tuning.tuning.chroma_knee = 0.0f;
+    passed &= test::check(!FilmColorResponse::valid_tuning(tuning.tuning), "zero knee is rejected");
+
     return test::finish(passed, "film colour response");
 }

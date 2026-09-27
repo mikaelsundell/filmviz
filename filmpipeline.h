@@ -64,6 +64,7 @@ public:
         // the accepted response, zero removes chromatic darkening, and
         // negative values provide a controlled chromatic lift.
         float color_depth = FilmColorResponse::standard_color_depth;
+        FilmColorResponse::Tuning color_response;
 
         // Profile-independent bleach-bypass look controls. Zero is normal
         // processing; one is the full modeled process look. The current
@@ -150,6 +151,17 @@ public:
     bool scene_factor(const std::array<float, 3>& ap0_linear, SampledCurve& factor) const;
 
     Result process_negative_exposure(const FilmExposure& negative_exposure) const;
+
+    // Image-grain boundary: perturb measured density coordinates before their
+    // downstream calibration/development/viewing. Zero perturbations preserve
+    // the baseline. This does not alter deterministic process()/LUT behavior.
+    Result process_density_noise(const Result& baseline, const FilmDensity& negative_noise,
+                                 const FilmDensity& print_noise) const;
+
+    // Six measured sigmas followed by two 3x3 log-linear-output Jacobians,
+    // already weighted by those sigmas. Matrix index = 6 + stage*9 + output*3 + record.
+    using GrainResponse = std::array<float, 24>;
+    bool grain_response(const Result& baseline, bool rec709_gamma24, GrainResponse& response) const;
 
     const Settings& settings() const;
     const std::string& error() const;

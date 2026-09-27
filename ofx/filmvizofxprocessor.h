@@ -50,6 +50,7 @@ struct FilmVizOfxRenderSettings
     float push_pull_stops = 0.0f;
     float color_density = 0.0f;
     float color_depth = FilmColorResponse::standard_color_depth;
+    FilmColorResponse::Tuning color_response;
     float middle_gray = 0.18f;
     float printer_temperature = 3200.0f;
 
@@ -71,7 +72,7 @@ struct FilmVizOfxRenderSettings
     bool grain_enabled = false;
     float negative_grain = 0.0f;
     float print_grain = 0.0f;
-    float grain_size = 1.0f;
+    float grain_size = 1.0f; // Size multiplier: 1px at 2048px-wide Super 35.
     float grain_chroma = 1.0f;
     std::uint32_t grain_seed = 1u;
 

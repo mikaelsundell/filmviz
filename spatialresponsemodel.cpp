@@ -287,7 +287,8 @@ SpatialResponseModel::apply(std::vector<float>& rgb, int width, int height, cons
                 const std::size_t index
                     = (static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)) * 3u
                       + static_cast<std::size_t>(channel);
-                rgb[index] = std::clamp(from_linear(value, settings.gamma24_encoded), 0.0f, 1.0f);
+                const float encoded = from_linear(value, settings.gamma24_encoded);
+                rgb[index] = settings.clamp_output ? std::clamp(encoded, 0.0f, 1.0f) : encoded;
             }
         }
     }

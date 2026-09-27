@@ -11,6 +11,7 @@
 
 #include "filmdirectdata.h"
 #include "filmpipeline.h"
+#include "granularitymodel.h"
 #include "negativeprofile.h"
 #include "printprofile.h"
 #include "spatialresponsemodel.h"
@@ -57,6 +58,16 @@ struct DirectParams
     uint granularity_count; uint frame_seed; uint grain_enabled; uint reserved_grain;
     float negative_grain; float print_grain; float grain_size; float grain_chroma;
     float granularity_density_min; float granularity_density_max; float2 reserved_grain_float;
+    float response_response_amount;
+    float response_chroma_compression;
+    float response_chroma_knee;
+    float response_density_center;
+    float response_density_width;
+    float response_warm_protection;
+    float response_warm_hue_center;
+    float response_warm_hue_width;
+    float response_warm_hue_shift;
+    float reserved_response[3];
     float4 reference_negative_exposure;
     float4 reference_negative_density;
     float4 minimum_negative_coordinate;
@@ -298,30 +309,43 @@ inline float smooth_step(float a,float b,float x) { float t=clamp((x-a)/(b-a),0.
 inline float3 color_response(float3 coordinate, constant DirectParams& p)
 {
     float amount=1.5f*(1.0f+clamp(p.color_density,-4.0f,4.0f)/4.0f);
-    if(amount<=0.0f) return coordinate;
+    if(amount<=0.0f || p.response_response_amount==0.0f) return coordinate;
     float3 n=(coordinate-p.minimum_negative_coordinate.xyz)/p.neutral_negative_increment.xyz;
     float neutral=(n.x+n.y+n.z)/3.0f;
     float3 chroma=n-neutral;
     float magnitude=sqrt(dot(chroma,chroma)/3.0f);
-    float envelope=smooth_step(0.0f,0.20f,neutral)*(1.0f-smooth_step(1.75f,2.50f,neutral));
-    float compression=0.22f*amount*envelope;
+    float density_position=p.response_density_center==1.25f && p.response_density_width==1.0f
+        ?neutral:(neutral-p.response_density_center)/p.response_density_width+1.25f;
+    float envelope=smooth_step(0.0f,0.20f,density_position)*(1.0f-smooth_step(1.75f,2.50f,density_position));
+    float compression=p.response_chroma_compression*amount*envelope;
+    float angle=p.response_warm_hue_center*0.017453292519943295f;
+    float3 axis=float3(0.40824829f*cos(angle)+0.70710678f*sin(angle),
+                      0.40824829f*cos(angle)-0.70710678f*sin(angle),-0.81649658f*cos(angle));
     float length=sqrt(dot(chroma,chroma));
-    float direction=length>1e-6f?dot(chroma,float3(0.40824829f,0.40824829f,-0.81649658f))/length:0.0f;
+    float direction=length>1e-6f?dot(chroma,axis)/length:0.0f;
+    if(p.response_warm_hue_width!=1.0f)
+        direction=cos(min(3.14159265f,acos(clamp(direction,-1.0f,1.0f))/p.response_warm_hue_width));
     float warm_hue=smooth_step(0.15f,0.90f,direction);
-    float warm_density=smooth_step(0.30f,0.60f,neutral)*(1.0f-smooth_step(1.40f,2.00f,neutral));
+    float warm_density=smooth_step(0.30f,0.60f,density_position)*(1.0f-smooth_step(1.40f,2.00f,density_position));
     float warm_chroma=smooth_step(0.02f,0.08f,magnitude)*(1.0f-smooth_step(0.35f,0.75f,magnitude));
     float warm=warm_hue*warm_density*warm_chroma;
-    compression*=1.0f-0.5f*warm;
-    float scale=1.0f/(1.0f+compression*magnitude/0.50f);
-    float depth=0.08f*p.color_depth*amount*envelope*magnitude/(magnitude+0.50f);
+    compression*=1.0f-p.response_warm_protection*warm;
+    float scale=1.0f/(1.0f+compression*magnitude/p.response_chroma_knee);
+    float depth=0.08f*p.color_depth*amount*envelope*magnitude/(magnitude+p.response_chroma_knee);
     float3 guided=chroma;
     float guidance=0.15f*warm;
     if(guidance>0.0f && length>1e-6f) {
-        float3 mixed=mix(chroma,float3(0.40824829f,0.40824829f,-0.81649658f)*length,guidance);
+        float3 mixed=mix(chroma,axis*length,guidance);
         float mixed_length=sqrt(dot(mixed,mixed)); if(mixed_length>1e-6f) guided=mixed*(length/mixed_length);
     }
-    return max(p.minimum_negative_coordinate.xyz,
+    float rotation=p.response_warm_hue_shift*0.017453292519943295f*warm;
+    if(rotation!=0.0f && length>1e-6f) {
+        float3 tangent=float3(guided.y-guided.z,guided.z-guided.x,guided.x-guided.y)*0.577350269f;
+        guided=cos(rotation)*guided+sin(rotation)*tangent;
+    }
+    float3 result=max(p.minimum_negative_coordinate.xyz,
                p.minimum_negative_coordinate.xyz+((neutral-depth)+scale*guided)*p.neutral_negative_increment.xyz);
+    return p.response_response_amount==1.0f?result:coordinate+p.response_response_amount*(result-coordinate);
 }
 
 inline float blackbody_relative(float wavelength_nm,float temperature)
@@ -366,15 +390,56 @@ inline float normal_sample(uint seed,int x,int y,int stage,int channel)
     return sqrt(-2.0f*log(u1))*cos(6.283185307179586f*u2);
 }
 
-inline float spatial_normal(uint seed,int x,int y,int stage,int channel,float size_pixels)
+inline float hat_integral(float x)
 {
-    float scale=max(1.0f,size_pixels), px=float(x)/scale, py=float(y)/scale;
-    int x0=int(floor(px)), y0=int(floor(py)); float tx=px-float(x0),ty=py-float(y0);
-    float sx=tx*tx*(3.0f-2.0f*tx), sy=ty*ty*(3.0f-2.0f*ty);
-    float4 w=float4((1-sx)*(1-sy),sx*(1-sy),(1-sx)*sy,sx*sy);
-    float4 s=float4(normal_sample(seed,x0,y0,stage,channel),normal_sample(seed,x0+1,y0,stage,channel),
-        normal_sample(seed,x0,y0+1,stage,channel),normal_sample(seed,x0+1,y0+1,stage,channel));
-    return dot(w,s)/sqrt(max(dot(w,w),1e-10f));
+    if(x<=-1.0f) return 0.0f;
+    if(x<0.0f) return 0.5f*(x+1.0f)*(x+1.0f);
+    if(x<1.0f) return 1.0f-0.5f*(1.0f-x)*(1.0f-x);
+    return 1.0f;
+}
+inline float aperture_energy(float width)
+{
+    if(width>=2.0f) return 1.0f/width-7.0f/(15.0f*width*width);
+    if(width>=1.0f) {
+        float u=2.0f-width;
+        return (width-7.0f/15.0f+u*u*u*u*u/60.0f)/(width*width);
+    }
+    return 2.0f/3.0f-width*width/6.0f+width*width*width/20.0f;
+}
+inline float texture_band(uint seed,int x,int y,int stage,int channel,float scale)
+{
+    float footprint=1.0f/scale;
+    if(footprint>8.0f) return normal_sample(seed,x,y,stage,channel)*aperture_energy(footprint);
+    float px=(float(x)+0.5f)/scale+0.37f,py=(float(y)+0.5f)/scale+0.61f;
+    float lx=px-0.5f*footprint,hx=px+0.5f*footprint;
+    float ly=py-0.5f*footprint,hy=py+0.5f*footprint;
+    float value=0.0f;
+    for(int j=int(floor(ly));j<=int(ceil(hy));++j) {
+        float wy=(hat_integral(hy-float(j))-hat_integral(ly-float(j)))/footprint;
+        for(int i=int(floor(lx));i<=int(ceil(hx));++i) {
+            float wx=(hat_integral(hx-float(i))-hat_integral(lx-float(i)))/footprint;
+            value+=wx*wy*normal_sample(seed,i,j,stage,channel);
+        }
+    }
+    return value;
+}
+inline float texture_field(uint seed,int x,int y,int stage,int channel,constant DirectParams& p)
+{
+    bool print=stage==1;
+    float fine_scale=p.grain_size*(print?0.50f:0.85f);
+    float coarse_scale=p.grain_size*(print?1.10f:1.80f);
+    float fine=texture_band(seed^0xa511e9b3u,x,y,stage,channel,fine_scale);
+    float coarse=texture_band(seed^0x63d83595u,x,y,stage,channel,coarse_scale);
+    float fine_norm=1.0f/aperture_energy(p.reserved_grain_float.x/fine_scale);
+    float coarse_norm=1.0f/aperture_energy(p.reserved_grain_float.x/coarse_scale);
+    return (print?0.948683298f:0.866025404f)*fine_norm*fine
+         +(print?0.316227766f:0.5f)*coarse_norm*coarse;
+}
+inline float spatial_normal(uint seed,int x,int y,int stage,int channel,constant DirectParams& p)
+{
+    float shared=texture_field(seed,x,y,stage,3,p);
+    float independent=texture_field(seed,x,y,stage,channel,p);
+    return 0.9f*shared+0.435889894f*independent;
 }
 
 inline float3 granularity_sigma(device const float4* samples,uint count,float3 density,float minimum,float maximum)
@@ -403,7 +468,9 @@ kernel void filmviz_direct(
     device const float4* negative_granularity [[buffer(12)]],
     device const float4* print_granularity [[buffer(13)]],
     constant DirectParams& p [[buffer(14)]],
-    device const float4* prepared_exposure [[buffer(15)]], uint2 gid [[thread_position_in_grid]])
+    device const float4* prepared_exposure [[buffer(15)]],
+    device float4* negative_residual [[buffer(16)]],
+    device float4* print_residual [[buffer(17)]], uint2 gid [[thread_position_in_grid]])
 {
     int x=p.render_x1+int(gid.x), y=p.render_y1+int(gid.y);
     if(x>=p.render_x2||y>=p.render_y2) return;
@@ -438,60 +505,87 @@ kernel void filmviz_direct(
         curve_sample(curves,p.curve_negative_2_print_0.x,p.curve_negative_2_print_0.y,log_exposure.z));
     float contrast=exp2(0.2f*p.push_pull_stops);
     negative_status=p.reference_negative_density.xyz+contrast*(negative_status-p.reference_negative_density.xyz);
-    float3 coordinate=color_response(calibrate_density(negative_status,p,negative_density_data,status_m_data),p);
-    float3 dye_amount=max(coordinate-p.minimum_negative_coordinate.xyz,0.0f);
-    float bypass_scale=0.14f*clamp(p.negative_bleach_bypass,0.0f,1.0f);
-    if(bypass_scale>0.0f) for(uint i=0;i<p.spectral_count;++i) {
-        float4 d=negative_density_data[i]; float density=max(0.0f,d.x+dot(dye_amount,d.yzw));
-        float shape=1.0f-2.0f*float(i)/float(max(p.spectral_count-1,1u));
-        if(shape<0.0f) bypass_scale=min(bypass_scale,density/-shape);
+    bool use_grain=p.grain_enabled!=0u&&(p.negative_grain>0.0f||p.print_grain>0.0f);
+    float3 ns=granularity_sigma(negative_granularity,p.granularity_count,negative_status,p.granularity_density_min,p.granularity_density_max);
+    float3 negative_noise=float3(0.0f),print_noise=float3(0.0f);
+    if(use_grain&&p.negative_grain>0.0f) for(int c=0;c<3;++c)
+        negative_noise[c]=p.negative_grain*ns[c]*spatial_normal(p.frame_seed,x,y,0,c,p);
+    float3 outputs[3];
+    float3 baseline_print_record=float3(0.0f);
+    for(int pass=0;pass<(use_grain?3:1);++pass) {
+        if((pass==1&&p.negative_grain<=0.0f)||(pass==2&&p.print_grain<=0.0f)) {
+            outputs[pass]=outputs[0]; continue;
+        }
+        float3 print_record;
+        if(pass==2) {
+            print_record=baseline_print_record+print_noise;
+        } else {
+            float3 perturbed_status=negative_status+(pass==1?negative_noise:float3(0.0f));
+            float3 coordinate=color_response(calibrate_density(perturbed_status,p,negative_density_data,status_m_data),p);
+            float3 dye_amount=max(coordinate-p.minimum_negative_coordinate.xyz,0.0f);
+            float bypass_scale=0.14f*clamp(p.negative_bleach_bypass,0.0f,1.0f);
+            if(bypass_scale>0.0f) for(uint i=0;i<p.spectral_count;++i) {
+                float4 d=negative_density_data[i]; float density=max(0.0f,d.x+dot(dye_amount,d.yzw));
+                float shape=1.0f-2.0f*float(i)/float(max(p.spectral_count-1,1u));
+                if(shape<0.0f) bypass_scale=min(bypass_scale,density/-shape);
+            }
+            float3 print_exposure=float3(0.0f), print_reference=float3(0.0f);
+            for(uint i=0;i<p.spectral_count;++i) {
+                float4 d=negative_density_data[i];
+                float density=max(0.0f,d.x+dot(dye_amount,d.yzw));
+                float shape=1.0f-2.0f*float(i)/float(max(p.spectral_count-1,1u));
+                float transmission=pow(10.0f,-max(0.0f,density+bypass_scale*shape));
+                float4 pe=print_exposure_data[i];
+                if(pe.w<=0.0f) transmission=0.0f;
+                float printer=blackbody_relative(p.wavelength_min_nm+float(i)*p.wavelength_step_nm,p.printer_temperature);
+                print_exposure+=pe.xyz*(printer*transmission);
+                print_reference+=pe.xyz*(printer*pe.w);
+            }
+            print_exposure+=print_reference*(p.print_flash_percent*0.01f);
+            float3 lights=float3(p.printer_light_red,p.printer_light_green,p.printer_light_blue)+p.printer_light_master;
+            float3 print_log=log10(max(print_exposure,float3(1e-20f))/max(print_reference,float3(1e-20f)))
+                +p.print_target_log_exposure.xyz+(lights-25.0f)*0.025f;
+            print_record=float3(
+                curve_sample(curves,p.curve_negative_2_print_0.z,p.curve_negative_2_print_0.w,print_log.x),
+                curve_sample(curves,p.curve_print_12.x,p.curve_print_12.y,print_log.y),
+                curve_sample(curves,p.curve_print_12.z,p.curve_print_12.w,print_log.z));
+            if(pass==0) baseline_print_record=print_record;
+            if(pass==0&&use_grain&&p.print_grain>0.0f) {
+                float3 ps=granularity_sigma(print_granularity,p.granularity_count,print_record,p.granularity_density_min,p.granularity_density_max);
+                for(int c=0;c<3;++c) print_noise[c]=p.print_grain*ps[c]*spatial_normal(p.frame_seed,x,y,1,c,p);
+            }
+        }
+        float mean_density=0.0f;
+        for(uint i=0;i<p.spectral_count;++i) {
+            float density=dot(print_record,print_density_data[i].xyz);
+            mean_density+=pass==2?max(0.0f,density):density;
+        }
+        mean_density/=float(p.spectral_count);
+        float chroma_scale=1.0f-0.8f*clamp(p.print_bleach_bypass,0.0f,1.0f);
+        float3 viewed=float3(0.0f);
+        for(uint i=0;i<p.spectral_count;++i) {
+            float density=dot(print_record,print_density_data[i].xyz);
+            if(pass==2) density=max(0.0f,density);
+            density=mean_density+chroma_scale*(density-mean_density);
+            viewed+=viewer_data[i].xyz*pow(10.0f,-density);
+        }
+        float3 converted=viewed;
+        if(p.output_profile==1) converted=pow(max(gamut_compress(ap0_to_rec709(viewed)),0.0f),float3(1.0f/2.4f));
+        outputs[pass]=converted;
     }
-    float3 print_exposure=float3(0.0f), print_reference=float3(0.0f);
-    for(uint i=0;i<p.spectral_count;++i) {
-        float4 d=negative_density_data[i];
-        float density=max(0.0f,d.x+dot(dye_amount,d.yzw));
-        float shape=1.0f-2.0f*float(i)/float(max(p.spectral_count-1,1u));
-        float transmission=pow(10.0f,-max(0.0f,density+bypass_scale*shape));
-        float4 pe=print_exposure_data[i];
-        if(pe.w<=0.0f) transmission=0.0f;
-        float printer=blackbody_relative(p.wavelength_min_nm+float(i)*p.wavelength_step_nm,p.printer_temperature);
-        print_exposure+=pe.xyz*(printer*transmission);
-        print_reference+=pe.xyz*(printer*pe.w);
+    if(use_grain) {
+        uint width=uint(p.render_x2-p.render_x1);
+        uint index=uint(y-p.render_y1)*width+uint(x-p.render_x1);
+        float3 base=p.output_profile==1?pow(max(outputs[0],0.0f),float3(2.4f)):outputs[0];
+        float3 neg=p.output_profile==1?pow(max(outputs[1],0.0f),float3(2.4f)):outputs[1];
+        float3 prt=p.output_profile==1?pow(max(outputs[2],0.0f),float3(2.4f)):outputs[2];
+        float3 denominator=max(base,1e-6f);
+        float3 ng=clamp(log(max(neg,1e-6f)/denominator),-2.0f,2.0f);
+        float3 pg=clamp(log(max(prt,1e-6f)/denominator),-2.0f,2.0f);
+        negative_residual[index]=float4(max(base,0.0f)*(exp(ng)-1.0f),0.0f);
+        print_residual[index]=float4(max(base,0.0f)*(exp(pg)-1.0f),0.0f);
     }
-    print_exposure+=print_reference*(p.print_flash_percent*0.01f);
-    float3 lights=float3(p.printer_light_red,p.printer_light_green,p.printer_light_blue)+p.printer_light_master;
-    float3 print_log=log10(max(print_exposure,float3(1e-20f))/max(print_reference,float3(1e-20f)))
-        +p.print_target_log_exposure.xyz+(lights-25.0f)*0.025f;
-    float3 print_record=float3(
-        curve_sample(curves,p.curve_negative_2_print_0.z,p.curve_negative_2_print_0.w,print_log.x),
-        curve_sample(curves,p.curve_print_12.x,p.curve_print_12.y,print_log.y),
-        curve_sample(curves,p.curve_print_12.z,p.curve_print_12.w,print_log.z));
-    float mean_density=0.0f;
-    for(uint i=0;i<p.spectral_count;++i) mean_density+=dot(print_record,print_density_data[i].xyz);
-    mean_density/=float(p.spectral_count);
-    float chroma_scale=1.0f-0.8f*clamp(p.print_bleach_bypass,0.0f,1.0f);
-    float3 viewed=float3(0.0f);
-    for(uint i=0;i<p.spectral_count;++i) {
-        float density=dot(print_record,print_density_data[i].xyz);
-        density=mean_density+chroma_scale*(density-mean_density);
-        viewed+=viewer_data[i].xyz*pow(10.0f,-density);
-    }
-    float3 converted=viewed;
-    if(p.output_profile==1) converted=pow(max(gamut_compress(ap0_to_rec709(viewed)),0.0f),float3(1.0f/2.4f));
-    if(p.grain_enabled!=0u&&(p.negative_grain>0.0f||p.print_grain>0.0f)) {
-        float3 ns=granularity_sigma(negative_granularity,p.granularity_count,negative_status,p.granularity_density_min,p.granularity_density_max);
-        float3 ps=granularity_sigma(print_granularity,p.granularity_count,print_record,p.granularity_density_min,p.granularity_density_max);
-        float3 noise;
-        for(int c=0;c<3;++c) noise[c]=p.negative_grain*ns[c]*spatial_normal(p.frame_seed,x,y,0,c,p.grain_size)
-            -p.print_grain*ps[c]*spatial_normal(p.frame_seed,x,y,1,c,p.grain_size);
-        float neutral=dot(float3(0.2126f,0.7152f,0.0722f),noise);
-        noise=neutral+p.grain_chroma*(noise-neutral);
-        float3 linear=p.output_profile==1?pow(max(converted,0.0f),float3(2.4f)):converted;
-        linear*=pow(float3(10.0f),noise);
-        converted=p.output_profile==1?pow(max(linear,0.0f),float3(1.0f/2.4f)):linear;
-        converted=clamp(converted,0.0f,1.0f);
-    }
-    write_pixel(destination,p.destination_row_bytes,x,y,p.destination_x1,p.destination_y1,float4(converted,src.w));
+    write_pixel(destination,p.destination_row_bytes,x,y,p.destination_x1,p.destination_y1,float4(outputs[0],src.w));
 }
 
 kernel void filmviz_prepare_halation(
@@ -581,18 +675,35 @@ kernel void filmviz_mtf(
         value+=sample*float3(weights[w],weights[uint(2*radius+1)+w],weights[uint(4*radius+2)+w]);
     }
     if(p.gamma24!=0u&&p.horizontal==0u) value=pow(max(value,0.0f),float3(1.0f/2.4f));
-    if(p.horizontal==0u) value=clamp(value,0.0f,1.0f);
+    if(p.horizontal==0u&&p.reserved0==0u) value=clamp(value,0.0f,1.0f);
     destination[gid.y*p.width+gid.x]=float4(value,source[gid.y*p.width+gid.x].w);
 }
 
 kernel void filmviz_copy_dense(
     device const float4* source [[buffer(0)]], device uchar* destination [[buffer(1)]],
-    constant DirectParams& p [[buffer(2)]], uint2 gid [[thread_position_in_grid]])
+    constant DirectParams& p [[buffer(2)]],
+    device const float4* negative_residual [[buffer(3)]],
+    device const float4* print_residual [[buffer(4)]], uint2 gid [[thread_position_in_grid]])
 {
     uint width=uint(p.render_x2-p.render_x1),height=uint(p.render_y2-p.render_y1);
     if(gid.x>=width||gid.y>=height) return;
     int x=p.render_x1+int(gid.x),y=p.render_y1+int(gid.y);
-    write_pixel(destination,p.destination_row_bytes,x,y,p.destination_x1,p.destination_y1,source[gid.y*width+gid.x]);
+    uint index=gid.y*width+gid.x;
+    float4 pixel=source[index];
+    if(p.grain_enabled!=0u&&(p.negative_grain>0.0f||p.print_grain>0.0f)) {
+        float3 base=p.output_profile==1?pow(max(pixel.xyz,0.0f),float3(2.4f)):pixel.xyz;
+        float3 relative=(negative_residual[index].xyz+print_residual[index].xyz)/max(base,1e-6f);
+        float neutral=dot(float3(0.2126f,0.7152f,0.0722f),relative);
+        relative=neutral+p.grain_chroma*(relative-neutral);
+        // Match ImageProcessor's empirical, noise-free highlight trim.
+        float peak=max(0.0f,max(base.x,max(base.y,base.z)));
+        float t=clamp((peak-0.12f)/(0.65f-0.12f),0.0f,1.0f);
+        float visibility=0.80f-0.45f*t*t*(3.0f-2.0f*t);
+        float3 grained=base*(1.0f+visibility*relative);
+        pixel.xyz=p.output_profile==1?pow(max(grained,0.0f),float3(1.0f/2.4f)):grained;
+        pixel.xyz=clamp(pixel.xyz,0.0f,1.0f);
+    }
+    write_pixel(destination,p.destination_row_bytes,x,y,p.destination_x1,p.destination_y1,pixel);
 }
 )METAL";
 
@@ -692,6 +803,14 @@ bool FilmVizDirectMetalProcessor::configure(const FilmVizOfxRenderSettings& sett
     const std::string& resources_directory, void* command_queue, std::string& error)
 {
     error.clear();
+    if (!std::isfinite(settings.grain_size) || settings.grain_size <= 0.0f
+        || !std::isfinite(settings.image_width_mm) || settings.image_width_mm <= 0.0f
+        || !std::isfinite(settings.negative_grain) || settings.negative_grain < 0.0f
+        || !std::isfinite(settings.print_grain) || settings.print_grain < 0.0f
+        || !std::isfinite(settings.grain_chroma) || settings.grain_chroma < 0.0f) {
+        error="Invalid grain settings"; return false;
+    }
+    if (!FilmColorResponse::valid_tuning(settings.color_response)) { error="Invalid color response tuning"; return false; }
     try {
         const std::string output_key = resources_directory + ':' + std::to_string(settings.output_profile);
         if (!impl_->output_transform || impl_->output_key != output_key) {
@@ -855,6 +974,16 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     p.exposure_stops=settings.exposure_stops; p.negative_flash_percent=settings.negative_flash_percent;
     p.print_flash_percent=settings.print_flash_percent; p.push_pull_stops=settings.push_pull_stops;
     p.color_density=settings.color_density; p.color_depth=settings.color_depth;
+    p.response_response_amount=settings.color_response.response_amount;
+    p.response_chroma_compression=settings.color_response.chroma_compression;
+    p.response_chroma_knee=settings.color_response.chroma_knee;
+    p.response_density_center=settings.color_response.density_center;
+    p.response_density_width=settings.color_response.density_width;
+    p.response_warm_protection=settings.color_response.warm_protection;
+    p.response_warm_hue_center=settings.color_response.warm_hue_center;
+    p.response_warm_hue_width=settings.color_response.warm_hue_width;
+    p.response_warm_hue_shift=settings.color_response.warm_hue_shift;
+
     p.negative_bleach_bypass=settings.negative_bleach_bypass; p.print_bleach_bypass=settings.print_bleach_bypass;
     p.printer_light_red=settings.printer_light_red; p.printer_light_green=settings.printer_light_green;
     p.printer_light_blue=settings.printer_light_blue; p.printer_light_master=settings.printer_light_master;
@@ -863,7 +992,10 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     p.granularity_count=static_cast<std::uint32_t>(granularity_count);
     p.frame_seed=settings.grain_seed^static_cast<std::uint32_t>(std::llround(time*1000.0));
     p.grain_enabled=settings.grain_enabled?1u:0u; p.negative_grain=settings.negative_grain;
-    p.print_grain=settings.print_grain; p.grain_size=settings.grain_size; p.grain_chroma=settings.grain_chroma;
+    p.print_grain=settings.print_grain; p.grain_size=GranularityModel::grain_size_pixels(settings.grain_size, static_cast<int>(source_width), settings.image_width_mm); p.grain_chroma=settings.grain_chroma;
+    const auto grain_texture=GranularityModel::texture(p.grain_size, static_cast<float>(source_width)/settings.image_width_mm);
+    p.reserved_grain_float[0]=grain_texture.aperture_pixels;
+    p.reserved_grain_float[1]=0.0f;
     p.granularity_density_min=impl_->data.granularity_density_min; p.granularity_density_max=impl_->data.granularity_density_max;
     auto copy3=[](float* dst,const std::array<float,3>& src){ for(int i=0;i<3;++i) dst[i]=src[i]; };
     copy3(p.reference_negative_exposure,impl_->data.reference_negative_exposure);
@@ -881,6 +1013,7 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
     p.curve_print_12[0]=q[1].offset; p.curve_print_12[1]=q[1].count; p.curve_print_12[2]=q[2].offset; p.curve_print_12[3]=q[2].count;
     const bool use_halation=settings.halation_enabled&&settings.halation_strength>0.0f&&settings.halation_radius>0.0f;
     const bool use_mtf=settings.negative_mtf_amount>0.0f||settings.print_mtf_amount>0.0f;
+    const bool use_grain=settings.grain_enabled&&(settings.negative_grain>0.0f||settings.print_grain>0.0f);
     if(use_mtf&&!impl_->spatial_response_valid) { error="FilmViz measured MTF response is unavailable"; return false; }
     id<MTLCommandQueue> queue=(__bridge id<MTLCommandQueue>)command_queue;
     id<MTLDevice> device=queue.device;
@@ -933,9 +1066,13 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         p.reserved_header[0]=1u;
     }
     id<MTLBuffer> dense_a=nil,dense_b=nil;
+    const NSUInteger residual_bytes=use_grain?static_cast<NSUInteger>(render_width)*render_height*sizeof(float)*4u:sizeof(float)*4u;
+    id<MTLBuffer> negative_residual=[device newBufferWithLength:residual_bytes options:temporary_options];
+    id<MTLBuffer> print_residual=[device newBufferWithLength:residual_bytes options:temporary_options];
+    if(!negative_residual||!print_residual) { error="could not allocate FilmViz grain residual buffers"; return false; }
     FilmVizDirectParams direct_p=p;
     id<MTLBuffer> direct_destination=(__bridge id<MTLBuffer>)destination.buffer;
-    if(use_mtf) {
+    if(use_mtf||use_grain) {
         const NSUInteger bytes=static_cast<NSUInteger>(render_width)*render_height*sizeof(float)*4u;
         const std::uint64_t dense_row_bytes=static_cast<std::uint64_t>(render_width)*sizeof(float)*4u;
         if(dense_row_bytes>uint32_max) { error="FilmViz Metal render row exceeds the GPU parameter layout"; return false; }
@@ -951,23 +1088,45 @@ bool FilmVizDirectMetalProcessor::render(const FilmVizOfxRenderSettings& setting
         [e setBuffer:impl_->print_density offset:0 atIndex:6]; [e setBuffer:impl_->viewer offset:0 atIndex:7]; [e setBuffer:impl_->curves offset:0 atIndex:8]; [e setBuffer:impl_->rgb_scale offset:0 atIndex:9];
         [e setBuffer:impl_->rgb_data offset:0 atIndex:10]; [e setBuffer:impl_->rgb_forward offset:0 atIndex:11]; [e setBuffer:impl_->negative_granularity offset:0 atIndex:12]; [e setBuffer:impl_->print_granularity offset:0 atIndex:13];
         [e setBytes:&direct_p length:sizeof(direct_p) atIndex:14]; [e setBuffer:prepared offset:0 atIndex:15];
+        [e setBuffer:negative_residual offset:0 atIndex:16]; [e setBuffer:print_residual offset:0 atIndex:17];
     })) { error="could not encode FilmViz direct Metal render"; return false; }
-    if(use_mtf) {
-        SpatialResponseModel::Settings s; s.image_width_mm=settings.image_width_mm; s.negative_amount=settings.negative_mtf_amount;
-        s.print_amount=settings.print_mtf_amount; s.sampling_width_pixels=static_cast<int>(source_width); s.gamma24_encoded=settings.output_profile==1;
+    const auto filter=[&](id<MTLBuffer> input,float negative_amount,float print_amount,bool gamma24,bool signed_residual) {
+        SpatialResponseModel::Settings settings_mtf;
+        settings_mtf.image_width_mm=settings.image_width_mm;
+        settings_mtf.negative_amount=negative_amount; settings_mtf.print_amount=print_amount;
+        settings_mtf.sampling_width_pixels=static_cast<int>(source_width);
         std::array<std::vector<float>,3> channel_weights;
-        if(!impl_->spatial_response.kernels(static_cast<int>(render_width),s,channel_weights)) { error="could not generate FilmViz measured MTF kernels"; return false; }
-        std::vector<float> weights; for(const auto& channel:channel_weights) weights.insert(weights.end(),channel.begin(),channel.end());
-        id<MTLBuffer> weight_buffer=make_buffer(device,weights); if(!weight_buffer) { error="could not upload FilmViz Metal MTF kernels"; return false; }
-        const std::size_t kernel_radius=channel_weights[0].size()/2u;
-        if(kernel_radius>uint32_max) { error="FilmViz MTF kernel exceeds the GPU parameter layout"; return false; }
+        if(!impl_->spatial_response.kernels(static_cast<int>(render_width),settings_mtf,channel_weights)) return false;
+        std::vector<float> weights;
+        for(const auto& channel:channel_weights) weights.insert(weights.end(),channel.begin(),channel.end());
+        id<MTLBuffer> weight_buffer=make_buffer(device,weights);
+        if(!weight_buffer) return false;
         spatial.width=render_width; spatial.height=render_height;
-        spatial.radius=static_cast<std::uint32_t>(kernel_radius); spatial.gamma24=s.gamma24_encoded?1u:0u;
+        spatial.radius=static_cast<std::uint32_t>(channel_weights[0].size()/2u);
+        spatial.gamma24=gamma24?1u:0u; spatial.reserved[0]=signed_residual?1u:0u;
         spatial.horizontal=1;
-        if(!encode_2d(command,impl_->mtf,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_a offset:0 atIndex:0]; [e setBuffer:dense_b offset:0 atIndex:1]; [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3]; })) { error="could not encode FilmViz Metal horizontal MTF"; return false; }
+        if(!encode_2d(command,impl_->mtf,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){
+            [e setBuffer:input offset:0 atIndex:0]; [e setBuffer:dense_b offset:0 atIndex:1];
+            [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3];
+        })) return false;
         spatial.horizontal=0;
-        if(!encode_2d(command,impl_->mtf,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_b offset:0 atIndex:0]; [e setBuffer:dense_a offset:0 atIndex:1]; [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3]; })) { error="could not encode FilmViz Metal vertical MTF"; return false; }
-        if(!encode_2d(command,impl_->copy_dense,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){ [e setBuffer:dense_a offset:0 atIndex:0]; [e setBuffer:(__bridge id<MTLBuffer>)destination.buffer offset:0 atIndex:1]; [e setBytes:&p length:sizeof(p) atIndex:2]; })) { error="could not encode FilmViz Metal MTF output"; return false; }
+        return encode_2d(command,impl_->mtf,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){
+            [e setBuffer:dense_b offset:0 atIndex:0]; [e setBuffer:input offset:0 atIndex:1];
+            [e setBuffer:weight_buffer offset:0 atIndex:2]; [e setBytes:&spatial length:sizeof(spatial) atIndex:3];
+        });
+    };
+    if(use_mtf&&!filter(dense_a,settings.negative_mtf_amount,settings.print_mtf_amount,settings.output_profile==1,use_grain)) {
+        error="could not encode FilmViz image MTF"; return false;
+    }
+    if(use_grain&&settings.print_mtf_amount>0.0f&&!filter(negative_residual,0.0f,settings.print_mtf_amount,false,true)) {
+        error="could not encode FilmViz negative grain MTF"; return false;
+    }
+    if(use_mtf||use_grain) {
+        if(!encode_2d(command,impl_->copy_dense,render_width,render_height,[&](id<MTLComputeCommandEncoder> e){
+            [e setBuffer:dense_a offset:0 atIndex:0]; [e setBuffer:(__bridge id<MTLBuffer>)destination.buffer offset:0 atIndex:1];
+            [e setBytes:&p length:sizeof(p) atIndex:2];
+            [e setBuffer:negative_residual offset:0 atIndex:3]; [e setBuffer:print_residual offset:0 atIndex:4];
+        })) { error="could not encode FilmViz grain composite"; return false; }
     }
     if (settings.output_profile > 1) {
         // Convert only the rendered rectangle, preserving alpha and untouched pixels.

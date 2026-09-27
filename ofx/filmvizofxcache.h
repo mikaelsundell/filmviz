@@ -21,6 +21,7 @@ struct FilmVizOfxTransformKey
     float push_pull_stops = 0.0f;
     float color_density = 0.0f;
     float color_depth = FilmColorResponse::standard_color_depth;
+    FilmColorResponse::Tuning color_response;
     float negative_flash_percent = 0.0f;
     float print_flash_percent = 0.0f;
     float middle_gray = 0.18f;
@@ -36,7 +37,7 @@ struct FilmVizOfxTransformKey
 };
 
 using FilmVizOfxCachedRGB = std::array<float, 3>;
-using FilmVizOfxCachedGrain = std::array<float, 6>;
+using FilmVizOfxCachedGrain = std::array<float, 24>; // Sigmas + downstream log-output Jacobians.
 
 struct FilmVizOfxPrebakedData
 {

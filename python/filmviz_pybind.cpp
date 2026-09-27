@@ -75,6 +75,27 @@ validate_stock_profiles(
     }
 }
 
+FilmColorResponse::Tuning
+color_response_tuning(const py::dict& values)
+{
+    FilmColorResponse::Tuning tuning;
+    for (const auto& item : values) {
+        const auto key = py::cast<std::string>(item.first);
+        if (key == "response_amount") tuning.response_amount = py::cast<float>(item.second);
+        else if (key == "chroma_compression") tuning.chroma_compression = py::cast<float>(item.second);
+        else if (key == "chroma_knee") tuning.chroma_knee = py::cast<float>(item.second);
+        else if (key == "density_center") tuning.density_center = py::cast<float>(item.second);
+        else if (key == "density_width") tuning.density_width = py::cast<float>(item.second);
+        else if (key == "warm_protection") tuning.warm_protection = py::cast<float>(item.second);
+        else if (key == "warm_hue_center") tuning.warm_hue_center = py::cast<float>(item.second);
+        else if (key == "warm_hue_width") tuning.warm_hue_width = py::cast<float>(item.second);
+        else if (key == "warm_hue_shift") tuning.warm_hue_shift = py::cast<float>(item.second);
+        else throw std::invalid_argument("Unknown color response parameter: " + key);
+    }
+    if (!FilmColorResponse::valid_tuning(tuning)) throw std::invalid_argument("Color response parameter outside its supported range");
+    return tuning;
+}
+
 FilmPipeline::Settings
 pipeline_settings(
     const std::string& resources,
@@ -93,7 +114,8 @@ pipeline_settings(
     float printer_light_blue,
     float printer_light_master,
     float middle_gray,
-    float printer_temperature)
+    float printer_temperature,
+    const py::dict& color_response)
 {
     FilmPipeline::Settings settings;
     settings.resources_directory = resources;
@@ -105,6 +127,7 @@ pipeline_settings(
     settings.push_pull_stops = push_pull;
     settings.color_density = color_density;
     settings.color_depth = color_depth;
+    settings.color_response = color_response_tuning(color_response);
     settings.negative_bleach_bypass = negative_bleach_bypass;
     settings.print_bleach_bypass = print_bleach_bypass;
     settings.printer_light_red = printer_light_red;
@@ -183,7 +206,8 @@ generate_lut(
     float printer_temperature,
     int threads,
     const py::object& progress,
-    const py::object& cancel)
+    const py::object& cancel,
+    const py::dict& color_response)
 {
     validate_stock_profiles(negative, print);
 
@@ -216,7 +240,7 @@ generate_lut(
                 printer_light_blue,
                 printer_light_master,
                 middle_gray,
-                printer_temperature))) {
+                printer_temperature, color_response))) {
 
         throw std::runtime_error(
             "could not initialize FilmViz: "
@@ -303,6 +327,7 @@ generate_lut(
         "Push/pull stops: " + std::to_string(push_pull) + " / approximate contrast",
         "Color separation trim: " + std::to_string(color_density),
         "Color depth: " + std::to_string(color_depth),
+        "Color response tuning: " + py::cast<std::string>(py::str(color_response)),
         "Negative bleach bypass: " + std::to_string(negative_bleach_bypass),
         "Print bleach bypass: " + std::to_string(print_bleach_bypass),
         "Printer lights R/G/B: "
@@ -364,7 +389,8 @@ process_image(
     float halation_threshold,
     int threads,
     const py::object& progress,
-    const py::object& cancel)
+    const py::object& cancel,
+    const py::dict& color_response)
 {
     validate_stock_profiles(negative, print);
     const InputTransform::Encoding encoding = input_encoding(input, resources);
@@ -391,7 +417,7 @@ process_image(
                 printer_light_blue,
                 printer_light_master,
                 middle_gray,
-                printer_temperature))) {
+                printer_temperature, color_response))) {
 
         throw std::runtime_error(
             "could not initialize FilmViz: "
@@ -599,7 +625,8 @@ probe_image_pixel(
     float middle_gray,
     float printer_temperature,
     double u,
-    double v)
+    double v,
+    const py::dict& color_response)
 {
     validate_stock_profiles(
         negative,
@@ -707,7 +734,7 @@ probe_image_pixel(
                 printer_light_blue,
                 printer_light_master,
                 middle_gray,
-                printer_temperature))) {
+                printer_temperature, color_response))) {
 
         throw std::runtime_error(
             "could not initialize FilmViz probe pipeline: "
@@ -884,6 +911,8 @@ metal_preview_settings(
     settings.input_profile =
         static_cast<int>(encoding);
     settings.output_profile = static_cast<int>(image_output(output, resources));
+    settings.color_response = color_response_tuning(values.contains("color_response")
+        ? py::cast<py::dict>(values["color_response"]) : py::dict());
     settings.negative_profile =
         dictionary_value<std::string>(
             values,
@@ -1048,6 +1077,35 @@ PYBIND11_MODULE(filmviz_python, module)
     module.attr("metal_preview_available") = false;
 #endif
 
+    module.def("color_response_preview", [](const py::dict& values, float depth, float trim) {
+        FilmColorResponse response({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f});
+        FilmColorResponse::Settings standard, tuned;
+        standard.amount = FilmColorResponse::standard_amount;
+        tuned.amount = FilmColorResponse::amount_from_trim(trim);
+        tuned.color_depth = depth;
+        tuned.tuning = color_response_tuning(values);
+        py::list bypass_points, standard_points, tuned_points;
+        const auto point = [](const FilmDensity& d) {
+            return py::make_tuple((d.red-d.green)*0.70710678f,
+                (d.red+d.green-2.0f*d.blue)*0.40824829f);
+        };
+        for (int i = 0; i <= 96; ++i) {
+            const float angle = i * 6.28318530718f / 96.0f;
+            const float x = std::cos(angle)*0.346410162f;
+            const float y = std::sin(angle)*0.346410162f;
+            const FilmDensity input = {1.0f + x*0.70710678f+y*0.40824829f,
+                1.0f-x*0.70710678f+y*0.40824829f, 1.0f-y*0.81649658f};
+            bypass_points.append(point(input));
+            standard_points.append(point(response.apply(input, standard)));
+            tuned_points.append(point(response.apply(input, tuned)));
+        }
+        py::dict result;
+        result["bypass"] = bypass_points;
+        result["standard"] = standard_points;
+        result["tuned"] = tuned_points;
+        return result;
+    }, py::arg("color_response") = py::dict(), py::arg("color_depth") = 1.0f, py::arg("color_density") = 0.0f);
+
     module.def("resolve_color_profile", &ColorProfileCatalog::resolve,
         py::arg("output"), py::arg("color_space"), py::arg("transfer_function"), py::arg("resources") = "");
 
@@ -1151,7 +1209,8 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("printer_temperature") = 3200.0f,
         py::arg("threads") = 0,
         py::arg("progress") = py::none(),
-        py::arg("cancel") = py::none());
+        py::arg("cancel") = py::none(),
+        py::arg("color_response") = py::dict());
 
     module.def(
         "process_image",
@@ -1197,7 +1256,8 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("halation_threshold") = 0.7f,
         py::arg("threads") = 0,
         py::arg("progress") = py::none(),
-        py::arg("cancel") = py::none());
+        py::arg("cancel") = py::none(),
+        py::arg("color_response") = py::dict());
     module.def(
         "probe_image_pixel",
         &probe_image_pixel,
@@ -1224,6 +1284,7 @@ PYBIND11_MODULE(filmviz_python, module)
         py::arg("printer_temperature") = 3200.0f,
         py::arg("u") = 0.5,
         py::arg("v") = 0.5,
+        py::arg("color_response") = py::dict(),
         "Probe one source-image pixel through every major FilmViz pipeline stage.");
 
     module.def(

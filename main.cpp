@@ -266,8 +266,8 @@ validate_profile_options(ArgParse& ap, InputTransform::Encoding& encoding)
         return false;
     }
 
-    if (tool.grain_size < 1.0f) {
-        print_error("grain size must be at least one pixel: ", tool.grain_size);
+    if (!std::isfinite(tool.grain_size) || tool.grain_size < 0.25f) {
+        print_error("grain scale must be at least 0.25: ", tool.grain_size);
         return false;
     }
 
@@ -408,11 +408,11 @@ try {
     ap.arg("--print-grain %f:STRENGTH", &tool.print_grain)
         .help("Measured print-stock grain strength; 0 disables, 1 is measured RMS");
 
-    ap.arg("--grain-size %f:PIXELS", &tool.grain_size)
-        .help("Artistic grain spatial scale in output pixels (default: 1)");
+    ap.arg("--grain-size %f:SCALE", &tool.grain_size)
+        .help("Grain size multiplier, scaled by film format and resolution; minimum 0.25 (default: 1)");
 
     ap.arg("--grain-chroma %f:AMOUNT", &tool.grain_chroma)
-        .help("Grain chroma: 0 neutral, 1 measured per-channel result (default: 1)");
+        .help("Grain chroma: 0 neutral, 1 propagated per-channel response (default: 1)");
 
     ap.arg("--grain-seed %d:SEED", &tool.grain_seed).help("Deterministic grain seed (default: 1)");
 
@@ -420,7 +420,7 @@ try {
         .help("regular-8, super-8, 16mm, super-16, 35mm, super-35, 65mm, or custom");
 
     ap.arg("--image-width-mm %f:MM", &tool.image_width_mm)
-        .help("Override active film-image width used for cycles/mm MTF mapping");
+        .help("Override active film-image width used for grain and cycles/mm MTF mapping");
 
     ap.arg("--negative-mtf %f:AMOUNT", &tool.negative_mtf)
         .help("Measured negative MTF: 0 bypass, 1 measured, 2 exaggerated");
